@@ -1,0 +1,16 @@
+.app-container { font-family: sans-serif; padding: 20px; }
+nav { background: #007bff; padding: 10px; margin-bottom: 20px; }
+nav button { margin-right: 10px; padding: 10px; background: white; border: none; cursor: pointer; }
+.section { border: 1px solid #ddd; padding: 20px; border-radius: 8px; }
+.red-alert { color: red; font-weight: bold; }
+table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+.form-group { margin-bottom: 10px; }
+input, select { padding: 8px; margin-right: 10px; }
+.btn { padding: 8px 15px; background: green; color: white; border: none; cursor: pointer; }
+.pos-container { display: flex; gap: 20px; }
+.pos-left { flex: 2; }
+.pos-right { flex: 1; background: #f9f9f9; padding: 20px; }
+.suggestion-box { border: 1px solid #ccc; max-height: 100px; overflow-y: auto; }
+.suggestion-item { padding: 5px; cursor: pointer; }
+.suggestion-item:hover { background-color: #eee; }
