@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
+import '../App.css'; 
 
 // --- RADHE PHARMACY DETAILS ---
 const PHARMACY_DETAILS = {
@@ -11,6 +12,7 @@ const PHARMACY_DETAILS = {
   email: "radhepharmacy099@gmail.com"
 };
 
+// Helper: Number to Words
 const numberToWords = (num) => {
   const a = ['','One ','Two ','Three ','Four ', 'Five ','Six ','Seven ','Eight ','Nine ','Ten ','Eleven ','Twelve ','Thirteen ','Fourteen ','Fifteen ','Sixteen ','Seventeen ','Eighteen ','Nineteen '];
   const b = ['', '', 'Twenty','Thirty','Forty','Fifty', 'Sixty','Seventy','Eighty','Ninety'];
@@ -33,6 +35,10 @@ const SaleForm = () => {
   const [amountGiven, setAmountGiven] = useState('');
   const [changeToReturn, setChangeToReturn] = useState(0);
 
+  // --- NEW STATE FOR PRICE EDITING ---
+  const [editingIndex, setEditingIndex] = useState(null); // Track which row is being edited
+  const [tempPrice, setTempPrice] = useState(''); // Store the new price temporarily
+
   const [isBillNeeded, setIsBillNeeded] = useState(true);
   const [customer, setCustomer] = useState({ name: '', phone: '', doctor: '' });
   const [invoiceNo, setInvoiceNo] = useState(`INV-${Math.floor(Date.now() / 1000)}`);
@@ -40,18 +46,14 @@ const SaleForm = () => {
   useEffect(() => {
     if (query.length > 1) {
       api.get(`/medicines/search?q=${query}`).then(res => setResults(res.data));
-    } else {
-      setResults([]);
-    }
+    } else { setResults([]); }
   }, [query]);
 
   useEffect(() => {
     const total = cart.reduce((a, b) => a + b.total, 0);
     if (amountGiven && paymentMode === 'Cash') {
         setChangeToReturn(parseFloat(amountGiven) - total);
-    } else {
-        setChangeToReturn(0);
-    }
+    } else { setChangeToReturn(0); }
   }, [amountGiven, cart, paymentMode]);
 
   const addToCart = (med) => {
@@ -87,130 +89,205 @@ const SaleForm = () => {
     setResults([]);
   };
 
-  const generateBillHTML = () => {
-    const date = new Date().toLocaleDateString('en-IN');
-    const totalAmount = cart.reduce((a, b) => a + b.total, 0);
-    const totalTaxable = cart.reduce((a, b) => a + (b.total / (1 + (b.gst/100))), 0);
-    const totalGST = totalAmount - totalTaxable;
-    const amountInWords = numberToWords(Math.round(totalAmount));
+  // --- NEW: HANDLE PRICE EDIT WITH PASSWORD ---
+  const handleInitiateEdit = async (index, currentPrice) => {
+    const password = prompt("🔒 Enter Admin Password to change Price:");
+    if (!password) return;
+
+    try {
+      const res = await api.post('/admin/verify', { password });
+      if (res.data.success) {
+        setEditingIndex(index);
+        setTempPrice(currentPrice);
+      } else {
+        alert("❌ Wrong Password! Access Denied.");
+      }
+    } catch (err) {
+      alert("Server Error");
+    }
+  };
+
+  const handleSavePrice = (index) => {
+    const newPrice = parseFloat(tempPrice);
+    if (isNaN(newPrice) || newPrice < 0) return alert("Invalid Price");
+
+    const newCart = [...cart];
+    newCart[index].price = newPrice;
+    // Recalculate total for this item
+    newCart[index].total = newPrice * newCart[index].quantity;
+    
+    // Recalculate discount based on MRP (Optional visual update)
+    if(newCart[index].mrp > 0) {
+        newCart[index].discount = ((newCart[index].mrp - newPrice) / newCart[index].mrp * 100).toFixed(2);
+    }
+
+    setCart(newCart);
+    setEditingIndex(null); // Exit edit mode
+  };
+
+  // --- BILL GENERATOR ---
+  const generateBillHTML = (cartItems, currentInvoiceNo) => {
+    const date = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const time = new Date().toLocaleTimeString('en-IN', {hour: '2-digit', minute:'2-digit'});
+    
+    // Logic: Selling Price IS the final price. We subtract GST from it.
+    let totalTaxable = 0;
+    let totalGST = 0;
+    const finalTotal = cartItems.reduce((acc, item) => acc + item.total, 0);
+
+    // Calculate Breakdown for Totals
+    cartItems.forEach(item => {
+        const gstPercent = item.gst || 0;
+        const inclusiveTotal = item.total; 
+        const baseValue = inclusiveTotal / (1 + (gstPercent / 100)); // Reverse Calc
+        const taxAmount = inclusiveTotal - baseValue;
+        
+        totalTaxable += baseValue;
+        totalGST += taxAmount;
+    });
+
+    const amountInWords = numberToWords(Math.round(finalTotal));
 
     return `
+      <!DOCTYPE html>
       <html>
         <head>
-          <title>Invoice ${invoiceNo}</title>
+          <title>Invoice #${currentInvoiceNo}</title>
+          <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Dancing+Script:wght@600&display=swap" rel="stylesheet">
           <style>
-            body { font-family: Arial, sans-serif; font-size: 11px; padding: 20px; }
-            .container { border: 2px solid #000; padding: 2px; }
-            .header { display: flex; border-bottom: 2px solid #000; }
-            .header-left { flex: 2; padding: 5px; border-right: 1px solid #000; }
-            .header-right { flex: 1; padding: 5px; }
-            .title { font-size: 24px; font-weight: bold; color: #d32f2f; text-transform: uppercase; }
+            :root { --brand: #0f766e; --text: #1f2937; --gray: #6b7280; --bg: #f8fafc; }
+            body { font-family: 'Manrope', sans-serif; margin: 0; padding: 20px; color: var(--text); background: #fff; max-width: 850px; margin: 0 auto; }
             
-            table { width: 100%; border-collapse: collapse; font-size: 10px; }
-            th { border-bottom: 1px solid #000; border-right: 1px solid #000; background: #ffffcc; padding: 3px; }
-            td { border-bottom: 1px solid #ddd; border-right: 1px solid #000; padding: 3px; text-align: center; }
-            th:last-child, td:last-child { border-right: none; }
-
-            .footer-section { border-top: 2px solid #000; display: flex; }
-            .tax-box { flex: 2; border-right: 2px solid #000; padding: 5px; font-size: 10px; }
-            .total-box { flex: 1; padding: 5px; }
-            .sign { height: 40px; margin-top: 20px; text-align: right; }
+            .header-row { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 15px; border-bottom: 2px solid var(--brand); }
+            .brand-name { font-size: 32px; font-weight: 800; color: var(--brand); margin: 0; line-height: 1; }
+            .brand-details { font-size: 12px; color: var(--gray); margin-top: 5px; line-height: 1.4; }
+            
+            .invoice-badge { text-align: right; }
+            .gst-label { background: var(--brand); color: white; padding: 5px 10px; font-size: 13px; font-weight: 700; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+            
+            .info-grid { display: flex; justify-content: space-between; margin: 20px 0; background: var(--bg); padding: 12px; border-radius: 8px; font-size: 13px; }
+            .info-box h4 { font-size: 10px; text-transform: uppercase; color: var(--gray); margin: 0 0 3px 0; }
+            .info-box div { font-weight: 600; color: #000; }
+            
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }
+            th { text-align: left; padding: 8px; background: #fff; border-bottom: 2px solid #e5e7eb; font-size: 11px; text-transform: uppercase; color: var(--gray); }
+            td { padding: 10px 8px; border-bottom: 1px solid #f1f5f9; font-weight: 500; vertical-align: middle; }
+            
+            .text-right { text-align: right; }
+            .text-center { text-align: center; }
+            
+            .footer-grid { display: flex; justify-content: space-between; margin-top: 10px; }
+            .words-box { width: 55%; font-size: 11px; color: var(--gray); line-height: 1.5; }
+            .totals-box { width: 40%; }
+            .total-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: var(--text); }
+            .grand-total { display: flex; justify-content: space-between; background: var(--brand); color: white; padding: 8px; border-radius: 6px; font-size: 16px; font-weight: 700; margin-top: 8px; }
+            
+            .sign { margin-top: 30px; text-align: right; font-size: 12px; font-weight: 600; }
+            
+            @media print { body { padding: 0; -webkit-print-color-adjust: exact; } .info-grid { background: #f8fafc !important; } .gst-label, .grand-total { background: var(--brand) !important; color: white !important; } }
           </style>
         </head>
         <body>
-          <center><strong style="font-size:14px; text-decoration: underline;">GST INVOICE</strong></center>
-          <div class="container">
-            <div class="header">
-              <div class="header-left">
-                <div class="title">${PHARMACY_DETAILS.name}</div>
-                <div>${PHARMACY_DETAILS.address}</div>
-                <div><strong>GSTIN:</strong> ${PHARMACY_DETAILS.gstin}</div>
-                <div><strong>DL No:</strong> ${PHARMACY_DETAILS.dlNo}</div>
-                <div><strong>Phone:</strong> ${PHARMACY_DETAILS.phone}</div>
-                <div><strong>Email:</strong> ${PHARMACY_DETAILS.email}</div>
-              </div>
-              <div class="header-right">
-                <div><strong>Invoice No:</strong> ${invoiceNo}</div>
-                <div><strong>Date:</strong> ${date}</div>
-                <div><strong>Pay Mode:</strong> ${paymentMode}</div>
-                <hr/>
-                <div><strong>Bill To:</strong> ${customer.name}</div>
-                <div><strong>Ref By:</strong> ${customer.doctor || 'Self'}</div>
-              </div>
+          <div class="header-row">
+            <div>
+                <h1 class="brand-name">${PHARMACY_DETAILS.name}</h1>
+                <div class="brand-details">
+                    ${PHARMACY_DETAILS.address}<br>
+                    <strong>GSTIN:</strong> ${PHARMACY_DETAILS.gstin} | <strong>DL:</strong> ${PHARMACY_DETAILS.dlNo}<br>
+                    Ph: ${PHARMACY_DETAILS.phone}
+                </div>
             </div>
-
-            <table>
-              <thead>
-                <tr>
-                  <th style="width:20px">SN</th>
-                  <th>Product</th>
-                  <th>HSN</th>
-                  <th>Batch</th>
-                  <th>Exp</th>
-                  <th>MRP</th>
-                  <th>Qty</th>
-                  <th>Rate</th>
-                  <th>Disc%</th>
-                  <th>GST%</th>
-                  <th>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${cart.map((item, i) => `
-                  <tr>
-                    <td>${i+1}</td>
-                    <td style="text-align:left">${item.name}</td>
-                    <td>${item.hsn}</td>
-                    <td>${item.batch}</td>
-                    <td>${item.expiry ? new Date(item.expiry).toLocaleDateString('en-IN', {month:'2-digit', year:'2-digit'}) : '-'}</td>
-                    <td>${item.mrp}</td>
-                    <td>${item.quantity}</td>
-                    <td>${(item.price / (1 - item.discount/100)).toFixed(2)}</td> 
-                    <td>${item.discount}%</td>
-                    <td>${item.gst}%</td>
-                    <td style="font-weight:bold">${item.total.toFixed(2)}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-
-            <div class="footer-section">
-              <div class="tax-box">
-                 <table style="width:100%; border:none;">
-                   <tr>
-                     <td style="border:none; text-align:left">Taxable Amt: ₹${totalTaxable.toFixed(2)}</td>
-                     <td style="border:none; text-align:left">Total GST: ₹${totalGST.toFixed(2)}</td>
-                   </tr>
-                 </table>
-                 <div style="margin-top:10px;">
-                    <strong>Amount in Words:</strong><br/>
-                    ${amountInWords} Only
-                 </div>
-                 <div style="margin-top:5px; font-size:9px;">
-                    <strong>Terms:</strong> 1. Goods once sold will not be taken back. 2. Subject to Panipat Jurisdiction.
-                 </div>
-              </div>
-
-              <div class="total-box">
-                <div style="display:flex; justify-content:space-between;">
-                   <span>Sub Total:</span>
-                   <span>${totalAmount.toFixed(2)}</span>
-                </div>
-                <div style="display:flex; justify-content:space-between;">
-                   <span>Round Off:</span>
-                   <span>0.00</span>
-                </div>
-                <hr/>
-                <div style="display:flex; justify-content:space-between; font-size:16px; font-weight:bold;">
-                   <span>GRAND TOTAL:</span>
-                   <span>₹${Math.round(totalAmount).toFixed(2)}</span>
-                </div>
-                <div class="sign"><br/>Auth. Signatory</div>
-              </div>
+            <div class="invoice-badge">
+                <div class="gst-label">GST INVOICE</div>
+                <div style="font-weight:700">#${currentInvoiceNo}</div>
+                <div style="font-size:11px; color:#666">${date} &bull; ${time}</div>
             </div>
-
           </div>
-          <script>window.print();</script>
+
+          <div class="info-grid">
+            <div class="info-box" style="width: 40%;">
+                <h4>Billed To</h4>
+                <div>${customer.name}</div>
+                <div style="font-weight:400">${customer.phone || '-'}</div>
+            </div>
+            <div class="info-box">
+                <h4>Dr. Ref</h4>
+                <div>${customer.doctor || 'Self'}</div>
+            </div>
+            <div class="info-box" style="text-align: right;">
+                <h4>Mode</h4>
+                <div>${paymentMode}</div>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+                <tr>
+                    <th style="width: 5%;">#</th>
+                    <th style="width: 30%;">Item</th>
+                    <th style="width: 15%;">Batch</th>
+                    <th class="text-right" style="width: 10%;">Rate</th>
+                    <th class="text-center" style="width: 8%;">Qty</th>
+                    <th class="text-right" style="width: 15%;">GST Breakdown</th>
+                    <th class="text-right" style="width: 17%;">Net Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${cartItems.map((item, i) => {
+                    // Calculation for Row Display
+                    const inclusivePrice = item.price;
+                    const gstPercent = item.gst || 0;
+                    const basePrice = inclusivePrice / (1 + (gstPercent/100));
+                    const taxPerItem = inclusivePrice - basePrice;
+                    const totalTaxForItem = taxPerItem * item.quantity;
+
+                    return `
+                    <tr>
+                        <td>${i+1}</td>
+                        <td>
+                            <div style="font-weight:700; color:#000;">${item.name}</div>
+                            <div style="font-size:10px; color:#6b7280">HSN: ${item.hsn || '-'} | Exp: ${item.expiry ? new Date(item.expiry).toLocaleDateString('en-IN', {month:'short', year:'2-digit'}) : '-'}</div>
+                        </td>
+                        <td>${item.batch}</td>
+                        <td class="text-right">₹${item.price}</td>
+                        <td class="text-center" style="font-weight:700">${item.quantity}</td>
+                        <td class="text-right">
+                            <div style="font-size:10px; color:#666">Tax: ${gstPercent}%</div>
+                            <div style="font-weight:600; color:var(--brand)">₹${totalTaxForItem.toFixed(2)}</div>
+                        </td>
+                        <td class="text-right" style="font-weight:700; color:#000;">₹${item.total.toFixed(2)}</td>
+                    </tr>
+                    `;
+                }).join('')}
+            </tbody>
+          </table>
+
+          <div class="footer-grid">
+            <div class="words-box">
+                <h4>Amount in Words</h4>
+                <strong style="color:var(--brand)">${amountInWords} Only</strong>
+                <div style="margin-top: 10px; color:#999; font-size:10px;">
+                    Note: Prices are inclusive of GST.<br>
+                    Goods once sold will not be returned.
+                </div>
+            </div>
+
+            <div class="totals-box">
+                <div class="total-row"><span>Total Taxable Value</span><span>₹${totalTaxable.toFixed(2)}</span></div>
+                <div class="total-row"><span>Total GST Amount</span><span>₹${totalGST.toFixed(2)}</span></div>
+                <div class="total-row"><span>Round Off</span><span>0.00</span></div>
+                <div class="grand-total"><span>Grand Total</span><span>₹${Math.round(finalTotal).toFixed(2)}</span></div>
+            </div>
+          </div>
+
+          <div class="quote-box" style="margin-top:30px; text-align:center;">
+            <div style="font-family:'Dancing Script', cursive; font-size:20px; color:var(--brand);">Get Well Soon!</div>
+            <div class="sign">Authorized Signatory<br>For ${PHARMACY_DETAILS.name}</div>
+          </div>
+
+          <script>
+             setTimeout(function() { window.print(); }, 500);
+          </script>
         </body>
       </html>
     `;
@@ -222,6 +299,14 @@ const SaleForm = () => {
 
     if (paymentMode === 'Cash' && parseFloat(amountGiven) < total) return alert("❌ Insufficient Cash!");
     if (isBillNeeded && !customer.name) return alert("⚠️ Customer Name is required for Bill");
+
+    // 1. OPEN WINDOW IMMEDIATELY
+    let billWindow = null;
+    if (isBillNeeded) {
+        billWindow = window.open('', '_blank', 'width=900,height=900');
+        if(!billWindow) { alert("Popup Blocked! Allow popups."); return; }
+        billWindow.document.write('<h3>Generating Bill...</h3>');
+    }
 
     try {
       await api.post('/sales', {
@@ -243,9 +328,10 @@ const SaleForm = () => {
         paymentMode
       });
       
-      if (isBillNeeded) {
-        const billWindow = window.open('', '', 'width=800,height=800');
-        billWindow.document.write(generateBillHTML());
+      if (isBillNeeded && billWindow) {
+        const billContent = generateBillHTML(cart, invoiceNo);
+        billWindow.document.open();
+        billWindow.document.write(billContent);
         billWindow.document.close();
       }
       
@@ -258,6 +344,7 @@ const SaleForm = () => {
       setInvoiceNo(`INV-${Math.floor(Date.now() / 1000)}`);
     } catch (err) {
       console.error(err);
+      if (billWindow) billWindow.close();
       alert('Sale Failed: ' + (err.response?.data?.message || err.message));
     }
   };
@@ -273,86 +360,135 @@ const SaleForm = () => {
   const removeFromCart = (i) => { const c = [...cart]; c.splice(i,1); setCart(c); };
 
   return (
-    <div className="section" style={{ display: 'flex', gap: '20px' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px', minHeight: '80vh' }}>
       
-      <div style={{ flex: 3 }}>
-        <h2>New Sale <span style={{fontSize:'12px', color:'#777'}}>({invoiceNo})</span></h2>
-        <input placeholder="Search Medicine..." value={query} onChange={e => setQuery(e.target.value)} style={{ width: '100%', padding: '10px', marginBottom: '10px' }} />
-        {results.length > 0 && (
-          <div style={{ border: '1px solid #ccc', maxHeight: '150px', overflowY: 'auto', marginBottom: '20px' }}>
-            {results.map(med => (
-              <div key={med._id} onClick={() => addToCart(med)} style={{ padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee' }}>
-                <strong>{med.productName}</strong> - SP: ₹{med.sellingPrice} | MRP: ₹{med.mrp}
-              </div>
-            ))}
-          </div>
-        )}
-        <h3>Cart</h3>
-        <table style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', fontSize:'13px' }}>
-          <thead>
-            <tr style={{background:'#f9f9f9', borderBottom:'2px solid #ddd'}}>
-                <th>Item</th>
-                <th>Batch</th>
-                <th>Qty</th>
-                <th>MRP</th>
-                <th>Price</th>
-                <th>Total</th>
-                <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {cart.map((item, idx) => (
-              <tr key={idx} style={{borderBottom:'1px solid #eee'}}>
-                <td>{item.name}</td>
-                <td style={{fontSize:'11px'}}>{item.batch}<br/>{item.expiry ? new Date(item.expiry).toLocaleDateString() : ''}</td>
-                <td><input type="number" value={item.quantity} onChange={(e) => handleQtyChange(idx, e.target.value)} style={{width:'40px'}} /></td>
-                <td>{item.mrp}</td>
-                <td>{item.price}</td>
-                <td>{item.total.toFixed(2)}</td>
-                <td><button onClick={() => removeFromCart(idx)} style={{color:'red', border:'none'}}>X</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="card flex-col" style={{marginBottom:0, height: '100%'}}>
+        <div style={{position:'relative', zIndex: 20}}>
+            <h3>🔍 New Sale <span className="text-muted" style={{fontSize:'0.9rem', fontWeight:'400'}}>({invoiceNo})</span></h3>
+            <input 
+                placeholder="Type to search medicine..." 
+                value={query} 
+                onChange={e => setQuery(e.target.value)} 
+                style={{padding: '12px', border:'2px solid var(--primary)', fontSize:'1rem'}}
+            />
+            {results.length > 0 && (
+                <div style={{position:'absolute', width:'100%', background:'white', border:'1px solid #ddd', borderRadius:'0 0 8px 8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', maxHeight: '300px', overflowY: 'auto'}}>
+                    {results.map(med => (
+                        <div key={med._id} onClick={() => addToCart(med)} style={{padding:'12px', cursor:'pointer', borderBottom:'1px solid #eee'}}>
+                            <div style={{fontWeight:'600', color: 'var(--text)'}}>{med.productName}</div>
+                            <div style={{fontSize: '0.8rem', color: '#666'}}>
+                                Batch: {med.batchNumber} | Stock: <b>{med.quantity}</b> | GST: {med.gst}% | <span style={{color:'var(--success)'}}>SP: ₹{med.sellingPrice}</span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+
+        <div className="table-container" style={{flex:1, marginTop: '10px'}}>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Item</th>
+                        <th style={{width: '70px'}}>Qty</th>
+                        <th>Price</th>
+                        <th>Total</th>
+                        <th style={{width: '50px'}}>Act</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {cart.map((item, idx) => (
+                        <tr key={idx}>
+                            <td>
+                                <div style={{fontWeight:'600'}}>{item.name}</div>
+                                <div style={{fontSize:'0.75rem', color: 'var(--text-muted)'}}>Batch: {item.batch} | GST: {item.gst}%</div>
+                            </td>
+                            <td>
+                                <input 
+                                    type="number" 
+                                    value={item.quantity} 
+                                    onChange={(e) => handleQtyChange(idx, e.target.value)} 
+                                    style={{padding:'5px', textAlign:'center'}} 
+                                />
+                            </td>
+                            
+                            {/* --- EDITABLE PRICE SECTION --- */}
+                            <td>
+                                {editingIndex === idx ? (
+                                    <input 
+                                        type="number" 
+                                        value={tempPrice} 
+                                        onChange={(e) => setTempPrice(e.target.value)}
+                                        onBlur={() => handleSavePrice(idx)} // Save when clicking away
+                                        onKeyDown={(e) => { if(e.key === 'Enter') handleSavePrice(idx) }}
+                                        autoFocus
+                                        style={{width:'80px', padding:'5px'}}
+                                    />
+                                ) : (
+                                    <div 
+                                        onClick={() => handleInitiateEdit(idx, item.price)} 
+                                        style={{fontWeight:'bold', cursor:'pointer', display:'flex', alignItems:'center', gap:'5px'}}
+                                        title="Click to Edit Price (Admin Only)"
+                                    >
+                                        ₹{item.price} <span style={{fontSize:'10px'}}>✏️</span>
+                                    </div>
+                                )}
+                            </td>
+                            {/* ----------------------------- */}
+
+                            <td style={{color: 'var(--success)', fontWeight:'bold'}}>₹{item.total.toFixed(2)}</td>
+                            <td><button onClick={() => removeFromCart(idx)} className="btn btn-danger" style={{padding: '4px 8px'}}>×</button></td>
+                        </tr>
+                    ))}
+                    {cart.length === 0 && <tr><td colSpan="5" style={{textAlign:'center', padding:'30px', color: '#aaa'}}>Cart is empty</td></tr>}
+                </tbody>
+            </table>
+        </div>
       </div>
 
-      <div style={{ flex: 1, background: '#f8f9fa', padding: '20px', borderRadius: '8px' }}>
-        <h1 style={{ color: 'green', margin: '0 0 20px 0' }}>₹{cart.reduce((a, b) => a + b.total, 0).toFixed(0)}</h1>
-        
-        <div style={{ marginBottom: '15px', padding: '10px', background: '#e3f2fd', borderRadius: '5px' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 'bold' }}>
-            <input type="checkbox" checked={isBillNeeded} onChange={(e) => setIsBillNeeded(e.target.checked)} />
-            🖨️ Generate Bill
-          </label>
-        </div>
-
-        {isBillNeeded && (
-          <div style={{ marginBottom: '20px', padding: '10px', border: '1px dashed #007bff', background: 'white' }}>
-            <h4 style={{ margin: '0 0 10px 0', color: '#007bff' }}>Customer Details</h4>
-            <input placeholder="Customer Name *" value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} style={{ width: '90%', padding: '8px', marginBottom: '5px' }} />
-            <input placeholder="Phone Number" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} style={{ width: '90%', padding: '8px', marginBottom: '5px' }} />
-            <input placeholder="Doctor Name" value={customer.doctor} onChange={e => setCustomer({...customer, doctor: e.target.value})} style={{ width: '90%', padding: '8px' }} />
-          </div>
-        )}
-
-        <div style={{ margin: '20px 0' }}>
-            <label style={{ fontWeight: 'bold' }}>Payment Mode:</label>
-            <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)} style={{ width: '100%', padding: '10px' }}>
-                <option value="Cash">Cash</option>
-                <option value="Online">Online</option>
-            </select>
-        </div>
-
-        {paymentMode === 'Cash' && (
-            <div style={{ background: '#e9ecef', padding: '10px', marginBottom: '20px' }}>
-                <input type="number" placeholder="Amt Given" value={amountGiven} onChange={(e) => setAmountGiven(e.target.value)} style={{ width: '90%', padding: '10px' }} />
-                <div style={{ marginTop: '10px' }}><strong>Return: </strong><span style={{ color: changeToReturn < 0 ? 'red' : 'blue' }}>₹{changeToReturn.toFixed(2)}</span></div>
+      <div className="card flex-col justify-between" style={{background: '#f8fafc', borderLeft:'4px solid var(--primary)', marginBottom:0}}>
+        <div>
+            <div style={{textAlign:'right', paddingBottom:'15px', borderBottom:'1px solid var(--border)'}}>
+                <div className="text-muted" style={{fontSize:'0.9rem'}}>Total Payable</div>
+                <div style={{fontSize:'3rem', fontWeight:'800', color:'var(--success)', lineHeight: 1}}>
+                    ₹{cart.reduce((a, b) => a + b.total, 0).toFixed(0)}
+                </div>
             </div>
-        )}
-
-        <button onClick={handleCheckout} style={{ width: '100%', padding: '15px', background: 'green', color: 'white', border: 'none', borderRadius: '5px' }}>
-          COMPLETE SALE
-        </button>
+            <div className="flex items-center gap-4" style={{margin:'20px 0'}}>
+                <input type="checkbox" checked={isBillNeeded} onChange={(e) => setIsBillNeeded(e.target.checked)} style={{width:'20px', height:'20px'}} />
+                <label style={{margin:0, fontSize:'1rem'}}>Generate Official Bill</label>
+            </div>
+            {isBillNeeded && (
+                <div style={{background:'white', padding:'15px', borderRadius:'8px', border:'1px solid var(--border)', display:'flex', flexDirection:'column', gap:'10px'}}>
+                    <div style={{fontSize:'0.8rem', fontWeight:'bold', color:'var(--primary)'}}>CUSTOMER DETAILS</div>
+                    <input placeholder="Customer Name *" value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} />
+                    <div className="flex">
+                        <input placeholder="Phone" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} />
+                        <input placeholder="Dr. Ref" value={customer.doctor} onChange={e => setCustomer({...customer, doctor: e.target.value})} />
+                    </div>
+                </div>
+            )}
+        </div>
+        <div>
+            <label>Payment Mode</label>
+            <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)} style={{marginBottom:'15px', padding:'12px'}}>
+                <option value="Cash">Cash</option>
+                <option value="Online">Online / UPI</option>
+            </select>
+            {paymentMode === 'Cash' && (
+                <div style={{background:'#fff7ed', padding:'15px', borderRadius:'8px', border:'1px solid orange', marginBottom:'15px'}}>
+                    <div className="flex justify-between items-center">
+                        <label style={{marginBottom:0}}>Cash Received</label>
+                        <input type="number" value={amountGiven} onChange={(e) => setAmountGiven(e.target.value)} style={{width:'100px', fontSize:'1.1rem', textAlign:'right'}} />
+                    </div>
+                    <div className="flex justify-between items-center" style={{marginTop:'10px', fontSize:'1.1rem'}}>
+                        <span>Return:</span>
+                        <span style={{fontWeight:'bold', color: changeToReturn < 0 ? 'red' : 'blue'}}>₹{changeToReturn.toFixed(2)}</span>
+                    </div>
+                </div>
+            )}
+            <button onClick={handleCheckout} className="btn btn-primary w-full" style={{padding:'16px', fontSize:'1.2rem', marginTop:'10px'}}>COMPLETE SALE</button>
+        </div>
       </div>
     </div>
   );

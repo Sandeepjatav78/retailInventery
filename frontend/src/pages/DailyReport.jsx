@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
+import '../App.css'; 
 
-// --- PHARMACY DETAILS (Must match SaleForm) ---
+// --- PHARMACY DETAILS ---
 const PHARMACY_DETAILS = {
-  name: "K.D. SALES", 
-  address: "22/15, Jawahar Nagar, Tehsil Town, Panipat-06, Haryana",
-  gstin: "06ADYPT1086C1Z6",
-  dlNo: "12509 OW/H 12325 W/H",
-  phone: "9812336394, 9812436395",
-  email: "tarunmalhotra62@gmail.com"
+  name: "RADHE PHARMACY",
+  address: "Hari Singh Chowk, Devi Mandir Road, Panipat",
+  gstin: "06NNTPS0144E",
+  dlNo: "RLF20HR2025005933, RLF21HR2025005925",
+  phone: "8053229309",
+  email: "radhepharmacy099@gmail.com"
 };
 
+// Helper: Number to Words
 const numberToWords = (num) => {
   const a = ['','One ','Two ','Three ','Four ', 'Five ','Six ','Seven ','Eight ','Nine ','Ten ','Eleven ','Twelve ','Thirteen ','Fourteen ','Fifteen ','Sixteen ','Seventeen ','Eighteen ','Nineteen '];
   const b = ['', '', 'Twenty','Thirty','Forty','Fifty', 'Sixty','Seventy','Eighty','Ninety'];
@@ -28,7 +30,6 @@ const numberToWords = (num) => {
 const DailyReport = () => {
   const [report, setReport] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  
   const [dates, setDates] = useState({
     start: new Date().toISOString().split('T')[0],
     end: new Date().toISOString().split('T')[0]
@@ -55,135 +56,182 @@ const DailyReport = () => {
         start = new Date(today.getFullYear(), 0, 1); 
         end = new Date(today.getFullYear(), 11, 31); 
     }
-
-    setDates({
-        start: start.toISOString().split('T')[0],
-        end: end.toISOString().split('T')[0]
-    });
+    setDates({ start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] });
   };
 
-  // --- REPRINT INVOICE FUNCTION ---
+  // --- UPDATED PRINT LOGIC (Matches SaleForm Exactly) ---
   const handlePrintInvoice = (t) => {
-    const date = new Date(t.date).toLocaleDateString('en-IN');
-    const totalAmount = t.totalAmount;
-    // Calculate tax again based on stored items
-    const totalTaxable = t.items.reduce((acc, item) => acc + (item.total / (1 + ((item.gst || 0)/100))), 0);
-    const totalGST = totalAmount - totalTaxable;
-    const amountInWords = numberToWords(Math.round(totalAmount));
-    const customerName = t.customerDetails?.name || 'Cash Sale';
-    const doctorName = t.customerDetails?.doctor || 'Self';
+    const date = new Date(t.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const time = new Date(t.date).toLocaleTimeString('en-IN', {hour: '2-digit', minute:'2-digit'});
+    
+    // REVERSE CALCULATE TAX (Inclusive Logic)
+    let totalTaxable = 0;
+    let totalGST = 0;
+    const finalTotal = t.totalAmount;
+
+    t.items.forEach(item => {
+        const gstPercent = item.gst || 0;
+        const inclusiveTotal = item.total; 
+        const baseValue = inclusiveTotal / (1 + (gstPercent / 100));
+        const taxAmount = inclusiveTotal - baseValue;
+        
+        totalTaxable += baseValue;
+        totalGST += taxAmount;
+    });
+
+    const amountInWords = numberToWords(Math.round(finalTotal));
+    const customer = t.customerDetails || { name: 'Cash Sale', phone: '', doctor: '' };
 
     const billHTML = `
+      <!DOCTYPE html>
       <html>
         <head>
-          <title>Reprint ${t.invoiceNo}</title>
+          <title>Invoice #${t.invoiceNo}</title>
+          <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Dancing+Script:wght@600&display=swap" rel="stylesheet">
           <style>
-            body { font-family: Arial, sans-serif; font-size: 11px; padding: 20px; }
-            .container { border: 2px solid #000; padding: 2px; }
-            .header { display: flex; border-bottom: 2px solid #000; }
-            .header-left { flex: 2; padding: 5px; border-right: 1px solid #000; }
-            .header-right { flex: 1; padding: 5px; }
-            .title { font-size: 24px; font-weight: bold; color: #d32f2f; text-transform: uppercase; }
+            :root { --brand: #0f766e; --text: #1f2937; --gray: #6b7280; --bg: #f8fafc; }
+            body { font-family: 'Manrope', sans-serif; margin: 0; padding: 20px; color: var(--text); background: #fff; max-width: 850px; margin: 0 auto; }
             
-            table { width: 100%; border-collapse: collapse; font-size: 10px; }
-            th { border-bottom: 1px solid #000; border-right: 1px solid #000; background: #ffffcc; padding: 3px; }
-            td { border-bottom: 1px solid #ddd; border-right: 1px solid #000; padding: 3px; text-align: center; }
-            th:last-child, td:last-child { border-right: none; }
-
-            .footer-section { border-top: 2px solid #000; display: flex; }
-            .tax-box { flex: 2; border-right: 2px solid #000; padding: 5px; font-size: 10px; }
-            .total-box { flex: 1; padding: 5px; }
-            .sign { height: 40px; margin-top: 20px; text-align: right; }
+            .header-row { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 15px; border-bottom: 2px solid var(--brand); }
+            .brand-name { font-size: 32px; font-weight: 800; color: var(--brand); margin: 0; line-height: 1; }
+            .brand-details { font-size: 12px; color: var(--gray); margin-top: 5px; line-height: 1.4; }
+            
+            .invoice-badge { text-align: right; }
+            .gst-label { background: var(--brand); color: white; padding: 5px 10px; font-size: 13px; font-weight: 700; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+            
+            .info-grid { display: flex; justify-content: space-between; margin: 20px 0; background: var(--bg); padding: 12px; border-radius: 8px; font-size: 13px; }
+            .info-box h4 { font-size: 10px; text-transform: uppercase; color: var(--gray); margin: 0 0 3px 0; }
+            .info-box div { font-weight: 600; color: #000; }
+            
+            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }
+            th { text-align: left; padding: 8px; background: #fff; border-bottom: 2px solid #e5e7eb; font-size: 11px; text-transform: uppercase; color: var(--gray); }
+            td { padding: 10px 8px; border-bottom: 1px solid #f1f5f9; font-weight: 500; vertical-align: middle; }
+            
+            .text-right { text-align: right; }
+            .text-center { text-align: center; }
+            
+            .footer-grid { display: flex; justify-content: space-between; margin-top: 10px; }
+            .words-box { width: 55%; font-size: 11px; color: var(--gray); line-height: 1.5; }
+            .totals-box { width: 40%; }
+            .total-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: var(--text); }
+            .grand-total { display: flex; justify-content: space-between; background: var(--brand); color: white; padding: 8px; border-radius: 6px; font-size: 16px; font-weight: 700; margin-top: 8px; }
+            
+            .sign { margin-top: 30px; text-align: right; font-size: 12px; font-weight: 600; }
+            
+            @media print { body { padding: 0; -webkit-print-color-adjust: exact; } .info-grid { background: #f8fafc !important; } .gst-label, .grand-total { background: var(--brand) !important; color: white !important; } }
           </style>
         </head>
         <body>
-          <center><strong style="font-size:14px; text-decoration: underline;">DUPLICATE COPY</strong></center>
-          <div class="container">
-            <div class="header">
-              <div class="header-left">
-                <div class="title">${PHARMACY_DETAILS.name}</div>
-                <div>${PHARMACY_DETAILS.address}</div>
-                <div><strong>GSTIN:</strong> ${PHARMACY_DETAILS.gstin}</div>
-                <div><strong>DL No:</strong> ${PHARMACY_DETAILS.dlNo}</div>
-                <div><strong>Phone:</strong> ${PHARMACY_DETAILS.phone}</div>
-              </div>
-              <div class="header-right">
-                <div><strong>Invoice No:</strong> ${t.invoiceNo}</div>
-                <div><strong>Date:</strong> ${date}</div>
-                <div><strong>Pay Mode:</strong> ${t.paymentMode}</div>
-                <hr/>
-                <div><strong>Bill To:</strong> ${customerName}</div>
-                <div><strong>Ref By:</strong> ${doctorName}</div>
-              </div>
-            </div>
-
-            <table>
-              <thead>
-                <tr>
-                  <th style="width:20px">SN</th>
-                  <th>Product</th>
-                  <th>HSN</th>
-                  <th>Batch</th>
-                  <th>Exp</th>
-                  <th>MRP</th>
-                  <th>Qty</th>
-                  <th>Rate</th>
-                  <th>Disc%</th>
-                  <th>GST%</th>
-                  <th>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${t.items.map((item, i) => `
-                  <tr>
-                    <td>${i+1}</td>
-                    <td style="text-align:left">${item.name}</td>
-                    <td>${item.hsn || '-'}</td>
-                    <td>${item.batch || '-'}</td>
-                    <td>${item.expiry ? new Date(item.expiry).toLocaleDateString('en-IN', {month:'2-digit', year:'2-digit'}) : '-'}</td>
-                    <td>${item.mrp}</td>
-                    <td>${item.quantity}</td>
-                    <td>${(item.price / (1 - (item.discount || 0)/100)).toFixed(2)}</td> 
-                    <td>${item.discount || 0}%</td>
-                    <td>${item.gst || 0}%</td>
-                    <td style="font-weight:bold">${item.total.toFixed(2)}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-
-            <div class="footer-section">
-              <div class="tax-box">
-                 <table style="width:100%; border:none;">
-                   <tr>
-                     <td style="border:none; text-align:left">Taxable Amt: ₹${totalTaxable.toFixed(2)}</td>
-                     <td style="border:none; text-align:left">Total GST: ₹${totalGST.toFixed(2)}</td>
-                   </tr>
-                 </table>
-                 <div style="margin-top:10px;">
-                    <strong>Amount in Words:</strong><br/>
-                    ${amountInWords} Only
-                 </div>
-              </div>
-
-              <div class="total-box">
-                <div style="display:flex; justify-content:space-between; font-size:16px; font-weight:bold;">
-                   <span>GRAND TOTAL:</span>
-                   <span>₹${Math.round(totalAmount).toFixed(2)}</span>
+          <div class="header-row">
+            <div>
+                <h1 class="brand-name">${PHARMACY_DETAILS.name}</h1>
+                <div class="brand-details">
+                    ${PHARMACY_DETAILS.address}<br>
+                    <strong>GSTIN:</strong> ${PHARMACY_DETAILS.gstin} | <strong>DL:</strong> ${PHARMACY_DETAILS.dlNo}<br>
+                    Ph: ${PHARMACY_DETAILS.phone}
                 </div>
-                <div class="sign"><br/>Auth. Signatory</div>
-              </div>
+            </div>
+            <div class="invoice-badge">
+                <div class="gst-label">GST INVOICE</div>
+                <div style="font-weight:700">#${t.invoiceNo}</div>
+                <div style="font-size:11px; color:#666">${date} &bull; ${time}</div>
+            </div>
+          </div>
+
+          <div class="info-grid">
+            <div class="info-box" style="width: 40%;">
+                <h4>Billed To</h4>
+                <div>${customer.name}</div>
+                <div style="font-weight:400">${customer.phone || '-'}</div>
+            </div>
+            <div class="info-box">
+                <h4>Dr. Ref</h4>
+                <div>${customer.doctor || 'Self'}</div>
+            </div>
+            <div class="info-box" style="text-align: right;">
+                <h4>Mode</h4>
+                <div>${t.paymentMode}</div>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+                <tr>
+                    <th style="width: 5%;">#</th>
+                    <th style="width: 30%;">Item</th>
+                    <th style="width: 15%;">Batch</th>
+                    <th class="text-right" style="width: 10%;">Rate</th>
+                    <th class="text-center" style="width: 8%;">Qty</th>
+                    <th class="text-right" style="width: 15%;">GST Breakdown</th>
+                    <th class="text-right" style="width: 17%;">Net Total</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${t.items.map((item, i) => {
+                    const inclusivePrice = item.price;
+                    const gstPercent = item.gst || 0;
+                    const basePrice = inclusivePrice / (1 + (gstPercent/100));
+                    const taxPerItem = inclusivePrice - basePrice;
+                    const totalTaxForItem = taxPerItem * item.quantity;
+
+                    return `
+                    <tr>
+                        <td>${i+1}</td>
+                        <td>
+                            <div style="font-weight:700; color:#000;">${item.name}</div>
+                            <div style="font-size:10px; color:#6b7280">HSN: ${item.hsn || '-'} | Exp: ${item.expiry ? new Date(item.expiry).toLocaleDateString('en-IN', {month:'short', year:'2-digit'}) : '-'}</div>
+                        </td>
+                        <td>${item.batch}</td>
+                        <td class="text-right">₹${item.price}</td>
+                        <td class="text-center" style="font-weight:700">${item.quantity}</td>
+                        <td class="text-right">
+                            <div style="font-size:10px; color:#666">Tax: ${gstPercent}%</div>
+                            <div style="font-weight:600; color:var(--brand)">₹${totalTaxForItem.toFixed(2)}</div>
+                        </td>
+                        <td class="text-right" style="font-weight:700; color:#000;">₹${item.total.toFixed(2)}</td>
+                    </tr>
+                    `;
+                }).join('')}
+            </tbody>
+          </table>
+
+          <div class="footer-grid">
+            <div class="words-box">
+                <h4>Amount in Words</h4>
+                <strong style="color:var(--brand)">${amountInWords} Only</strong>
+                <div style="margin-top: 10px; color:#999; font-size:10px;">
+                    Note: Prices are inclusive of GST.<br>
+                    Goods once sold will not be returned.
+                </div>
             </div>
 
+            <div class="totals-box">
+                <div class="total-row"><span>Total Taxable Value</span><span>₹${totalTaxable.toFixed(2)}</span></div>
+                <div class="total-row"><span>Total GST Amount</span><span>₹${totalGST.toFixed(2)}</span></div>
+                <div class="total-row"><span>Round Off</span><span>0.00</span></div>
+                <div class="grand-total"><span>Grand Total</span><span>₹${Math.round(finalTotal).toFixed(2)}</span></div>
+            </div>
           </div>
-          <script>window.print();</script>
+
+          <div class="quote-box" style="margin-top:30px; text-align:center;">
+            <div style="font-family:'Dancing Script', cursive; font-size:20px; color:var(--brand);">Get Well Soon!</div>
+            <div class="sign">Authorized Signatory<br>For ${PHARMACY_DETAILS.name}</div>
+          </div>
+
+          <script>
+             setTimeout(function() { window.print(); }, 500);
+          </script>
         </body>
       </html>
     `;
 
-    const billWindow = window.open('', '', 'width=800,height=800');
-    billWindow.document.write(billHTML);
-    billWindow.document.close();
+    const billWindow = window.open('', '', 'width=900,height=900');
+    if(billWindow) {
+        billWindow.document.write(billHTML);
+        billWindow.document.close();
+    } else {
+        alert("Popup blocked! Please allow popups to print.");
+    }
   };
 
   const getFilteredTransactions = () => {
@@ -200,125 +248,114 @@ const DailyReport = () => {
 
   const filteredTransactions = getFilteredTransactions();
 
-  if (!report) return <div>Loading Records...</div>;
+  if (!report) return <div className="text-center p-5">Loading Records...</div>;
 
   return (
-    <div className="section">
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'20px'}}>
-        <h2>📊 Sales Records</h2>
-        <div style={{display:'flex', gap:'10px', alignItems:'center'}}>
-            <button onClick={() => setRange('today')} style={btnStyle}>Today</button>
-            <button onClick={() => setRange('month')} style={btnStyle}>This Month</button>
-            <button onClick={() => setRange('year')} style={btnStyle}>This Year</button>
-            <span style={{marginLeft:'10px'}}>From:</span>
-            <input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} style={{padding:'5px'}} />
-            <span>To:</span>
-            <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} style={{padding:'5px'}} />
+    <div>
+      <div className="flex justify-between items-center" style={{marginBottom:'20px'}}>
+        <h2>📊 Sales Report</h2>
+        <div className="flex items-center gap-4 bg-white p-2 rounded border">
+            <button onClick={() => setRange('today')} className="btn btn-secondary">Today</button>
+            <button onClick={() => setRange('month')} className="btn btn-secondary">Month</button>
+            <span className="text-muted">From:</span>
+            <input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} />
+            <span className="text-muted">To:</span>
+            <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} />
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '30px' }}>
-        <div style={{ padding: '20px', background: '#d4edda', borderRadius: '8px', flex: 1, border: '1px solid #c3e6cb' }}>
-          <h4>Total Revenue</h4>
-          <h1 style={{color: '#155724'}}>₹{report.totalRevenue.toFixed(2)}</h1>
-          <small>{report.totalSalesCount} Bills Generated</small>
+      {/* SUMMARY CARDS */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px', marginBottom: '30px' }}>
+        <div className="card" style={{borderLeft: '5px solid var(--success)'}}>
+          <h4 className="text-muted">Total Revenue</h4>
+          <h1 className="text-success" style={{fontSize: '2.5rem'}}>₹{report.totalRevenue.toFixed(2)}</h1>
+          <div className="text-muted">{report.totalSalesCount} Bills Generated</div>
         </div>
-        <div style={{ padding: '20px', background: '#fff3cd', borderRadius: '8px', flex: 1, border: '1px solid #ffeeba' }}>
-          <h4>Cash Received</h4>
-          <h1 style={{color: '#856404'}}>₹{report.cashRevenue.toFixed(2)}</h1>
+        <div className="card" style={{borderLeft: '5px solid var(--accent)'}}>
+          <h4 className="text-muted">Cash Received</h4>
+          <h1 style={{color: 'var(--accent)', fontSize: '2rem'}}>₹{report.cashRevenue.toFixed(2)}</h1>
         </div>
-        <div style={{ padding: '20px', background: '#d1ecf1', borderRadius: '8px', flex: 1, border: '1px solid #bee5eb' }}>
-          <h4>Online Received</h4>
-          <h1 style={{color: '#0c5460'}}>₹{report.onlineRevenue.toFixed(2)}</h1>
+        <div className="card" style={{borderLeft: '5px solid var(--secondary)'}}>
+          <h4 className="text-muted">Online Received</h4>
+          <h1 style={{color: 'var(--secondary)', fontSize: '2rem'}}>₹{report.onlineRevenue.toFixed(2)}</h1>
         </div>
       </div>
 
-      <hr />
+      <div className="card">
+        <div style={{ marginBottom: '20px' }}>
+            <input 
+                type="text" 
+                placeholder="🔍 Search by Invoice No, Customer Name, or Medicine Name..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{padding: '12px', fontSize: '1rem'}}
+            />
+        </div>
 
-      <div style={{ margin: '20px 0' }}>
-        <input 
-            type="text" 
-            placeholder="🔍 Search by Invoice No, Customer Name, or Medicine Name..." 
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={{ width: '100%', padding: '12px', fontSize: '16px', borderRadius: '5px', border: '1px solid #ccc' }}
-        />
-      </div>
-
-      <h3>📜 Transaction History ({filteredTransactions.length} records)</h3>
-      <div style={{overflowX: 'auto'}}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '10px' }}>
-            <thead style={{ background: '#343a40', color: 'white' }}>
-            <tr>
-                <th style={thStyle}>Date & Time</th>
-                <th style={thStyle}>Invoice Details</th>
-                <th style={thStyle}>Items Sold</th>
-                <th style={thStyle}>Amount</th>
-                <th style={thStyle}>Mode</th>
-            </tr>
-            </thead>
-            <tbody>
-            {filteredTransactions.length === 0 ? (
-                <tr><td colSpan="5" style={{textAlign:'center', padding:'20px'}}>No sales found matching your criteria.</td></tr>
-            ) : (
-                filteredTransactions.map((t) => (
-                <tr key={t._id} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={tdStyle}>
-                        {new Date(t.date).toLocaleDateString()} <br/>
-                        <span style={{fontSize:'12px', color:'#777'}}>{new Date(t.date).toLocaleTimeString()}</span>
-                    </td>
-
-                    {/* CLICKABLE INVOICE LOGIC */}
-                    <td style={tdStyle}>
-                        {(!t.customerDetails || t.customerDetails.name === 'Cash Sale') ? (
-                            <span style={{color: '#777', fontStyle: 'italic'}}>
-                                Invoice not required
-                                <br/><small>(Int. ID: {t.invoiceNo})</small>
-                            </span>
-                        ) : (
-                            <div>
-                                <button 
-                                    onClick={() => handlePrintInvoice(t)}
-                                    style={{
-                                        background: 'none', border: 'none', color: '#007bff', 
-                                        fontWeight: 'bold', textDecoration: 'underline', cursor: 'pointer', fontSize: '14px'
-                                    }}
-                                    title="Click to Reprint Bill"
-                                >
-                                    {t.invoiceNo} 🖨️
-                                </button>
-                                <br/>
-                                👤 {t.customerDetails.name}
-                            </div>
-                        )}
-                    </td>
-
-                    <td style={tdStyle}>
-                        {t.items.map((i, index) => (
-                            <div key={index} style={{fontSize:'13px'}}>• {i.name} <span style={{color:'#555'}}>x {i.quantity}</span></div>
-                        ))}
-                    </td>
-                    <td style={{...tdStyle, fontWeight:'bold', color:'green'}}>₹{t.totalAmount.toFixed(2)}</td>
-                    <td style={tdStyle}>
-                        <span style={{
-                            padding: '4px 8px', borderRadius: '4px',
-                            background: t.paymentMode === 'Cash' ? '#fff3cd' : '#d1ecf1',
-                            color: t.paymentMode === 'Cash' ? '#856404' : '#0c5460',
-                            fontWeight: 'bold', fontSize: '12px'
-                        }}>{t.paymentMode}</span>
-                    </td>
+        <div className="table-container">
+            <table>
+                <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Invoice Details</th>
+                    <th>Items Sold</th>
+                    <th>Amount</th>
+                    <th>Mode</th>
                 </tr>
-                ))
-            )}
-            </tbody>
-        </table>
+                </thead>
+                <tbody>
+                {filteredTransactions.length === 0 ? (
+                    <tr><td colSpan="5" className="text-center p-5 text-muted">No sales found matching your criteria.</td></tr>
+                ) : (
+                    filteredTransactions.map((t) => (
+                    <tr key={t._id}>
+                        <td>
+                            <div style={{fontWeight:'600'}}>{new Date(t.date).toLocaleDateString()}</div>
+                            <div className="text-muted" style={{fontSize:'0.8rem'}}>{new Date(t.date).toLocaleTimeString()}</div>
+                        </td>
+
+                        <td>
+                            {(!t.customerDetails || t.customerDetails.name === 'Cash Sale') ? (
+                                <span className="text-muted" style={{fontStyle: 'italic'}}>
+                                    No Bill <br/><small>ID: {t.invoiceNo}</small>
+                                </span>
+                            ) : (
+                                <div>
+                                    <button 
+                                        onClick={() => handlePrintInvoice(t)}
+                                        className="btn btn-secondary"
+                                        style={{padding: '4px 8px', fontSize: '0.8rem', color: 'var(--primary)', borderColor: 'var(--primary)'}}
+                                    >
+                                        {t.invoiceNo} 🖨️
+                                    </button>
+                                    <div style={{marginTop: '4px', fontWeight: '500'}}>👤 {t.customerDetails.name}</div>
+                                </div>
+                            )}
+                        </td>
+
+                        <td>
+                            {t.items.map((i, index) => (
+                                <div key={index} style={{fontSize:'0.85rem'}}>• {i.name} <span className="text-muted">x {i.quantity}</span></div>
+                            ))}
+                        </td>
+                        <td className="text-success" style={{fontWeight:'bold'}}>₹{t.totalAmount.toFixed(2)}</td>
+                        <td>
+                            <span style={{
+                                padding: '4px 10px', borderRadius: '20px',
+                                background: t.paymentMode === 'Cash' ? '#fff7ed' : '#eff6ff',
+                                color: t.paymentMode === 'Cash' ? '#c2410c' : '#1d4ed8',
+                                fontWeight: '600', fontSize: '0.8rem'
+                            }}>{t.paymentMode}</span>
+                        </td>
+                    </tr>
+                    ))
+                )}
+                </tbody>
+            </table>
+        </div>
       </div>
     </div>
   );
 };
-
-const btnStyle = { padding: '5px 10px', cursor: 'pointer', background: '#e2e6ea', border: '1px solid #ccc', borderRadius:'4px' };
-const thStyle = { padding: '12px', textAlign: 'left' };
-const tdStyle = { padding: '12px', verticalAlign: 'top' };
 
 export default DailyReport;
