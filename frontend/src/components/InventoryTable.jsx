@@ -2,11 +2,10 @@ import React, { useState } from 'react';
 import api from '../api/axios';
 import * as XLSX from 'xlsx';
 
-// Added 'onDelete' to props
 const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   const [editId, setEditId] = useState(null);
   const [editFormData, setEditFormData] = useState({});
-  const [showSP, setShowSP] = useState(false);
+  const [showCP, setShowCP] = useState(false); // Renamed state to track Cost Price visibility
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredMeds = meds.filter(m => 
@@ -36,18 +35,17 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
     XLSX.writeFile(workbook, "Radhe_Pharmacy_Inventory.xlsx");
   };
 
-  const handleToggleSP = async () => {
-    if (showSP) { setShowSP(false); return; }
-    const password = prompt("🔒 Enter Admin Password to view prices:");
+  const handleToggleCP = async () => {
+    if (showCP) { setShowCP(false); return; }
+    const password = prompt("🔒 Enter Admin Password to view COST PRICES:");
     if (!password) return;
     try {
       const res = await api.post('/admin/verify', { password });
-      if (res.data.success) setShowSP(true);
+      if (res.data.success) setShowCP(true);
       else alert("❌ Wrong Password!");
     } catch (err) { alert("Server Error"); }
   };
 
-  // --- NEW DELETE LOGIC ---
   const handleDeleteClick = async (id) => {
     if(!window.confirm("⚠️ Are you sure you want to delete this medicine permanently?")) return;
 
@@ -57,7 +55,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
     try {
         const res = await api.post('/admin/verify', { password });
         if (res.data.success) {
-            onDelete(id); // Call parent delete function
+            onDelete(id); 
         } else {
             alert("❌ Wrong Password! Delete Cancelled.");
         }
@@ -65,7 +63,6 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
         alert("Server Error");
     }
   };
-  // ------------------------
 
   const handleEditClick = (med) => { setEditId(med._id); setEditFormData({ ...med }); };
   const handleEditFormChange = (e) => { setEditFormData({ ...editFormData, [e.target.name]: e.target.value }); };
@@ -88,8 +85,8 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
              <button onClick={handleExport} className="btn btn-success" style={{backgroundColor:'#217346'}}>
                 📊 Export Excel
              </button>
-             <button onClick={handleToggleSP} className={`btn ${showSP ? 'btn-danger' : 'btn-secondary'}`}>
-                {showSP ? '🙈 Hide Prices' : '🔒 View Secret Prices'}
+             <button onClick={handleToggleCP} className={`btn ${showCP ? 'btn-danger' : 'btn-secondary'}`}>
+                {showCP ? '🙈 Hide Cost' : '🔒'}
              </button>
          </div>
       </div>
@@ -104,7 +101,8 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                 <th>Qty</th>
                 <th>MRP</th>
                 <th>GST%</th>
-                {showSP && <th>SP (Secret)</th>}
+                {/* CHANGED HEADER */}
+                {showCP && <th style={{color:'red'}}>CP (Buying)</th>}
                 <th>Bill</th>
                 <th style={{width:'140px'}}>Action</th>
             </tr>
@@ -130,8 +128,9 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                         </select>
                     </td>
 
-                    {showSP && (
-                        <td><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={handleEditFormChange} style={{width:'60px'}} /></td>
+                    {/* CHANGED EDIT FIELD TO COST PRICE */}
+                    {showCP && (
+                        <td><input name="costPrice" type="number" value={editFormData.costPrice} onChange={handleEditFormChange} style={{width:'60px', border:'1px solid red'}} /></td>
                     )}
 
                     <td>-</td>
@@ -159,7 +158,8 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                         </span>
                     </td>
 
-                    {showSP && <td className="text-success" style={{fontWeight:'bold'}}>₹{m.sellingPrice}</td>}
+                    {/* CHANGED DISPLAY TO COST PRICE */}
+                    {showCP && <td style={{fontWeight:'bold', color:'red'}}>₹{m.costPrice}</td>}
 
                     <td>
                         {m.billImage ? (
@@ -169,7 +169,6 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
 
                     <td style={{display:'flex', gap:'8px'}}>
                         <button onClick={() => handleEditClick(m)} className="btn btn-secondary" style={{padding: '4px 8px'}} title="Edit">✏️</button>
-                        {/* DELETE BUTTON */}
                         <button onClick={() => handleDeleteClick(m._id)} className="btn btn-danger" style={{padding: '4px 8px'}} title="Delete">🗑️</button>
                     </td>
                     </>
