@@ -47,7 +47,16 @@ const Dashboard = () => {
     try { await api.put(`/medicines/${id}`, updatedData); alert("Updated Successfully!"); fetchMeds(); } 
     catch (err) { alert("Update Failed"); }
   };
-
+// Add this new function inside Dashboard component
+  const handleDelete = async (id) => {
+    try {
+      await api.delete(`/medicines/${id}`);
+      alert("🗑️ Item Deleted Successfully");
+      fetchMeds(); // Refresh list
+    } catch (err) {
+      alert("Failed to delete item");
+    }
+  };
   return (
     <div>
       <ExpiryAlert />
@@ -95,8 +104,9 @@ const Dashboard = () => {
       </div>
 
       <div className="card">
-         <InventoryTable meds={meds} onUpdate={handleUpdate} />  
-      </div>
+     {/* Pass the onDelete prop here */}
+     <InventoryTable meds={meds} onUpdate={handleUpdate} onDelete={handleDelete} />  
+  </div>
     </div>
   );
 };

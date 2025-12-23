@@ -3,11 +3,9 @@ const router = express.Router();
 const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
-
-// Import the Controller we just created
 const inventoryController = require('../controllers/inventoryController');
 
-// --- CLOUDINARY CONFIG (Keep this here for Uploads) ---
+// Cloudinary Config
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -22,13 +20,19 @@ const storage = new CloudinaryStorage({
   },
 });
 const upload = multer({ storage: storage });
-// -----------------------------------------------------
 
-// DEFINING ROUTES
+// ROUTES
 router.get('/', inventoryController.getMedicines);
 router.get('/search', inventoryController.searchMedicines);
 router.get('/expiring', inventoryController.getExpiringMedicines);
+
 router.post('/', upload.single('billImage'), inventoryController.addMedicine);
 router.put('/:id', inventoryController.updateMedicine);
+
+// --- NEW DELETE ROUTE ---
+router.delete('/:id', inventoryController.deleteMedicine); 
+// ------------------------
+
+
 
 module.exports = router;

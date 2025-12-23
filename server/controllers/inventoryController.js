@@ -1,6 +1,6 @@
 const Medicine = require('../models/Medicine');
 
-// 1. GET ALL MEDICINES (Sorted by Name)
+// 1. GET ALL MEDICINES
 const getMedicines = async (req, res) => {
   try {
     const meds = await Medicine.find().sort({ productName: 1 });
@@ -10,19 +10,17 @@ const getMedicines = async (req, res) => {
   }
 };
 
-// 2. SEARCH MEDICINES (Name, Batch, or Party)
+// 2. SEARCH MEDICINES
 const searchMedicines = async (req, res) => {
   const { q } = req.query;
   if (!q) return res.json([]);
-
   try {
     const meds = await Medicine.find({
       $or: [
         { productName: { $regex: q, $options: 'i' } },
         { batchNumber: { $regex: q, $options: 'i' } },
         { partyName: { $regex: q, $options: 'i' } }
-      ],
-      quantity: { $gt: 0 } // Only show in-stock items for sale
+      ]
     });
     res.json(meds);
   } catch (err) {
@@ -30,15 +28,13 @@ const searchMedicines = async (req, res) => {
   }
 };
 
-// 3. ADD NEW STOCK (With Bill Image & GST)
+// 3. ADD NEW STOCK
 const addMedicine = async (req, res) => {
   try {
     const medData = {
       ...req.body,
-      // Cloudinary gives the URL in req.file.path
       billImage: req.file ? req.file.path : null 
     };
-    
     const newMed = new Medicine(medData);
     const savedMed = await newMed.save();
     res.status(201).json(savedMed);
@@ -47,27 +43,32 @@ const addMedicine = async (req, res) => {
   }
 };
 
-// 4. UPDATE MEDICINE (Edit Price/Qty)
+// 4. UPDATE MEDICINE
 const updateMedicine = async (req, res) => {
   try {
-    const updatedMed = await Medicine.findByIdAndUpdate(
-      req.params.id, 
-      req.body, 
-      { new: true }
-    );
+    const updatedMed = await Medicine.findByIdAndUpdate(req.params.id, req.body, { new: true });
     res.json(updatedMed);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
 };
 
-// 5. EXPIRY ALERTS (Next 30 Days)
+// 5. DELETE MEDICINE (New!)
+const deleteMedicine = async (req, res) => {
+  try {
+    await Medicine.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Medicine Deleted Successfully' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+// 6. EXPIRY ALERTS
 const getExpiringMedicines = async (req, res) => {
   try {
     const today = new Date();
     const nextMonth = new Date();
     nextMonth.setDate(today.getDate() + 30);
-
     const expiring = await Medicine.find({
       expiryDate: { $gte: today, $lte: nextMonth }
     });
@@ -77,11 +78,11 @@ const getExpiringMedicines = async (req, res) => {
   }
 };
 
-// Export all functions
 module.exports = {
   getMedicines,
   searchMedicines,
   addMedicine,
   updateMedicine,
+  deleteMedicine, // <--- Don't forget to export this!
   getExpiringMedicines
 };

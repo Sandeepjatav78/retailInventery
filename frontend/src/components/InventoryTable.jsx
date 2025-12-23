@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import api from '../api/axios';
 import * as XLSX from 'xlsx';
 
-const InventoryTable = ({ meds, onUpdate }) => {
+// Added 'onDelete' to props
+const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   const [editId, setEditId] = useState(null);
   const [editFormData, setEditFormData] = useState({});
   const [showSP, setShowSP] = useState(false);
@@ -19,7 +20,7 @@ const InventoryTable = ({ meds, onUpdate }) => {
         "Product Name": m.productName,
         "Batch": m.batchNumber,
         "HSN": m.hsnCode,
-        "GST %": m.gst, // <--- Added to Excel
+        "GST %": m.gst,
         "Quantity": m.quantity,
         "MRP": m.mrp,
         "Selling Price": m.sellingPrice,
@@ -45,6 +46,26 @@ const InventoryTable = ({ meds, onUpdate }) => {
       else alert("❌ Wrong Password!");
     } catch (err) { alert("Server Error"); }
   };
+
+  // --- NEW DELETE LOGIC ---
+  const handleDeleteClick = async (id) => {
+    if(!window.confirm("⚠️ Are you sure you want to delete this medicine permanently?")) return;
+
+    const password = prompt("🧨 Enter Admin Password to DELETE:");
+    if (!password) return;
+
+    try {
+        const res = await api.post('/admin/verify', { password });
+        if (res.data.success) {
+            onDelete(id); // Call parent delete function
+        } else {
+            alert("❌ Wrong Password! Delete Cancelled.");
+        }
+    } catch (err) {
+        alert("Server Error");
+    }
+  };
+  // ------------------------
 
   const handleEditClick = (med) => { setEditId(med._id); setEditFormData({ ...med }); };
   const handleEditFormChange = (e) => { setEditFormData({ ...editFormData, [e.target.name]: e.target.value }); };
@@ -82,10 +103,10 @@ const InventoryTable = ({ meds, onUpdate }) => {
                 <th>Party</th>
                 <th>Qty</th>
                 <th>MRP</th>
-                <th>GST%</th> {/* NEW COLUMN */}
+                <th>GST%</th>
                 {showSP && <th>SP (Secret)</th>}
                 <th>Bill</th>
-                <th>Action</th>
+                <th style={{width:'140px'}}>Action</th>
             </tr>
             </thead>
             <tbody>
@@ -99,7 +120,6 @@ const InventoryTable = ({ meds, onUpdate }) => {
                     <td><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} style={{width:'60px'}} /></td>
                     <td><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} style={{width:'60px'}} /></td>
                     
-                    {/* GST EDIT INPUT */}
                     <td>
                         <select name="gst" value={editFormData.gst} onChange={handleEditFormChange} style={{padding:'5px'}}>
                             <option value="0">0%</option>
@@ -115,9 +135,9 @@ const InventoryTable = ({ meds, onUpdate }) => {
                     )}
 
                     <td>-</td>
-                    <td className="flex">
-                        <button onClick={handleSaveClick} className="btn btn-success" style={{padding:'6px'}}>Save</button>
-                        <button onClick={() => setEditId(null)} className="btn btn-danger" style={{padding:'6px'}}>Cancel</button>
+                    <td className="flex" style={{gap:'5px'}}>
+                        <button onClick={handleSaveClick} className="btn btn-success" style={{padding:'6px'}}>💾</button>
+                        <button onClick={() => setEditId(null)} className="btn btn-secondary" style={{padding:'6px'}}>❌</button>
                     </td>
                     </>
                 ) : (
@@ -133,7 +153,6 @@ const InventoryTable = ({ meds, onUpdate }) => {
                     </td>
                     <td>{m.mrp}</td>
                     
-                    {/* GST DISPLAY */}
                     <td>
                         <span className="badge badge-online" style={{background:'#e0e7ff', color:'#3730a3'}}>
                             {m.gst}%
@@ -148,8 +167,10 @@ const InventoryTable = ({ meds, onUpdate }) => {
                         ) : <span className="text-muted">-</span>}
                     </td>
 
-                    <td>
-                        <button onClick={() => handleEditClick(m)} className="btn btn-secondary" style={{padding: '4px 8px'}}>Edit</button>
+                    <td style={{display:'flex', gap:'8px'}}>
+                        <button onClick={() => handleEditClick(m)} className="btn btn-secondary" style={{padding: '4px 8px'}} title="Edit">✏️</button>
+                        {/* DELETE BUTTON */}
+                        <button onClick={() => handleDeleteClick(m._id)} className="btn btn-danger" style={{padding: '4px 8px'}} title="Delete">🗑️</button>
                     </td>
                     </>
                 )}
