@@ -183,3 +183,230 @@ tr:hover { background-color: #f9fafb; }
   width: 100%;
   max-width: 400px;
 }
+
+/* --- LAYOUT (Sidebar Left, Content Right) --- */
+.app-container {
+  display: flex;
+  min-height: 100vh;
+  background-color: #f1f5f9; /* Light Grey Background */
+}
+
+/* --- SIDEBAR STYLING --- */
+.sidebar {
+  width: 250px;
+  background-color: #0f172a; /* Dark Blue/Black */
+  color: white;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  height: 100vh;
+  left: 0;
+  top: 0;
+  box-shadow: 4px 0 10px rgba(0,0,0,0.1);
+}
+
+.logo-container {
+  padding: 20px;
+  text-align: center;
+  border-bottom: 1px solid #1e293b;
+}
+
+.logo-text {
+  color: #38bdf8; /* Sky Blue */
+  margin: 0;
+  font-family: 'Segoe UI', sans-serif;
+  letter-spacing: 1px;
+}
+
+.menu-list {
+  list-style: none;
+  padding: 0;
+  margin: 20px 0;
+  flex: 1;
+}
+
+.menu-link {
+  display: block;
+  padding: 15px 25px;
+  color: #cbd5e1;
+  text-decoration: none;
+  font-size: 1.1rem;
+  font-weight: 500;
+  transition: all 0.3s;
+  border-left: 4px solid transparent;
+}
+
+.menu-link:hover {
+  background-color: #1e293b;
+  color: white;
+  padding-left: 35px; /* Slide effect */
+}
+
+.active-link {
+  background-color: #1e293b;
+  color: #38bdf8;
+  border-left: 4px solid #38bdf8;
+}
+
+.sidebar-footer {
+  padding: 20px;
+  text-align: center;
+  border-top: 1px solid #1e293b;
+}
+
+/* --- MAIN CONTENT AREA --- */
+.main-content {
+  margin-left: 250px; /* Same as sidebar width */
+  flex: 1;
+  padding: 30px;
+  width: calc(100% - 250px);
+}
+
+/* --- CARD STYLE (For Dashboard/Sale pages) --- */
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 25px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+}
+
+/* --- BUTTONS --- */
+.btn {
+  padding: 10px 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: 0.2s;
+}
+.btn-primary {
+  background: linear-gradient(135deg, #0f766e 0%, #115e59 100%);
+  color: white;
+  border: none;
+}
+.btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+
+.btn-danger { background: #ef4444; color: white; border: none; }
+.btn-secondary { background: #e2e8f0; color: #1e293b; border: 1px solid #cbd5e1; }
+
+/* --- APP LAYOUT --- */
+.app-container {
+  display: flex;
+  flex-direction: column; /* Stack Top to Bottom */
+  min-height: 100vh;
+  background-color: #f1f5f9;
+}
+
+/* --- NAVBAR STYLING (Top Header) --- */
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #0f172a; /* Dark Blue */
+  color: white;
+  padding: 0 30px;
+  height: 70px; /* Fixed Height */
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.nav-logo {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #38bdf8;
+  font-family: 'Segoe UI', sans-serif;
+  letter-spacing: 1px;
+}
+
+.nav-menu {
+  display: flex;
+  list-style: none;
+  gap: 30px; /* Space between links */
+  margin: 0;
+  padding: 0;
+}
+
+.nav-link {
+  text-decoration: none;
+  color: #cbd5e1;
+  font-weight: 600;
+  font-size: 1rem;
+  padding: 22px 5px; /* Height match navbar */
+  border-bottom: 3px solid transparent;
+  transition: 0.3s;
+}
+
+.nav-link:hover {
+  color: white;
+}
+
+.active-nav {
+  color: white;
+  border-bottom: 3px solid #38bdf8; /* Blue line under active tab */
+}
+
+.nav-user {
+  font-size: 0.9rem;
+  background: #1e293b;
+  padding: 5px 15px;
+  border-radius: 20px;
+}
+
+/* --- MAIN CONTENT (Full Width Now) --- */
+.main-content {
+  flex: 1;
+  padding: 30px;
+  max-width: 1200px;
+  margin: 0 auto; /* Center content */
+  width: 100%;
+}
+
+/* --- Keep Card & Button Styles same as before --- */
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 25px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+}
+
+.btn { padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+.btn-primary { background: linear-gradient(135deg, #0f766e 0%, #115e59 100%); color: white; border: none; }
+.btn-danger { background: #ef4444; color: white; border: none; }
+.btn-secondary { background: #e2e8f0; color: #1e293b; border: 1px solid #cbd5e1; }
+
+/* --- NAVBAR RIGHT SIDE --- */
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.user-badge {
+  font-size: 0.9rem;
+  background: #1e293b;
+  padding: 6px 12px;
+  border-radius: 20px;
+  color: #cbd5e1;
+}
+
+/* --- LOGOUT BUTTON STYLE --- */
+.btn-logout {
+  background: transparent;
+  border: 1px solid #ef4444; /* Red Border */
+  color: #ef4444;            /* Red Text */
+  padding: 6px 15px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-logout:hover {
+  background: #ef4444;
+  color: white;
+  transform: translateX(3px); /* Thoda right khiske ga */
+}

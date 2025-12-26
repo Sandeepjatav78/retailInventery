@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
 const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   const [editId, setEditId] = useState(null);
   const [editFormData, setEditFormData] = useState({});
-  const [showCP, setShowCP] = useState(false); // Renamed state to track Cost Price visibility
+  const [showCP, setShowCP] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredMeds = meds.filter(m => 
@@ -18,14 +18,14 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
     const dataToExport = filteredMeds.map(m => ({
         "Product Name": m.productName,
         "Batch": m.batchNumber,
-        "HSN": m.hsnCode,
-        "GST %": m.gst,
-        "Quantity": m.quantity,
+        "Party Name": m.partyName || '-',
+        "Packing": m.packSize || 1,
+        "Qty (Sealed Strips)": m.quantity,
+        "Loose (Open Tabs)": m.looseQty || 0, 
         "MRP": m.mrp,
         "Selling Price": m.sellingPrice,
         "Cost Price": m.costPrice,
-        "Party Name": m.partyName || '-',
-        "Purchase Date": m.purchaseDate ? new Date(m.purchaseDate).toLocaleDateString() : '-',
+        "GST %": m.gst,
         "Expiry Date": new Date(m.expiryDate).toLocaleDateString(),
     }));
 
@@ -48,20 +48,13 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
 
   const handleDeleteClick = async (id) => {
     if(!window.confirm("⚠️ Are you sure you want to delete this medicine permanently?")) return;
-
     const password = prompt("🧨 Enter Admin Password to DELETE:");
     if (!password) return;
-
     try {
         const res = await api.post('/admin/verify', { password });
-        if (res.data.success) {
-            onDelete(id); 
-        } else {
-            alert("❌ Wrong Password! Delete Cancelled.");
-        }
-    } catch (err) {
-        alert("Server Error");
-    }
+        if (res.data.success) { onDelete(id); } 
+        else { alert("❌ Wrong Password! Delete Cancelled."); }
+    } catch (err) { alert("Server Error"); }
   };
 
   const handleEditClick = (med) => { setEditId(med._id); setEditFormData({ ...med }); };
@@ -86,7 +79,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                 📊 Export Excel
              </button>
              <button onClick={handleToggleCP} className={`btn ${showCP ? 'btn-danger' : 'btn-secondary'}`}>
-                {showCP ? '🙈 Hide Cost' : '🔒'}
+                {showCP ? '🙈 Hide Cost' : '🔒 View Cost Price'}
              </button>
          </div>
       </div>
@@ -98,13 +91,21 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                 <th>Name</th>
                 <th>Batch</th>
                 <th>Party</th>
-                <th>Qty</th>
+                <th>Pack</th>
+                
+                {/* HEADERS */}
+                <th>Strips</th>
+                <th style={{color:'#ea580c', background:'#fff7ed'}}>Loose</th> 
+                
                 <th>MRP</th>
+                <th style={{color:'green'}}>S.Price</th>
                 <th>GST%</th>
-                {/* CHANGED HEADER */}
-                {showCP && <th style={{color:'red'}}>CP (Buying)</th>}
+                {showCP && <th style={{color:'red'}}>CP</th>}
+                
+                {/* BILL COLUMN IS BACK */}
                 <th>Bill</th>
-                <th style={{width:'140px'}}>Action</th>
+                
+                <th style={{width:'100px'}}>Action</th>
             </tr>
             </thead>
             <tbody>
@@ -115,25 +116,35 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <td><input name="productName" value={editFormData.productName} onChange={handleEditFormChange} /></td>
                     <td><input name="batchNumber" value={editFormData.batchNumber} onChange={handleEditFormChange} style={{width:'80px'}} /></td>
                     <td><input name="partyName" value={editFormData.partyName} onChange={handleEditFormChange} /></td>
-                    <td><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} style={{width:'60px'}} /></td>
-                    <td><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} style={{width:'60px'}} /></td>
                     
+                    <td><input name="packSize" type="number" value={editFormData.packSize} onChange={handleEditFormChange} style={{width:'40px', textAlign:'center'}} /></td>
+
+                    {/* EDIT QTY */}
+                    <td><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} style={{width:'50px'}} /></td>
+                    
+                    {/* EDIT LOOSE QTY */}
+                    <td style={{background:'#fff7ed'}}>
+                        <input name="looseQty" type="number" value={editFormData.looseQty} onChange={handleEditFormChange} style={{width:'50px', border:'1px solid orange'}} />
+                    </td>
+
+                    <td><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} style={{width:'60px'}} /></td>
+                    <td><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={handleEditFormChange} style={{width:'60px', fontWeight:'bold', color:'green'}} /></td>
+
                     <td>
                         <select name="gst" value={editFormData.gst} onChange={handleEditFormChange} style={{padding:'5px'}}>
                             <option value="0">0%</option>
                             <option value="5">5%</option>
                             <option value="12">12%</option>
                             <option value="18">18%</option>
-                            <option value="28">28%</option>
                         </select>
                     </td>
 
-                    {/* CHANGED EDIT FIELD TO COST PRICE */}
                     {showCP && (
                         <td><input name="costPrice" type="number" value={editFormData.costPrice} onChange={handleEditFormChange} style={{width:'60px', border:'1px solid red'}} /></td>
                     )}
 
                     <td>-</td>
+
                     <td className="flex" style={{gap:'5px'}}>
                         <button onClick={handleSaveClick} className="btn btn-success" style={{padding:'6px'}}>💾</button>
                         <button onClick={() => setEditId(null)} className="btn btn-secondary" style={{padding:'6px'}}>❌</button>
@@ -145,22 +156,30 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <td className="text-muted">{m.batchNumber}</td>
                     <td style={{fontSize:'0.85rem', color:'#555'}}>{m.partyName || '-'}</td>
                     
+                    <td style={{textAlign:'center', fontWeight:'bold', color:'#555'}}>
+                        {m.packSize || 1}
+                    </td>
+
+                    {/* SEALED STRIPS */}
                     <td>
-                        <span style={{fontWeight:'bold', color: m.quantity < 10 ? 'var(--danger)' : 'inherit'}}>
+                        <span style={{fontWeight:'bold', color: m.quantity < 5 ? 'var(--danger)' : 'inherit'}}>
                             {m.quantity}
                         </span>
                     </td>
-                    <td>{m.mrp}</td>
-                    
-                    <td>
-                        <span className="badge badge-online" style={{background:'#e0e7ff', color:'#3730a3'}}>
-                            {m.gst}%
-                        </span>
+
+                    {/* LOOSE TABS */}
+                    <td style={{textAlign:'center', fontWeight:'bold', color:'#ea580c', background:'#fff7ed'}}>
+                        {m.looseQty || 0}
                     </td>
 
-                    {/* CHANGED DISPLAY TO COST PRICE */}
+                    <td>{m.mrp}</td>
+                    <td style={{fontWeight:'bold', color:'green'}}>₹{m.sellingPrice}</td>
+                    
+                    <td><span className="badge badge-online" style={{background:'#e0e7ff', color:'#3730a3'}}>{m.gst}%</span></td>
+
                     {showCP && <td style={{fontWeight:'bold', color:'red'}}>₹{m.costPrice}</td>}
 
+                    {/* BILL VIEW BUTTON (RESTORED) */}
                     <td>
                         {m.billImage ? (
                             <a href={m.billImage} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{padding: '4px 8px', fontSize: '0.8rem'}}>View</a>

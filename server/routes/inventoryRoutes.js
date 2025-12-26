@@ -32,7 +32,14 @@ router.put('/:id', inventoryController.updateMedicine);
 // --- NEW DELETE ROUTE ---
 router.delete('/:id', inventoryController.deleteMedicine); 
 // ------------------------
+// Add this line with other routes
+router.post('/dose', inventoryController.sellLooseMedicine);
 
+// ... purane routes ...
+router.post('/dose', inventoryController.sellLooseMedicine);
 
-
+// --- NEW RUSH MODE ROUTES ---
+router.post('/dose/quick', inventoryController.addQuickEntry);
+router.get('/dose/pending', inventoryController.getPendingEntries);
+router.post('/dose/resolve', inventoryController.resolvePendingEntry);
 module.exports = router;

@@ -1,42 +1,65 @@
 import React from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import '../App.css'; 
 
-const Navbar = ({ setView, currentView }) => {
+const Navbar = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  
+  const isActive = (path) => location.pathname === path ? 'active-nav' : '';
+
+  const handleLogout = () => {
+    if(window.confirm("Are you sure you want to Logout?")) {
+        localStorage.removeItem('token'); // Token delete
+        localStorage.removeItem('user');  // User data delete
+        navigate('/login'); // Redirect to Login
+    }
+  };
+
   return (
-    <nav style={{ marginBottom: '20px', padding: '10px', background: '#f8f9fa', borderRadius: '8px' }}>
-      <button 
-        onClick={() => setView('pos')} 
-        className={currentView === 'pos' ? 'active' : ''}
-        style={btnStyle(currentView === 'pos')}
-      >
-        Point of Sale
-      </button>
-      <button 
-        onClick={() => setView('inventory')} 
-        className={currentView === 'inventory' ? 'active' : ''}
-        style={btnStyle(currentView === 'inventory')}
-      >
-        Inventory (Dashboard)
-      </button>
-      <button 
-        onClick={() => setView('reports')} 
-        className={currentView === 'reports' ? 'active' : ''}
-        style={btnStyle(currentView === 'reports')}
-      >
-        Daily Reports
-      </button>
+    <nav className="navbar">
+      {/* --- LOGO --- */}
+      <div className="nav-logo">
+        Radhe Pharmacy
+      </div>
+
+      {/* --- LINKS --- */}
+      <ul className="nav-menu">
+        <li>
+            <Link to="/" className={`nav-link ${isActive('/')}`}>
+               📦 Inventory
+            </Link>
+        </li>
+        <li>
+            <Link to="/sales" className={`nav-link ${isActive('/sales')}`}>
+               💰 New Sale
+            </Link>
+        </li>
+        
+        {/* DOSE BUTTON */}
+        <li>
+            <Link to="/dose" className={`nav-link ${isActive('/dose')}`} style={{color: '#fbbf24', borderBottom: isActive('/dose') ? '3px solid #fbbf24' : 'none'}}>
+               💊 Quick Dose
+            </Link>
+        </li>
+
+        {/* REPORT BUTTON (Added Back) */}
+        <li>
+            <Link to="/reports" className={`nav-link ${isActive('/reports')}`}>
+               📊 Reports
+            </Link>
+        </li>
+      </ul>
+
+      {/* --- RIGHT SIDE (USER & LOGOUT) --- */}
+      <div className="nav-right">
+         <span className="user-badge">👨‍⚕️ Admin</span>
+         <button onClick={handleLogout} className="btn-logout">
+            Logout ➔
+         </button>
+      </div>
     </nav>
   );
 };
-
-// Simple helper for button styles
-const btnStyle = (isActive) => ({
-  marginRight: '10px',
-  padding: '10px 20px',
-  border: isActive ? '2px solid #007bff' : '1px solid #ccc',
-  background: isActive ? '#007bff' : 'white',
-  color: isActive ? 'white' : 'black',
-  cursor: 'pointer',
-  borderRadius: '5px'
-});
 
 export default Navbar;

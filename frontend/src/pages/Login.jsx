@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
-import api from '../api/axios';
 import { useNavigate } from 'react-router-dom';
-import '../App.css'; // Import Styles
+import api from '../api/axios';
+import '../App.css';
 
 const Login = () => {
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const navigate = useNavigate();
@@ -12,52 +11,46 @@ const Login = () => {
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      const res = await api.post('/admin/login', { username, password });
+      // Hum wahi API use karenge jo aapne admin verify ke liye banayi thi
+      const res = await api.post('/admin/verify', { password });
+      
       if (res.data.success) {
-        localStorage.setItem('token', res.data.token);
-        navigate('/'); 
+        localStorage.setItem('token', 'admin-logged-in'); // Token Save
+        navigate('/'); // Go to Dashboard
       } else {
-        setError('Invalid Username or Password');
+        setError('❌ Wrong Password');
       }
     } catch (err) {
-      setError('Server Error or Network Issue');
+      setError('Server Error. Try again.');
     }
   };
 
   return (
-    <div className="login-page">
-      <div className="login-card">
-        <div style={{textAlign: 'center', marginBottom: '30px'}}>
-          <h1 style={{color: 'var(--primary)', fontSize: '2rem'}}>🏥</h1>
-          <h2>Radhe Pharmacy</h2>
-          <p className="text-muted">Management System Login</p>
-        </div>
+    <div style={{
+      height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', 
+      background: 'linear-gradient(135deg, #0f172a 0%, #1e293b 100%)'
+    }}>
+      <div className="card" style={{width: '350px', padding: '40px', textAlign: 'center'}}>
+        <h2 style={{color: '#0f766e', marginBottom:'10px'}}>Radhe Pharmacy</h2>
+        <p className="text-muted" style={{marginBottom:'30px'}}>Please login to continue</p>
         
-        {error && <div style={{background: '#fee2e2', color: '#b91c1c', padding: '10px', borderRadius: '6px', marginBottom: '20px', fontSize: '0.9rem', textAlign: 'center'}}>{error}</div>}
-
-        <form onSubmit={handleLogin} className="flex-col gap-4">
-          <div>
-            <label>Username</label>
-            <input 
-              type="text" 
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="admin"
-            />
-          </div>
+        <form onSubmit={handleLogin}>
+          <input 
+            type="password" 
+            placeholder="Enter Admin Password" 
+            value={password} 
+            onChange={(e) => setPassword(e.target.value)} 
+            style={{
+              width: '100%', padding: '15px', borderRadius: '8px', 
+              border: '1px solid #ccc', fontSize: '1.1rem', marginBottom: '20px'
+            }}
+            autoFocus
+          />
           
-          <div>
-            <label>Password</label>
-            <input 
-              type="password" 
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••"
-            />
-          </div>
+          {error && <div style={{color:'red', marginBottom:'15px'}}>{error}</div>}
 
-          <button type="submit" className="btn btn-primary w-full" style={{marginTop: '10px', padding: '12px'}}>
-            Sign In to Dashboard
+          <button className="btn btn-primary" style={{width: '100%', padding: '15px', fontSize: '1.2rem'}}>
+            Login ➔
           </button>
         </form>
       </div>

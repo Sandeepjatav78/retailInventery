@@ -1,12 +1,11 @@
 import React from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 
-const PrivateRoute = () => {
+const PrivateRoute = ({ children }) => {
   const token = localStorage.getItem('token');
-
-  // If token exists, show the inner pages (Outlet)
-  // If no token, redirect to Login
-  return token ? <Outlet /> : <Navigate to="/login" />;
+  
+  // Agar token nahi hai, to Login page par bhej do
+  return token ? children : <Navigate to="/login" />;
 };
 
 export default PrivateRoute;

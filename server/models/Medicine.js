@@ -1,29 +1,28 @@
 const mongoose = require('mongoose');
 
 const MedicineSchema = new mongoose.Schema({
-  // Basic Details
   productName: { type: String, required: true },
   batchNumber: { type: String, required: true },
-  hsnCode: { type: String }, // Used for GST Billing
+  hsnCode: { type: String },
   
-  // Pricing & Tax
   mrp: { type: Number, required: true },
-  sellingPrice: { type: Number, required: true },
+  sellingPrice: { type: Number, required: true }, // Price PER STRIP
   costPrice: { type: Number, required: true },
-  gst: { type: Number, default: 0 }, // <--- V.IMP: Tax Percentage
+  
+  gst: { type: Number, default: 0 },
   maxDiscount: { type: Number, default: 0 },
   
-  // Inventory Details
-  quantity: { type: Number, required: true },
-  expiryDate: { type: Date, required: true },
+  quantity: { type: Number, required: true }, // SEALED STRIPS (पत्ते)
+  packSize: { type: Number, default: 10 },    // 1 पत्ते में कितनी गोली
   
-  // Supplier Info (New Fields)
-  partyName: { type: String },       // <--- NEW: Supplier Name
-  purchaseDate: { type: Date },      // <--- NEW: When you bought it
-  supplier: { type: String },        // (Optional: Old field, can keep for backup)
-
-  // Evidence
-  billImage: { type: String }        // Cloudinary URL
+  // --- NEW FIELD: LOOSE TABLETS ---
+  looseQty: { type: Number, default: 0 }, // खुल्ली गोलियां (जैसे 2, 4)
+  // --------------------------------
+  
+  expiryDate: { type: Date, required: true },
+  partyName: { type: String },
+  purchaseDate: { type: Date },
+  billImage: { type: String }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Medicine', MedicineSchema);
