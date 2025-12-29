@@ -1,130 +1,125 @@
-import React, { useState, useEffect } from 'react';
-import api from '../api/axios';
-import '../App.css'; 
-
-const PHARMACY_DETAILS = {
-  name: "RADHE PHARMACY",
-  address: "Hari Singh Chowk, Devi Mandir Road, Panipat",
-  gstin: "06NNTPS0144E",
-  dlNo: "RLF20HR2025005933, RLF21HR2025005925",
-  phone: "8053229309",
-  email: "radhepharmacy099@gmail.com"
-};
-
-const numberToWords = (num) => {
-  const a = ['','One ','Two ','Three ','Four ', 'Five ','Six ','Seven ','Eight ','Nine ','Ten ','Eleven ','Twelve ','Thirteen ','Fourteen ','Fifteen ','Sixteen ','Seventeen ','Eighteen ','Nineteen '];
-  const b = ['', '', 'Twenty','Thirty','Forty','Fifty', 'Sixty','Seventy','Eighty','Ninety'];
-  if ((num = num.toString()).length > 9) return 'overflow';
-  let n = ('000000000' + num).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
-  if (!n) return; var str = '';
-  str += (n[1] != 0) ? (a[Number(n[1])] || b[n[1][0]] + ' ' + a[n[1][1]]) + 'Crore ' : '';
-  str += (n[2] != 0) ? (a[Number(n[2])] || b[n[2][0]] + ' ' + a[n[2][1]]) + 'Lakh ' : '';
-  str += (n[3] != 0) ? (a[Number(n[3])] || b[n[3][0]] + ' ' + a[n[3][1]]) + 'Thousand ' : '';
-  str += (n[4] != 0) ? (a[Number(n[4])] || b[n[4][0]] + ' ' + a[n[4][1]]) + 'Hundred ' : '';
-  str += (n[5] != 0) ? ((str != '') ? 'and ' : '') + (a[Number(n[5])] || b[n[5][0]] + ' ' + a[n[5][1]]) + 'only ' : '';
-  return str;
-};
+import React, { useState, useEffect, useRef } from "react";
+import api from "../api/axios";
+import { generateBillHTML } from "../utils/BillGenerator";
+import "../App.css";
 
 const SaleForm = () => {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
-  const [cart, setCart] = useState([]);
-  const [paymentMode, setPaymentMode] = useState('Cash');
-  const [amountGiven, setAmountGiven] = useState('');
-  const [changeToReturn, setChangeToReturn] = useState(0);
+  // --- 1. LOAD SAVED STATE ---
+  const getSavedState = (key, defaultValue) => {
+    try {
+      const saved = localStorage.getItem("draft_sale_v2");
+      if (!saved) return defaultValue;
+      const parsed = JSON.parse(saved);
+      return parsed[key] !== undefined ? parsed[key] : defaultValue;
+    } catch (e) {
+      return defaultValue;
+    }
+  };
 
-  // Price Editing State
-  const [editingIndex, setEditingIndex] = useState(null);
-  const [tempPrice, setTempPrice] = useState('');
-
-  const [isBillNeeded, setIsBillNeeded] = useState(true);
-  const [customer, setCustomer] = useState({ name: '', phone: '', doctor: '' });
-  const [invoiceNo, setInvoiceNo] = useState(`INV-${Math.floor(Date.now() / 1000)}`);
+  // --- 2. STATES ---
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]); 
   
-  // Last Sale State (For Reprinting)
+  const [cart, setCart] = useState(() => getSavedState("cart", []));
+  const [paymentMode, setPaymentMode] = useState(() => getSavedState("paymentMode", "Cash"));
+  const [amountGiven, setAmountGiven] = useState(() => getSavedState("amountGiven", ""));
+  const [changeToReturn, setChangeToReturn] = useState(0);
+  const [isBillNeeded, setIsBillNeeded] = useState(() => getSavedState("isBillNeeded", true));
+  const [customer, setCustomer] = useState(() => getSavedState("customer", { name: "", phone: "", doctor: "" }));
+  
+  const [invoiceNo, setInvoiceNo] = useState("Loading...");
+
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const resultListRef = useRef(null);
+  const [editingIndex, setEditingIndex] = useState(null);
+  const [tempPrice, setTempPrice] = useState("");
   const [lastSale, setLastSale] = useState(null);
 
-  useEffect(() => {
-    if (query.length > 1) {
-      api.get(`/medicines/search?q=${query}`).then(res => setResults(res.data));
-    } else { setResults([]); }
-  }, [query]);
+  // --- 3. FETCH INVOICE ID ---
+  const fetchNextInvoice = async () => {
+    try {
+        const res = await api.get('/sales/next-id');
+        if(res.data.success) setInvoiceNo(res.data.nextInvoiceNo);
+    } catch (err) {
+        setInvoiceNo("OFFLINE"); 
+    }
+  };
 
+  useEffect(() => { fetchNextInvoice(); }, []);
+
+  // --- 4. AUTO-SAVE ---
+  useEffect(() => {
+    const dataToSave = { cart, customer, paymentMode, isBillNeeded, amountGiven, query };
+    localStorage.setItem("draft_sale_v2", JSON.stringify(dataToSave));
+  }, [cart, customer, paymentMode, isBillNeeded, amountGiven, query]);
+
+  // --- 5. CALCULATIONS ---
   useEffect(() => {
     const total = cart.reduce((a, b) => a + b.total, 0);
-    if (amountGiven && paymentMode === 'Cash') {
-        setChangeToReturn(parseFloat(amountGiven) - total);
-    } else { setChangeToReturn(0); }
+    const given = parseFloat(amountGiven) || 0;
+    setChangeToReturn(paymentMode === "Cash" ? given - total : 0);
   }, [amountGiven, cart, paymentMode]);
 
-  const addToCart = (med) => {
-    // Clear last sale info when starting a new cart
-    if (lastSale) setLastSale(null);
-
-    const existingIndex = cart.findIndex(item => item.medicineId === med._id);
-    if (existingIndex !== -1) {
-      const newCart = [...cart];
-      if (newCart[existingIndex].quantity + 1 <= med.quantity) {
-        newCart[existingIndex].quantity += 1;
-        newCart[existingIndex].total = newCart[existingIndex].quantity * newCart[existingIndex].price;
-        setCart(newCart);
-      } else { alert(`Max stock is ${med.quantity}`); }
+  // --- 6. SEARCH ---
+  useEffect(() => {
+    if (query.length > 1) {
+      api.get(`/medicines/search?q=${query}`).then((res) => {
+        setResults(res.data);
+        setFocusedIndex(-1);
+      });
     } else {
-      let initialDiscount = 0;
-      if(med.mrp > 0) initialDiscount = ((med.mrp - med.sellingPrice) / med.mrp) * 100;
-      
+      setResults([]);
+      setFocusedIndex(-1);
+    }
+  }, [query]);
+
+  // --- 7. CORE ACTIONS ---
+  const addToCart = (med) => {
+    setLastSale(null);
+    const idx = cart.findIndex((item) => item.medicineId === med._id);
+    if (idx !== -1) {
+      const newCart = [...cart];
+      if (newCart[idx].quantity + 1 <= med.quantity) {
+        newCart[idx].quantity += 1;
+        newCart[idx].total = newCart[idx].quantity * newCart[idx].price;
+        setCart(newCart);
+      } else { alert(`Stock Limit: ${med.quantity}`); }
+    } else {
+      const discount = med.mrp > 0 ? ((med.mrp - med.sellingPrice) / med.mrp) * 100 : 0;
       setCart([...cart, {
-        medicineId: med._id,
-        name: med.productName,
-        mrp: med.mrp,
-        price: med.sellingPrice,
-        discount: initialDiscount.toFixed(2),
-        maxDiscount: med.maxDiscount || 0, 
-        gst: med.gst || 0,
-        hsn: med.hsnCode || 'N/A',
-        batch: med.batchNumber || 'N/A',
-        expiry: med.expiryDate,
-        quantity: 1,
-        total: med.sellingPrice,
-        maxStock: med.quantity,
-        packSize: med.packSize || 1
+        medicineId: med._id, name: med.productName, mrp: med.mrp, price: med.sellingPrice,
+        discount: discount.toFixed(2), gst: med.gst || 0, hsn: med.hsnCode || "N/A",
+        batch: med.batchNumber || "N/A", expiry: med.expiryDate, quantity: 1,
+        total: med.sellingPrice, maxStock: med.quantity, packSize: med.packSize || 1,
       }]);
     }
-    setQuery('');
-    setResults([]);
+    setQuery(""); setResults([]);
   };
 
-  // --- PRICE EDIT LOGIC ---
+  const updateQty = (index, val) => {
+      const newQty = parseFloat(val);
+      if(!newQty || newQty <= 0) return;
+      const newCart = [...cart];
+      if(newQty > newCart[index].maxStock) return alert(`Max Stock: ${newCart[index].maxStock}`);
+      newCart[index].quantity = newQty;
+      newCart[index].total = newQty * newCart[index].price;
+      setCart(newCart);
+  };
+
+  const removeFromCart = (idx) => {
+      const c = [...cart];
+      c.splice(idx, 1);
+      setCart(c);
+  };
+
   const handleInitiateEdit = async (index, currentPrice) => {
-    const password = prompt("🔒 Enter Admin Password to change Price:");
+    const password = prompt("🔒 Admin Password:");
     if (!password) return;
     try {
-      const res = await api.post('/admin/verify', { password });
-      if (res.data.success) {
-        setEditingIndex(index);
-        setTempPrice(currentPrice);
-      } else { alert("❌ Wrong Password!"); }
+      const res = await api.post("/admin/verify", { password });
+      if (res.data.success) { setEditingIndex(index); setTempPrice(currentPrice); } 
+      else { alert("❌ Wrong Password!"); }
     } catch (err) { alert("Server Error"); }
-  };
-
-  const getDiscountWarning = (index, newPriceInput) => {
-    const item = cart[index];
-    const newPrice = parseFloat(newPriceInput);
-    if (!newPrice || !item.mrp) return null;
-
-    const proposedDiscount = ((item.mrp - newPrice) / item.mrp) * 100;
-    const maxAllowed = item.maxDiscount || 0;
-
-    if (proposedDiscount > maxAllowed) {
-        return (
-            <div style={{color:'red', fontSize:'0.65rem', fontWeight:'bold', marginTop:'4px', lineHeight:'1.2'}}>
-                ⚠️ Limit Exceeded!<br/>
-                Max: {maxAllowed}%<br/>
-                Curr: {proposedDiscount.toFixed(1)}%
-            </div>
-        );
-    }
-    return null;
   };
 
   const handleSavePrice = (index) => {
@@ -137,406 +132,213 @@ const SaleForm = () => {
     setEditingIndex(null);
   };
 
-  // --- ROBUST BILL GENERATOR ---
-  const generateBillHTML = (cartItems, invoiceData) => {
-    const date = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-    const time = new Date().toLocaleTimeString('en-IN', {hour: '2-digit', minute:'2-digit'});
-    let totalTaxable = 0;
-    let totalGST = 0;
-    const finalTotal = cartItems.reduce((acc, item) => acc + item.total, 0);
-
-    cartItems.forEach(item => {
-        const gstPercent = item.gst || 0;
-        const inclusiveTotal = item.total; 
-        const baseValue = inclusiveTotal / (1 + (gstPercent / 100));
-        const taxAmount = inclusiveTotal - baseValue;
-        totalTaxable += baseValue;
-        totalGST += taxAmount;
-    });
-
-    const amountInWords = numberToWords(Math.round(finalTotal));
-
-    return `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Invoice #${invoiceData.no}</title>
-          <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Dancing+Script:wght@600&display=swap" rel="stylesheet">
-          <style>
-            :root { --brand: #0f766e; --text: #1f2937; --gray: #6b7280; --bg: #f8fafc; }
-            body { font-family: 'Manrope', sans-serif; margin: 0; padding: 20px; color: var(--text); background: #fff; max-width: 850px; margin: 0 auto; }
-            .header-row { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 15px; border-bottom: 2px solid var(--brand); }
-            .brand-name { font-size: 32px; font-weight: 800; color: var(--brand); margin: 0; line-height: 1; }
-            .brand-details { font-size: 12px; color: var(--gray); margin-top: 5px; line-height: 1.4; }
-            .invoice-badge { text-align: right; }
-            .gst-label { background: var(--brand); color: white; padding: 5px 10px; font-size: 13px; font-weight: 700; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
-            .info-grid { display: flex; justify-content: space-between; margin: 20px 0; background: var(--bg); padding: 12px; border-radius: 8px; font-size: 13px; }
-            .info-box h4 { font-size: 10px; text-transform: uppercase; color: var(--gray); margin: 0 0 3px 0; }
-            .info-box div { font-weight: 600; color: #000; }
-            table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }
-            th { text-align: left; padding: 8px; background: #fff; border-bottom: 2px solid #e5e7eb; font-size: 11px; text-transform: uppercase; color: var(--gray); }
-            td { padding: 10px 8px; border-bottom: 1px solid #f1f5f9; font-weight: 500; vertical-align: middle; }
-            .text-right { text-align: right; }
-            .text-center { text-align: center; }
-            .footer-grid { display: flex; justify-content: space-between; margin-top: 10px; }
-            .words-box { width: 55%; font-size: 11px; color: var(--gray); line-height: 1.5; }
-            .totals-box { width: 40%; }
-            .total-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 6px; color: var(--text); }
-            .grand-total { display: flex; justify-content: space-between; background: var(--brand); color: white; padding: 8px; border-radius: 6px; font-size: 16px; font-weight: 700; margin-top: 8px; }
-            .sign { margin-top: 30px; text-align: right; font-size: 12px; font-weight: 600; }
-            @media print { body { padding: 0; -webkit-print-color-adjust: exact; } .info-grid { background: #f8fafc !important; } .gst-label, .grand-total { background: var(--brand) !important; color: white !important; } }
-          </style>
-        </head>
-        <body>
-          <div class="header-row">
-            <div>
-                <h1 class="brand-name">${PHARMACY_DETAILS.name}</h1>
-                <div class="brand-details">
-                    ${PHARMACY_DETAILS.address}<br>
-                    <strong>GSTIN:</strong> ${PHARMACY_DETAILS.gstin} | <strong>DL:</strong> ${PHARMACY_DETAILS.dlNo}<br>
-                    Ph: ${PHARMACY_DETAILS.phone}
-                </div>
-            </div>
-            <div class="invoice-badge">
-                <div class="gst-label">GST INVOICE</div>
-                <div style="font-weight:700">#${invoiceData.no}</div>
-                <div style="font-size:11px; color:#666">${date} ${time}</div>
-            </div>
-          </div>
-
-          <div class="info-grid">
-            <div class="info-box" style="width: 40%;">
-                <h4>Billed To</h4>
-                <div>${invoiceData.name}</div>
-                <div style="font-weight:400">${invoiceData.phone || '-'}</div>
-            </div>
-            <div class="info-box">
-                <h4>Dr. Ref</h4>
-                <div>${invoiceData.doctor || 'Self'}</div>
-            </div>
-            <div class="info-box" style="text-align: right;">
-                <h4>Mode</h4>
-                <div>${invoiceData.mode}</div>
-            </div>
-          </div>
-
-          <table>
-            <thead>
-                <tr>
-                    <th style="width: 5%;">#</th>
-                    <th style="width: 30%;">Item</th>
-                    <th style="width: 15%;">Batch</th>
-                    <th class="text-right" style="width: 10%;">Rate</th>
-                    <th class="text-center" style="width: 8%;">Qty</th>
-                    <th class="text-right" style="width: 15%;">GST Breakdown</th>
-                    <th class="text-right" style="width: 17%;">Net Total</th>
-                </tr>
-            </thead>
-            <tbody>
-                ${cartItems.map((item, i) => {
-                    const inclusivePrice = item.price;
-                    const gstPercent = item.gst || 0;
-                    const basePrice = inclusivePrice / (1 + (gstPercent/100));
-                    const taxPerItem = inclusivePrice - basePrice;
-                    const totalTaxForItem = taxPerItem * item.quantity;
-
-                    return `
-                    <tr>
-                        <td>${i+1}</td>
-                        <td>
-                            <div style="font-weight:700; color:#000;">${item.name}</div>
-                            <div style="font-size:10px; color:#6b7280">HSN: ${item.hsn || '-'} | Exp: ${item.expiry ? new Date(item.expiry).toLocaleDateString('en-IN', {month:'short', year:'2-digit'}) : '-'}</div>
-                        </td>
-                        <td>${item.batch}</td>
-                        <td class="text-right">₹${item.price}</td>
-                        <td class="text-center" style="font-weight:700">${item.quantity}</td>
-                        <td class="text-right">
-                            <div style="font-size:10px; color:#666">Tax: ${gstPercent}%</div>
-                            <div style="font-weight:600; color:var(--brand)">₹${totalTaxForItem.toFixed(2)}</div>
-                        </td>
-                        <td class="text-right" style="font-weight:700; color:#000;">₹${item.total.toFixed(2)}</td>
-                    </tr>
-                    `;
-                }).join('')}
-            </tbody>
-          </table>
-
-          <div class="footer-grid">
-            <div class="words-box">
-                <h4>Amount in Words</h4>
-                <strong style="color:var(--brand)">${amountInWords} Only</strong>
-                <div style="margin-top: 10px; color:#999; font-size:10px;">
-                    Note: Prices are inclusive of GST.<br>
-                    Goods once sold will not be returned.
-                </div>
-            </div>
-
-            <div class="totals-box">
-                <div class="total-row"><span>Total Taxable Value</span><span>₹${totalTaxable.toFixed(2)}</span></div>
-                <div class="total-row"><span>Total GST Amount</span><span>₹${totalGST.toFixed(2)}</span></div>
-                <div class="total-row"><span>Round Off</span><span>0.00</span></div>
-                <div class="grand-total"><span>Grand Total</span><span>₹${Math.round(finalTotal).toFixed(2)}</span></div>
-            </div>
-          </div>
-
-          <div class="quote-box" style="margin-top:30px; text-align:center;">
-            <div style="font-family:'Dancing Script', cursive; font-size:20px; color:var(--brand);">Get Well Soon!</div>
-            <div class="sign">Authorized Signatory<br>For ${PHARMACY_DETAILS.name}</div>
-          </div>
-
-          <script>
-             setTimeout(function() { 
-                 window.print();
-             }, 800);
-          </script>
-        </body>
-      </html>
-    `;
-  };
-
-  const openBillWindow = (items, invData) => {
-    const billWindow = window.open('', '_blank', 'width=900,height=900');
-    if (!billWindow) {
-        alert("⚠️ POPUP BLOCKED! Please click 'Reprint' button manually.");
-        return;
-    }
-    const billContent = generateBillHTML(items, invData);
-    billWindow.document.open();
-    billWindow.document.write(billContent);
-    billWindow.document.close();
-    billWindow.focus();
-  };
-
+  // --- 8. CHECKOUT ---
   const handleCheckout = async () => {
     if (cart.length === 0) return alert("Cart is empty");
     const total = cart.reduce((a, b) => a + b.total, 0);
+    const given = parseFloat(amountGiven) || 0;
+    
+    if (paymentMode === "Cash" && given < total) return alert("Insufficient Cash!");
+    if (isBillNeeded && !customer.name.trim()) return alert("Enter Customer Name for Bill");
 
-    if (paymentMode === 'Cash' && parseFloat(amountGiven) < total) return alert("❌ Insufficient Cash!");
-    if (isBillNeeded && !customer.name) return alert("⚠️ Customer Name is required for Bill");
+    const finalCustomer = isBillNeeded ? customer : { name: "Don't want bill by customer", phone: "", doctor: "" };
 
-    // 1. Prepare Data
     const saleData = {
-        invoiceNo: invoiceNo,
-        customerDetails: customer,
-        items: cart.map(item => ({
-            medicineId: item.medicineId,
-            name: item.name,
-            batch: item.batch,
-            expiry: item.expiry,
-            hsn: item.hsn,
-            gst: item.gst,
-            packSize: item.packSize,
-            quantity: item.quantity,
-            price: item.price,
-            mrp: item.mrp,
-            total: item.total
-        })),
-        totalAmount: total,
-        paymentMode
+      customerDetails: finalCustomer, 
+      totalAmount: total, 
+      paymentMode,
+      items: cart.map(i => ({
+        medicineId: i.medicineId, name: i.name, batch: i.batch, expiry: i.expiry,
+        hsn: i.hsn, gst: i.gst, packSize: i.packSize, quantity: i.quantity,
+        price: i.price, mrp: i.mrp, total: i.total
+      }))
     };
 
     try {
-      // 2. OPEN WINDOW FIRST
       let billWindow = null;
       if (isBillNeeded) {
-          billWindow = window.open('', '_blank', 'width=900,height=900');
-          if(billWindow) billWindow.document.write('<h3>Generating Bill...</h3>');
+        billWindow = window.open("", "_blank", "width=900,height=900");
+        if(billWindow) billWindow.document.write("<h3>Generating...</h3>");
       }
 
-      await api.post('/sales', saleData);
-      
-      // 3. FILL WINDOW
+      const res = await api.post("/sales", saleData);
+      const finalInvoiceNo = res.data.invoiceNo; 
+
       if (isBillNeeded && billWindow) {
-          const invData = { no: invoiceNo, name: customer.name, phone: customer.phone, doctor: customer.doctor, mode: paymentMode };
-          const billContent = generateBillHTML(cart, invData);
-          billWindow.document.open();
-          billWindow.document.write(billContent);
-          billWindow.document.close();
+        const invData = { no: finalInvoiceNo, name: customer.name, phone: customer.phone, doctor: customer.doctor, mode: paymentMode };
+        const billContent = await generateBillHTML(cart, invData);
+        billWindow.document.open(); billWindow.document.write(billContent); billWindow.document.close();
+      } else if (!isBillNeeded && billWindow) {
+          billWindow.close(); 
       }
 
-      // 4. UPDATE UI - Show Reprint only temporarily, clearing old sales on new cart
-      setLastSale({ cart: [...cart], invoiceNo, customer, paymentMode });
-      
-      // Clear current form
-      setCart([]);
-      setAmountGiven('');
-      setChangeToReturn(0);
-      setPaymentMode('Cash');
-      setCustomer({ name: '', phone: '', doctor: '' });
-      setInvoiceNo(`INV-${Math.floor(Date.now() / 1000)}`);
+      setLastSale({ cart: [...cart], invoiceNo: finalInvoiceNo, customer: finalCustomer, paymentMode });
+      clearDraft();
+      fetchNextInvoice(); 
 
-    } catch (err) {
-      alert('Sale Failed: ' + (err.response?.data?.message || err.message));
-    }
+    } catch (err) { alert("Sale Failed: " + (err.response?.data?.message || err.message)); }
   };
 
-  const handleQtyChange = (index, val) => {
-    const value = parseFloat(val);
-    if (!value || value <= 0) return;
-    const newCart = [...cart];
-    if (value > newCart[index].maxStock) return alert(`Stock Limit Reached! Max: ${newCart[index].maxStock}`);
-    newCart[index].quantity = value;
-    newCart[index].total = value * newCart[index].price;
-    setCart(newCart);
+  const clearDraft = () => {
+      localStorage.removeItem("draft_sale_v2");
+      setCart([]); setAmountGiven(""); setChangeToReturn(0); setPaymentMode("Cash");
+      setCustomer({ name: "", phone: "", doctor: "" });
+      setResults([]); setQuery("");
   };
-  const removeFromCart = (i) => { const c = [...cart]; c.splice(i,1); setCart(c); };
+
+  const handleReprint = async () => {
+      if(!lastSale) return;
+      const billWindow = window.open("", "_blank", "width=900,height=900");
+      if(!billWindow) return alert("Popup Blocked");
+      const invData = { no: lastSale.invoiceNo, name: lastSale.customer.name, phone: lastSale.customer.phone, doctor: lastSale.customer.doctor, mode: lastSale.paymentMode };
+      const html = await generateBillHTML(lastSale.cart, invData);
+      billWindow.document.open(); billWindow.document.write(html); billWindow.document.close();
+  };
+
+  const handleKeyDown = (e) => {
+    if (results.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setFocusedIndex(prev => (prev < results.length - 1 ? prev + 1 : prev)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setFocusedIndex(prev => (prev > 0 ? prev - 1 : 0)); }
+    else if (e.key === "Enter" && focusedIndex >= 0) { e.preventDefault(); addToCart(results[focusedIndex]); }
+  };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '20px', minHeight: '80vh' }}>
+    <div className="sale-grid"> {/* THIS CLASS CREATES THE PARTITION */}
       
-      {/* LEFT: CART */}
-      <div className="card flex-col" style={{marginBottom:0, height: '100%'}}>
-        <div style={{position:'relative', zIndex: 20}}>
-            <h3>🔍 New Sale <span className="text-muted" style={{fontSize:'0.9rem', fontWeight:'400'}}>({invoiceNo})</span></h3>
-            <input 
-                placeholder="Type to search medicine..." 
-                value={query} 
-                onChange={e => setQuery(e.target.value)} 
-                style={{padding: '12px', border:'2px solid var(--primary)', fontSize:'1rem'}}
-            />
-            {results.length > 0 && (
-                <div style={{position:'absolute', width:'100%', background:'white', border:'1px solid #ddd', borderRadius:'0 0 8px 8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', maxHeight: '300px', overflowY: 'auto'}}>
-                    {results.map(med => (
-                        <div key={med._id} onClick={() => addToCart(med)} style={{padding:'12px', cursor:'pointer', borderBottom:'1px solid #eee', display:'flex', justifyContent:'space-between'}}>
-                            <div>
-                                <div style={{fontWeight:'600', color: 'var(--text)'}}>{med.productName}</div>
-                                <div style={{fontSize: '0.8rem', color: '#666'}}>
-                                    Batch: {med.batchNumber} | GST: {med.gst}% | <b style={{color:'black'}}>Stock: {med.quantity} Strips</b>
-                                </div>
-                            </div>
-                            <div style={{textAlign:'right', fontSize:'0.85rem'}}>
-                                <div style={{color:'var(--success)', fontWeight:'bold'}}>₹{med.sellingPrice} / Strip</div>
-                                <div style={{color:'#666', fontSize:'0.75rem'}}>Pack: {med.packSize} Tabs</div>
-                            </div>
-                        </div>
-                    ))}
+      {/* LEFT PANEL: Medicine Selection & Cart */}
+      <div className="card flex-col" style={{ height: "100%", padding: 0 }}>
+        
+        {/* Header & Search */}
+        <div style={{ padding: "15px", borderBottom: "1px solid var(--border)" }}>
+            <div className="flex justify-between items-center" style={{marginBottom:'10px'}}>
+                <h3 style={{margin:0, color:'var(--primary)'}}>💊 New Sale</h3>
+                <div className="flex items-center gap-2">
+                    {cart.length > 0 && <button onClick={clearDraft} className="btn-danger" style={{padding:'4px 8px', fontSize:'0.8rem'}}>Clear</button>}
+                    <span style={{background:'#e0e7ff', color:'#3730a3', padding:'4px 8px', borderRadius:'6px', fontSize:'0.8rem', fontWeight:'600'}}>
+                        {invoiceNo}
+                    </span>
                 </div>
-            )}
+            </div>
+            <div style={{position:'relative'}}>
+                <input 
+                    placeholder="Scan barcode or type name..." 
+                    value={query} onChange={e => setQuery(e.target.value)} onKeyDown={handleKeyDown} autoFocus 
+                />
+                {results.length > 0 && (
+                    <div ref={resultListRef} className="search-dropdown">
+                        {results.map((med, idx) => (
+                            <div key={med._id} onClick={() => addToCart(med)} className={`search-item ${idx === focusedIndex ? "active" : ""}`}>
+                                <div>
+                                    <div style={{fontWeight:'600'}}>{med.productName}</div>
+                                    <div style={{fontSize:'0.75rem', color:'#64748b'}}>Stock: <b>{med.quantity}</b> | Batch: {med.batchNumber}</div>
+                                </div>
+                                <div style={{fontWeight:'700', color:'var(--success)'}}>₹{med.sellingPrice}</div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
         </div>
 
-        <div className="table-container" style={{flex:1, marginTop: '10px'}}>
+        {/* Cart Table */}
+        <div className="table-container" style={{flex:1, border:'none', borderRadius:0}}>
             <table>
-                <thead>
+                <thead style={{position:'sticky', top:0, zIndex:10}}>
                     <tr>
-                        <th>Item</th>
-                        <th style={{width: '70px'}}>Qty</th>
-                        <th>Price</th>
-                        <th>Total</th>
-                        <th style={{width: '50px'}}>Act</th>
+                        <th style={{paddingLeft:'20px'}}>Item</th>
+                        <th style={{textAlign:'center', width:'100px'}}>Qty</th>
+                        <th style={{textAlign:'right'}}>Total</th>
+                        <th style={{width:'40px'}}></th>
                     </tr>
                 </thead>
                 <tbody>
                     {cart.map((item, idx) => (
                         <tr key={idx}>
-                            <td>
-                                <div style={{fontWeight:'600'}}>{item.name}</div>
-                                <div style={{fontSize:'0.75rem', color: 'var(--text-muted)'}}>
-                                    Batch: {item.batch} | Pack: {item.packSize} Tabs
+                            <td style={{paddingLeft:'20px'}}>
+                                <div style={{fontWeight:'600', fontSize:'0.9rem'}}>{item.name}</div>
+                                <div style={{fontSize:'0.7rem', color:'#64748b'}}>₹{item.price}</div>
+                            </td>
+                            <td style={{textAlign:'center'}}>
+                                <div className="flex items-center justify-center" style={{gap:'5px'}}>
+                                    <button onClick={() => updateQty(idx, item.quantity - 1)} className="btn-qty">-</button>
+                                    <span style={{width:'30px', textAlign:'center', fontWeight:'bold'}}>{item.quantity}</span>
+                                    <button onClick={() => updateQty(idx, item.quantity + 1)} className="btn-qty">+</button>
                                 </div>
                             </td>
-                            <td>
-                                <input 
-                                    type="number" 
-                                    value={item.quantity} 
-                                    onChange={(e) => handleQtyChange(idx, e.target.value)} 
-                                    style={{padding:'5px', textAlign:'center'}} 
-                                />
+                            <td style={{textAlign:'right', fontWeight:'700', color:'var(--text)'}}>₹{item.total.toFixed(2)}</td>
+                            <td style={{textAlign:'center'}}>
+                                <button onClick={() => removeFromCart(idx)} style={{background:'none', border:'none', color:'var(--danger)', fontSize:'1.2rem', cursor:'pointer'}}>×</button>
                             </td>
-                            
-                            <td>
-                                {editingIndex === idx ? (
-                                    <div style={{display:'flex', flexDirection:'column'}}>
-                                        <input 
-                                            type="number" 
-                                            value={tempPrice} 
-                                            onChange={(e) => setTempPrice(e.target.value)}
-                                            onBlur={() => handleSavePrice(idx)}
-                                            onKeyDown={(e) => { if(e.key === 'Enter') handleSavePrice(idx) }}
-                                            autoFocus
-                                            style={{width:'80px', padding:'5px'}}
-                                        />
-                                        {getDiscountWarning(idx, tempPrice)}
-                                    </div>
-                                ) : (
-                                    <div 
-                                        onClick={() => handleInitiateEdit(idx, item.price)} 
-                                        style={{fontWeight:'bold', cursor:'pointer', display:'flex', alignItems:'center', gap:'5px'}}
-                                        title="Click to Edit Price (Admin Only)"
-                                    >
-                                        ₹{item.price} <span style={{fontSize:'10px'}}>✏️</span>
-                                    </div>
-                                )}
-                            </td>
-
-                            <td style={{color: 'var(--success)', fontWeight:'bold'}}>₹{item.total.toFixed(2)}</td>
-                            <td><button onClick={() => removeFromCart(idx)} className="btn btn-danger" style={{padding: '4px 8px'}}>×</button></td>
                         </tr>
                     ))}
-                    {cart.length === 0 && <tr><td colSpan="5" style={{textAlign:'center', padding:'30px', color: '#aaa'}}>Cart is empty</td></tr>}
+                    {cart.length === 0 && <tr><td colSpan="4" style={{textAlign:'center', padding:'40px', color:'#94a3b8'}}>Start adding items...</td></tr>}
                 </tbody>
             </table>
         </div>
       </div>
 
-      {/* RIGHT: SUMMARY */}
-      <div className="card flex-col justify-between" style={{background: '#f8fafc', borderLeft:'4px solid var(--primary)', marginBottom:0}}>
-        <div>
-            {/* Show Last Sale Info ONLY if active and no new items added */}
-            {lastSale && (
-                <div style={{background:'#dcfce7', color:'#166534', padding:'10px', borderRadius:'6px', marginBottom:'15px', border:'1px solid #86efac'}}>
-                    <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-                        <span>✅ <b>Sale Recorded!</b> ({lastSale.invoiceNo})</span>
-                        <button 
-                            onClick={() => openBillWindow(lastSale.cart, {no: lastSale.invoiceNo, name: lastSale.customer.name, phone: lastSale.customer.phone, doctor: lastSale.customer.doctor, mode: lastSale.paymentMode})}
-                            style={{background:'#166534', color:'white', border:'none', padding:'5px 10px', borderRadius:'4px', cursor:'pointer'}}
-                        >
-                            🖨️ Reprint
-                        </button>
-                    </div>
-                </div>
-            )}
+      {/* RIGHT PANEL: Details & Payment */}
+      <div className="card flex-col" style={{ padding: "20px", height: 'auto' }}>
+        
+        <div style={{background:'var(--primary-light)', padding:'20px', borderRadius:'10px', textAlign:'center', marginBottom:'10px'}}>
+            <div style={{fontSize:'0.8rem', textTransform:'uppercase', letterSpacing:'1px', color:'var(--primary-dark)'}}>Total Payable</div>
+            <div style={{fontSize:'2.5rem', fontWeight:'800', color:'var(--primary-dark)', lineHeight:1}}>
+                ₹{cart.reduce((a, b) => a + b.total, 0).toFixed(0)}
+            </div>
+        </div>
 
-            <div style={{textAlign:'right', paddingBottom:'15px', borderBottom:'1px solid var(--border)'}}>
-                <div className="text-muted" style={{fontSize:'0.9rem'}}>Total Payable</div>
-                <div style={{fontSize:'3rem', fontWeight:'800', color:'var(--success)', lineHeight: 1}}>
-                    ₹{cart.reduce((a, b) => a + b.total, 0).toFixed(0)}
-                </div>
+        {lastSale && (
+            <div style={{background:'#dcfce7', color:'#166534', padding:'10px', borderRadius:'8px', fontSize:'0.9rem', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                <span>✅ Saved!</span>
+                <button onClick={handleReprint} style={{background:'none', border:'none', textDecoration:'underline', cursor:'pointer', color:'#15803d', fontWeight:'bold'}}>Reprint</button>
             </div>
-            <div className="flex items-center gap-4" style={{margin:'20px 0'}}>
-                <input type="checkbox" checked={isBillNeeded} onChange={(e) => setIsBillNeeded(e.target.checked)} style={{width:'20px', height:'20px'}} />
-                <label style={{margin:0, fontSize:'1rem'}}>Generate Official Bill</label>
+        )}
+
+        <div style={{borderBottom:'1px solid var(--border)', paddingBottom:'15px', marginBottom:'15px'}}>
+            <div className="flex justify-between" style={{marginBottom:'8px', alignItems:'center'}}>
+                <span style={{fontSize:'0.85rem', fontWeight:'600', color:'var(--text-light)'}}>Customer Details</span>
+                <label style={{fontSize:'0.85rem', display:'flex', alignItems:'center', gap:'6px', cursor:'pointer', fontWeight:'600', color:'var(--primary)'}}>
+                    <input type="checkbox" checked={isBillNeeded} onChange={e => setIsBillNeeded(e.target.checked)} /> 
+                    Print Bill
+                </label>
             </div>
-            {isBillNeeded && (
-                <div style={{background:'white', padding:'15px', borderRadius:'8px', border:'1px solid var(--border)', display:'flex', flexDirection:'column', gap:'10px'}}>
-                    <div style={{fontSize:'0.8rem', fontWeight:'bold', color:'var(--primary)'}}>CUSTOMER DETAILS</div>
-                    <input placeholder="Customer Name *" value={customer.name} onChange={e => setCustomer({...customer, name: e.target.value})} />
+            
+            {isBillNeeded ? (
+                <div className="flex-col">
+                    <input placeholder="Name *" value={customer.name} onChange={e => setCustomer({...customer, name:e.target.value})} />
                     <div className="flex">
-                        <input placeholder="Phone" value={customer.phone} onChange={e => setCustomer({...customer, phone: e.target.value})} />
-                        <input placeholder="Dr. Ref" value={customer.doctor} onChange={e => setCustomer({...customer, doctor: e.target.value})} />
+                        <input placeholder="Phone" value={customer.phone} onChange={e => setCustomer({...customer, phone:e.target.value})} />
+                        <input placeholder="Doctor" value={customer.doctor} onChange={e => setCustomer({...customer, doctor:e.target.value})} />
                     </div>
+                </div>
+            ) : (
+                <div style={{fontSize:'0.8rem', color:'#64748b', fontStyle:'italic'}}>
+                    (Sale will be recorded as "Cash Sale")
                 </div>
             )}
         </div>
-        <div>
-            <label>Payment Mode</label>
-            <select value={paymentMode} onChange={(e) => setPaymentMode(e.target.value)} style={{marginBottom:'15px', padding:'12px'}}>
+
+        <div className="flex-col">
+            <select value={paymentMode} onChange={e => setPaymentMode(e.target.value)}>
                 <option value="Cash">Cash</option>
                 <option value="Online">Online / UPI</option>
             </select>
-            {paymentMode === 'Cash' && (
-                <div style={{background:'#fff7ed', padding:'15px', borderRadius:'8px', border:'1px solid orange', marginBottom:'15px'}}>
-                    <div className="flex justify-between items-center">
-                        <label style={{marginBottom:0}}>Cash Received</label>
-                        <input type="number" value={amountGiven} onChange={(e) => setAmountGiven(e.target.value)} style={{width:'100px', fontSize:'1.1rem', textAlign:'right'}} />
-                    </div>
-                    <div className="flex justify-between items-center" style={{marginTop:'10px', fontSize:'1.1rem'}}>
-                        <span>Return:</span>
-                        <span style={{fontWeight:'bold', color: changeToReturn < 0 ? 'red' : 'blue'}}>₹{changeToReturn.toFixed(2)}</span>
+            
+            {paymentMode === "Cash" && (
+                <div className="flex justify-between items-center" style={{background:'#fff7ed', padding:'10px', borderRadius:'8px', border:'1px solid #ffedd5'}}>
+                    <input type="number" placeholder="Given" value={amountGiven} onChange={e => setAmountGiven(e.target.value)} style={{width:'80px'}} />
+                    <div style={{textAlign:'right'}}>
+                        <div style={{fontSize:'0.75rem', color:'#666'}}>Return</div>
+                        <div style={{fontWeight:'bold', color:changeToReturn < 0 ? 'red' : 'green'}}>₹{changeToReturn.toFixed(0)}</div>
                     </div>
                 </div>
             )}
-            <button onClick={handleCheckout} className="btn btn-primary w-full" style={{padding:'16px', fontSize:'1.2rem', marginTop:'10px'}}>COMPLETE SALE</button>
+            
+            <button onClick={handleCheckout} className="btn-primary" style={{width:'100%', padding:'15px', fontSize:'1.1rem'}}>
+                COMPLETE SALE ➔
+            </button>
         </div>
+
       </div>
     </div>
   );

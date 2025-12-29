@@ -5,7 +5,7 @@ const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
 const inventoryController = require('../controllers/inventoryController');
 
-// Cloudinary Config
+// --- CLOUDINARY CONFIG ---
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
@@ -21,25 +21,22 @@ const storage = new CloudinaryStorage({
 });
 const upload = multer({ storage: storage });
 
-// ROUTES
-router.get('/', inventoryController.getMedicines);
+// --- ROUTES ---
+
+// 1. GET Methods
+router.get('/', inventoryController.getMedicines); // Fetch All (Used for Loose List)
 router.get('/search', inventoryController.searchMedicines);
 router.get('/expiring', inventoryController.getExpiringMedicines);
+router.get('/dose/pending', inventoryController.getPendingEntries); // Get Pending List
 
+// 2. POST Methods (Add & Sales)
 router.post('/', upload.single('billImage'), inventoryController.addMedicine);
-router.put('/:id', inventoryController.updateMedicine);
+router.post('/dose', inventoryController.sellLooseMedicine); // Final Dose Sale
+router.post('/dose/quick', inventoryController.addQuickEntry); // Rush Mode
+router.post('/dose/resolve', inventoryController.resolvePendingEntry); // Resolve Pending
 
-// --- NEW DELETE ROUTE ---
-router.delete('/:id', inventoryController.deleteMedicine); 
-// ------------------------
-// Add this line with other routes
-router.post('/dose', inventoryController.sellLooseMedicine);
+// 3. PUT/DELETE Methods (Update)
+router.put('/:id', upload.single('billImage'), inventoryController.updateMedicine);
+router.delete('/:id', inventoryController.deleteMedicine);
 
-// ... purane routes ...
-router.post('/dose', inventoryController.sellLooseMedicine);
-
-// --- NEW RUSH MODE ROUTES ---
-router.post('/dose/quick', inventoryController.addQuickEntry);
-router.get('/dose/pending', inventoryController.getPendingEntries);
-router.post('/dose/resolve', inventoryController.resolvePendingEntry);
 module.exports = router;

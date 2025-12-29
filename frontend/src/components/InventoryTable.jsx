@@ -5,6 +5,7 @@ import * as XLSX from 'xlsx';
 const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   const [editId, setEditId] = useState(null);
   const [editFormData, setEditFormData] = useState({});
+  const [newBillFile, setNewBillFile] = useState(null); // <--- State for new file
   const [showCP, setShowCP] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -57,12 +58,65 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
     } catch (err) { alert("Server Error"); }
   };
 
-  const handleEditClick = (med) => { setEditId(med._id); setEditFormData({ ...med }); };
-  const handleEditFormChange = (e) => { setEditFormData({ ...editFormData, [e.target.name]: e.target.value }); };
-  const handleSaveClick = () => { onUpdate(editId, editFormData); setEditId(null); };
+  const handleEditClick = (med) => { 
+      setEditId(med._id); 
+      setEditFormData({ ...med }); 
+      setNewBillFile(null); // Reset file input
+  };
+
+  const handleEditFormChange = (e) => { 
+      setEditFormData({ ...editFormData, [e.target.name]: e.target.value }); 
+  };
+
+  // --- NEW: Handle File Selection in Edit Mode ---
+  const handleEditFileChange = (e) => {
+      setNewBillFile(e.target.files[0]);
+  };
+
+  // --- UPDATED SAVE FUNCTION FOR FILE UPLOAD ---
+  const handleSaveClick = async () => {
+      // Create FormData to send file + text data
+      const formData = new FormData();
+      
+      // Append all text fields
+      Object.keys(editFormData).forEach(key => {
+          if (key !== 'billImage' && key !== '_id' && key !== '__v') {
+              formData.append(key, editFormData[key]);
+          }
+      });
+
+      // Append new file if selected
+      if (newBillFile) {
+          formData.append('billImage', newBillFile);
+      }
+
+      // Call the parent onUpdate function (which calls the API)
+      // Note: We need to pass FormData now, so ensure Dashboard handles it correctly
+      // OR handle API call here if Dashboard expects JSON. 
+      // Assuming Dashboard handles JSON, we might need a small tweak there.
+      // BUT for simplicity, let's call API directly here for Update if file is involved,
+      // or modify how onUpdate works. 
+      
+      // Let's modify onUpdate in Dashboard to handle FormData, or handle it here directly.
+      // Since `onUpdate` in Dashboard is simple `api.put`, it needs headers for file.
+      
+      try {
+        // Direct API call here to handle multipart/form-data correctly
+        await api.put(`/medicines/${editId}`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        alert("✅ Updated Successfully!");
+        setEditId(null);
+        window.location.reload(); // Simple reload to refresh list (or pass a refresh callback)
+      } catch (err) {
+          console.error(err);
+          alert("Update Failed");
+      }
+  };
 
   return (
     <div>
+        
       <div className="flex justify-between items-center" style={{ marginBottom: "15px", flexWrap:'wrap', gap:'10px' }}>
          <div className="flex items-center gap-4">
             <h3>📦 Stock List ({filteredMeds.length})</h3>
@@ -102,8 +156,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                 <th>GST%</th>
                 {showCP && <th style={{color:'red'}}>CP</th>}
                 
-                {/* BILL COLUMN IS BACK */}
-                <th>Bill</th>
+                <th>Bill Upload</th> {/* RENAMED HEADER */}
                 
                 <th style={{width:'100px'}}>Action</th>
             </tr>
@@ -143,7 +196,10 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                         <td><input name="costPrice" type="number" value={editFormData.costPrice} onChange={handleEditFormChange} style={{width:'60px', border:'1px solid red'}} /></td>
                     )}
 
-                    <td>-</td>
+                    {/* --- NEW FILE INPUT FOR BILL --- */}
+                    <td>
+                        <input type="file" onChange={handleEditFileChange} style={{width:'180px', fontSize:'0.8rem'}} />
+                    </td>
 
                     <td className="flex" style={{gap:'5px'}}>
                         <button onClick={handleSaveClick} className="btn btn-success" style={{padding:'6px'}}>💾</button>
@@ -179,11 +235,11 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
 
                     {showCP && <td style={{fontWeight:'bold', color:'red'}}>₹{m.costPrice}</td>}
 
-                    {/* BILL VIEW BUTTON (RESTORED) */}
+                    {/* VIEW BILL / NO BILL */}
                     <td>
                         {m.billImage ? (
-                            <a href={m.billImage} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{padding: '4px 8px', fontSize: '0.8rem'}}>View</a>
-                        ) : <span className="text-muted">-</span>}
+                            <a href={m.billImage} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{padding: '4px 8px', fontSize: '0.8rem'}}>View Bill</a>
+                        ) : <span className="text-muted" style={{fontSize:'0.8rem'}}>No Bill</span>}
                     </td>
 
                     <td style={{display:'flex', gap:'8px'}}>

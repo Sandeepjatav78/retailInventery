@@ -40,7 +40,7 @@ const addMedicine = async (req, res) => {
       costPrice: safeNumber(req.body.costPrice),
       quantity: safeNumber(req.body.quantity),
       packSize: safeNumber(req.body.packSize) || 10,
-      billImage: req.file ? req.file.path : null 
+      billImage: req.file ? req.file.path : null
     };
     const newMed = new Medicine(medData);
     const savedMed = await newMed.save();
@@ -50,10 +50,24 @@ const addMedicine = async (req, res) => {
   }
 };
 
-// 4. UPDATE MEDICINE
+// 4. UPDATE MEDICINE (With Bill Upload Support)
 const updateMedicine = async (req, res) => {
   try {
-    const updatedMed = await Medicine.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    // 1. Purana data copy kar lo
+    let updateData = { ...req.body };
+
+    // 2. Agar nayi file (Bill) aayi hai, to uska link add karo
+    if (req.file) {
+      updateData.billImage = req.file.path;
+    }
+
+    // 3. Database me update karo
+    const updatedMed = await Medicine.findByIdAndUpdate(
+      req.params.id,
+      updateData,
+      { new: true } // Taaki updated data wapas mile
+    );
+
     res.json(updatedMed);
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -110,43 +124,43 @@ const sellLooseMedicine = async (req, res) => {
         const stripsToOpen = Math.ceil(remainingNeed / med.packSize);
 
         if (med.quantity >= stripsToOpen) {
-            med.quantity -= stripsToOpen; // Sealed strip kam karo
-            med.looseQty += (stripsToOpen * med.packSize); // Loose me add karo
-            med.looseQty -= needed; // Ab customer ko de do
+          med.quantity -= stripsToOpen; // Sealed strip kam karo
+          med.looseQty += (stripsToOpen * med.packSize); // Loose me add karo
+          med.looseQty -= needed; // Ab customer ko de do
         } else {
-             // Agar sealed bhi nahi hai, to force minus kar do (negative loose allow kar rahe hai temporary)
-             med.looseQty -= needed; 
+          // Agar sealed bhi nahi hai, to force minus kar do (negative loose allow kar rahe hai temporary)
+          med.looseQty -= needed;
         }
       }
-      
+
       // Fix for old data missing CP
-      if(med.costPrice === undefined) med.costPrice = 0;
-      
+      if (med.costPrice === undefined) med.costPrice = 0;
+
       await med.save();
 
       // Add to Report List
       saleItems.push({
-          medicineId: med._id,
-          name: med.productName,
-          batch: med.batchNumber,
-          expiry: med.expiryDate,
-          quantity: needed, // Tablets
-          price: 0, // Individual price 0 rakhte hain kyunki total amount manually diya hai
-          total: 0
+        medicineId: med._id,
+        name: med.productName,
+        batch: med.batchNumber,
+        expiry: med.expiryDate,
+        quantity: needed, // Tablets
+        price: 0, // Individual price 0 rakhte hain kyunki total amount manually diya hai
+        total: 0
       });
     }
 
     // --- CREATE SALE RECORD (Taaki Report me dikhe) ---
     const newSale = new Sale({
-        invoiceNo: `DOSE-${Date.now().toString().slice(-6)}`,
-        customerDetails: { 
-            name: customerName || 'Dose Client', 
-            phone: '',
-            doctor: reason || 'General Dose' // Reason ko Doctor field me dikhayenge
-        },
-        items: saleItems,
-        totalAmount: amountCollected, // Manual Amount
-        paymentMode: 'Cash'
+      invoiceNo: `DOSE-${Date.now().toString().slice(-6)}`,
+      customerDetails: {
+        name: customerName || 'Dose Client',
+        phone: '',
+        doctor: reason || 'General Dose' // Reason ko Doctor field me dikhayenge
+      },
+      items: saleItems,
+      totalAmount: amountCollected, // Manual Amount
+      paymentMode: 'Cash'
     });
 
     await newSale.save();
@@ -183,11 +197,11 @@ const getPendingEntries = async (req, res) => {
 
 // 10. RESOLVE PENDING (Stock Minus + Sale Create)
 const resolvePendingEntry = async (req, res) => {
-  const { id, items } = req.body; 
+  const { id, items } = req.body;
 
   try {
     const pending = await PendingDose.findById(id);
-    if(!pending) return res.status(404).json({message: "Entry not found"});
+    if (!pending) return res.status(404).json({ message: "Entry not found" });
 
     const saleItems = [];
 
@@ -197,39 +211,39 @@ const resolvePendingEntry = async (req, res) => {
         const needed = parseInt(item.count);
         // Same Logic as Sell Loose
         if (med.looseQty >= needed) {
-            med.looseQty -= needed;
+          med.looseQty -= needed;
         } else {
-            const remainingNeed = needed - med.looseQty;
-            const stripsToOpen = Math.ceil(remainingNeed / med.packSize);
-            if (med.quantity >= stripsToOpen) {
-                med.quantity -= stripsToOpen;
-                med.looseQty += (stripsToOpen * med.packSize);
-                med.looseQty -= needed;
-            } else { med.looseQty -= needed; }
+          const remainingNeed = needed - med.looseQty;
+          const stripsToOpen = Math.ceil(remainingNeed / med.packSize);
+          if (med.quantity >= stripsToOpen) {
+            med.quantity -= stripsToOpen;
+            med.looseQty += (stripsToOpen * med.packSize);
+            med.looseQty -= needed;
+          } else { med.looseQty -= needed; }
         }
-        if(med.costPrice === undefined) med.costPrice = 0;
+        if (med.costPrice === undefined) med.costPrice = 0;
         await med.save();
 
         saleItems.push({
-            medicineId: med._id,
-            name: med.productName,
-            batch: med.batchNumber,
-            quantity: needed,
-            price: 0, total: 0
+          medicineId: med._id,
+          name: med.productName,
+          batch: med.batchNumber,
+          quantity: needed,
+          price: 0, total: 0
         });
       }
     }
 
     // CREATE SALE RECORD
     const newSale = new Sale({
-        invoiceNo: `DOSE-${Date.now().toString().slice(-6)}`,
-        customerDetails: { 
-            name: 'Pending Resolved', 
-            doctor: pending.reason 
-        },
-        items: saleItems,
-        totalAmount: pending.amountCollected,
-        paymentMode: 'Cash'
+      invoiceNo: `DOSE-${Date.now().toString().slice(-6)}`,
+      customerDetails: {
+        name: 'Pending Resolved',
+        doctor: pending.reason
+      },
+      items: saleItems,
+      totalAmount: pending.amountCollected,
+      paymentMode: 'Cash'
     });
     await newSale.save();
 

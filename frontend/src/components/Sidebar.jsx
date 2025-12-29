@@ -1,21 +1,29 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import '../App.css'; // Styling ke liye
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import '../App.css'; 
 
 const Sidebar = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   
-  // Helper function to check active menu
   const isActive = (path) => location.pathname === path ? 'active-link' : '';
+
+  const handleLogout = () => {
+    if(window.confirm("Are you sure you want to logout?")) {
+        localStorage.removeItem('token'); // Clear Auth Token
+        localStorage.removeItem('draft_sale'); // Clear Drafts (Optional)
+        navigate('/login'); // Redirect
+    }
+  };
 
   return (
     <div className="sidebar">
-      {/* --- LOGO AREA --- */}
+      {/* --- LEFT: LOGO --- */}
       <div className="logo-container">
-        <h2 className="logo-text">Radhe<br/>Pharmacy</h2>
+        <h2 className="logo-text">Radhe Pharmacy 🌿</h2>
       </div>
 
-      {/* --- MENU ITEMS --- */}
+      {/* --- CENTER: MENU ITEMS --- */}
       <ul className="menu-list">
         <li>
             <Link to="/" className={`menu-link ${isActive('/')}`}>
@@ -27,27 +35,33 @@ const Sidebar = () => {
                💰 New Sale
             </Link>
         </li>
-        
-        {/* --- NEW DOSE BUTTON --- */}
         <li>
-            <Link to="/dose" className={`menu-link ${isActive('/dose')}`} style={{borderLeft: '4px solid #d97706'}}>
+            <Link to="/manual" className={`menu-link ${isActive('/manual')}`}>
+               📝 Custom Bill
+            </Link>
+        </li>
+        <li>
+            <Link to="/dose" className={`menu-link ${isActive('/dose')}`}>
                💊 Quick Dose
             </Link>
         </li>
-        {/* ----------------------- */}
-
-        {/* Placeholder for Reports if you add it later */}
         <li>
             <Link to="/reports" className={`menu-link ${isActive('/reports')}`}>
-               📊 Reports (Coming)
+               📊 Reports
             </Link>
         </li>
       </ul>
 
-      {/* --- FOOTER --- */}
-      <div className="sidebar-footer">
-        <div style={{fontSize:'0.8rem', color:'#94a3b8'}}>v1.0.0</div>
-        <div style={{fontSize:'0.7rem', color:'#64748b'}}>Powered by MERN</div>
+      {/* --- RIGHT: LOGOUT --- */}
+      <div className="sidebar-footer" style={{display:'flex', alignItems:'center', gap:'15px'}}>
+        <span style={{fontSize:'0.8rem', color:'#94a3b8'}}>v1.0</span>
+        <button 
+            onClick={handleLogout} 
+            className="btn-danger"
+            style={{padding:'6px 12px', fontSize:'0.8rem', borderRadius:'4px'}}
+        >
+            Logout ➜
+        </button>
       </div>
     </div>
   );
