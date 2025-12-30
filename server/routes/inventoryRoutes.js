@@ -12,11 +12,13 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// --- STORAGE CONFIGURATION ---
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
     folder: 'radhe-pharmacy-bills',
-    allowed_formats: ['jpg', 'png', 'jpeg', 'pdf'],
+    // FIX: Use 'allowedFormats' (camelCase) for newer versions
+    allowedFormats: ['jpg', 'png', 'jpeg', 'pdf'], 
   },
 });
 const upload = multer({ storage: storage });
@@ -24,19 +26,20 @@ const upload = multer({ storage: storage });
 // --- ROUTES ---
 
 // 1. GET Methods
-router.get('/', inventoryController.getMedicines); // Fetch All (Used for Loose List)
+router.get('/', inventoryController.getMedicines); 
 router.get('/search', inventoryController.searchMedicines);
 router.get('/expiring', inventoryController.getExpiringMedicines);
-router.get('/dose/pending', inventoryController.getPendingEntries); // Get Pending List
+router.get('/dose/pending', inventoryController.getPendingEntries);
 
-// 2. POST Methods (Add & Sales)
+// 2. POST Methods
 router.post('/', upload.single('billImage'), inventoryController.addMedicine);
-router.post('/dose', inventoryController.sellLooseMedicine); // Final Dose Sale
-router.post('/dose/quick', inventoryController.addQuickEntry); // Rush Mode
-router.post('/dose/resolve', inventoryController.resolvePendingEntry); // Resolve Pending
+router.post('/dose', inventoryController.sellLooseMedicine);
+router.post('/dose/quick', inventoryController.addQuickEntry);
+router.post('/dose/resolve', inventoryController.resolvePendingEntry);
 
-// 3. PUT/DELETE Methods (Update)
-router.put('/:id', upload.single('billImage'), inventoryController.updateMedicine);
+// 3. PUT/DELETE Methods
+// ✅ THIS IS THE FIX: The upload middleware is present here
+router.put('/:id', upload.single('billImage'), inventoryController.updateMedicine); 
 router.delete('/:id', inventoryController.deleteMedicine);
 
 module.exports = router;
