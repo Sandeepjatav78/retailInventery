@@ -71,19 +71,30 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   const handleEditFileChange = (e) => {
       setNewBillFile(e.target.files[0]);
   };
-
-  const handleSaveClick = async () => {
+const handleSaveClick = async () => {
       const formData = new FormData();
+      
+      // Append text fields
       Object.keys(editFormData).forEach(key => {
-          if (key !== 'billImage' && key !== '_id' && key !== '__v') {
-              formData.append(key, editFormData[key]);
+          // Skip internal keys and image (image handled separately)
+          if (key !== 'billImage' && key !== '_id' && key !== '__v' && key !== 'createdAt' && key !== 'updatedAt') {
+              const value = editFormData[key];
+              // Only append if value is not null/undefined
+              if (value !== null && value !== undefined) {
+                  formData.append(key, value);
+              }
           }
       });
+
+      // Append new file ONLY if selected
       if (newBillFile) {
           formData.append('billImage', newBillFile);
       }
 
       try {
+        // Log for debugging (You can remove this later)
+        // for (let pair of formData.entries()) console.log(pair[0], pair[1]); 
+
         await api.put(`/medicines/${editId}`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' }
         });
@@ -91,11 +102,10 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
         setEditId(null);
         window.location.reload();
       } catch (err) {
-          console.error(err);
-          alert("Update Failed");
+          console.error("Update Failed:", err.response?.data?.message || err.message);
+          alert("Update Failed: " + (err.response?.data?.message || "Unknown Error"));
       }
   };
-
   return (
     <div>
       <div className="flex justify-between items-center" style={{ marginBottom: "15px", flexWrap:'wrap', gap:'10px' }}>

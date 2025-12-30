@@ -49,27 +49,43 @@ const addMedicine = async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 };
-
-// 4. UPDATE MEDICINE (With Bill Upload Support)
+// 4. UPDATE MEDICINE (Fixed Logic)
 const updateMedicine = async (req, res) => {
   try {
-    // 1. Purana data copy kar lo
-    let updateData = { ...req.body };
+    // Helper to safely convert to number, or return undefined if missing
+    // (returning undefined prevents overwriting existing value with 0)
+    const safeNumber = (val) => (val !== undefined && val !== '') ? Number(val) : undefined;
 
-    // 2. Agar nayi file (Bill) aayi hai, to uska link add karo
+    let updateData = {
+        ...req.body,
+        // Explicitly cast numeric fields to ensure updates work
+        // If a field is not sent, it remains undefined and won't delete the DB value
+        mrp: safeNumber(req.body.mrp),
+        sellingPrice: safeNumber(req.body.sellingPrice),
+        costPrice: safeNumber(req.body.costPrice),
+        quantity: safeNumber(req.body.quantity),
+        looseQty: safeNumber(req.body.looseQty),
+        packSize: safeNumber(req.body.packSize), // <--- FIX FOR PACK SIZE
+        gst: safeNumber(req.body.gst),
+    };
+
+    // Remove undefined keys so we don't accidentally unset fields
+    Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
+
+    // Handle File Upload
     if (req.file) {
       updateData.billImage = req.file.path;
     }
 
-    // 3. Database me update karo
     const updatedMed = await Medicine.findByIdAndUpdate(
       req.params.id,
       updateData,
-      { new: true } // Taaki updated data wapas mile
+      { new: true }
     );
 
     res.json(updatedMed);
   } catch (err) {
+    console.error("Update Error:", err);
     res.status(400).json({ message: err.message });
   }
 };
