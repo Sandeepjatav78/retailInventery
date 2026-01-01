@@ -48,38 +48,52 @@ const [showDoseModal, setShowDoseModal] = useState(false);
     }
     return null;
   };
-
-  // --- ADD STOCK (Uploads Bill to Cloudinary & Saves Data) ---
+// --- ADD STOCK (Uploads Bill to Cloudinary & Saves Data) ---
   const handleAdd = async () => {
     if (!form.productName || !form.batchNumber) return alert("Please fill details");
     
     const formData = new FormData();
+    
+    // Explicitly append all fields
     Object.keys(form).forEach(key => {
-        // If it's the file, append it as 'billImage'
-        if(key === 'billFile' && form.billFile) formData.append('billImage', form.billFile);
-        else formData.append(key, form[key]);
+        // Skip billFile here, we handle it explicitly below
+        if (key !== 'billFile') {
+            formData.append(key, form[key]);
+        }
     });
+
+    // Explicitly append the file if it exists
+    if (form.billFile) {
+        formData.append('billImage', form.billFile);
+    }
 
     try {
       // This API call handles both Cloudinary upload and DB Save
-      await api.post('/medicines', formData);
+      await api.post('/medicines', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+      });
       alert('✅ Stock Added Successfully!');
       
-      // Reset Form (Keep useful fields like Party/Date/GST)
+      // Reset Form
       setForm(prev => ({ 
         ...prev,
         productName: '', batchNumber: '', quantity: '', mrp: '', 
         sellingPrice: '', costPrice: '', expiryDate: '', 
-        maxDiscount: '', hsnCode: '', billFile: null,
+        maxDiscount: '', hsnCode: '', billFile: null, // Reset file state
         packSize: '10' 
       })); 
+      
+      // IMPORTANT: Reset the file input visually
+      document.querySelector('input[type="file"]').value = '';
+
       fetchMeds();
     } catch (error) { 
         console.error(error);
-        alert("Error adding stock"); 
+        alert("Error adding stock: " + (error.response?.data?.message || error.message)); 
     }
   };
 
+  
   const handleUpdate = async (id, updatedData) => {
     try { await api.put(`/medicines/${id}`, updatedData); alert("Updated Successfully!"); fetchMeds(); } 
     catch (err) { alert("Update Failed"); }
@@ -163,11 +177,14 @@ const [showDoseModal, setShowDoseModal] = useState(false);
 
           <div><label>Expiry Date</label><input name="expiryDate" type="date" value={form.expiryDate} onChange={handleInputChange} /></div>
           
-          {/* Manual Bill Upload Option */}
-          <div>
-              <label>Upload Bill Image</label>
-              <input type="file" onChange={handleFileChange} style={{padding: '7px', border:'1px solid #ccc', borderRadius:'4px', width:'100%'}} />
-          </div>
+         <div>
+    <label>Upload Bill Image</label>
+    <input 
+        type="file" 
+        onChange={handleFileChange} 
+        style={{padding: '7px', border:'1px solid #ccc', borderRadius:'4px', width:'100%'}} 
+    />
+</div>
 
           <div style={{display:'flex', alignItems:'end'}}>
              <button className="btn btn-primary w-full" onClick={handleAdd} style={{height:'42px'}}>+ Add Stock</button>
