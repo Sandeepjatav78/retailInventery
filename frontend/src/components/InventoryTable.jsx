@@ -58,9 +58,17 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
     } catch (err) { alert("Server Error"); }
   };
 
+  // --- FIX 1: Initialize data safely to prevent input locking ---
   const handleEditClick = (med) => { 
       setEditId(med._id); 
-      setEditFormData({ ...med }); 
+      setEditFormData({ 
+          ...med, 
+          // Agar DB me value missing hai to default '0' ya empty string lo
+          packSize: med.packSize || '', 
+          looseQty: med.looseQty || 0,
+          quantity: med.quantity || 0,
+          gst: med.gst || 0
+      }); 
       setNewBillFile(null);
   };
 
@@ -71,30 +79,24 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   const handleEditFileChange = (e) => {
       setNewBillFile(e.target.files[0]);
   };
-const handleSaveClick = async () => {
+
+  const handleSaveClick = async () => {
       const formData = new FormData();
       
-      // Append text fields
       Object.keys(editFormData).forEach(key => {
-          // Skip internal keys and image (image handled separately)
           if (key !== 'billImage' && key !== '_id' && key !== '__v' && key !== 'createdAt' && key !== 'updatedAt') {
               const value = editFormData[key];
-              // Only append if value is not null/undefined
               if (value !== null && value !== undefined) {
                   formData.append(key, value);
               }
           }
       });
 
-      // Append new file ONLY if selected
       if (newBillFile) {
           formData.append('billImage', newBillFile);
       }
 
       try {
-        // Log for debugging (You can remove this later)
-        // for (let pair of formData.entries()) console.log(pair[0], pair[1]); 
-
         await api.put(`/medicines/${editId}`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' }
         });
@@ -106,6 +108,7 @@ const handleSaveClick = async () => {
           alert("Update Failed: " + (err.response?.data?.message || "Unknown Error"));
       }
   };
+
   return (
     <div>
       <div className="flex justify-between items-center" style={{ marginBottom: "15px", flexWrap:'wrap', gap:'10px' }}>
@@ -155,7 +158,18 @@ const handleSaveClick = async () => {
                     <td><input name="productName" value={editFormData.productName} onChange={handleEditFormChange} /></td>
                     <td><input name="batchNumber" value={editFormData.batchNumber} onChange={handleEditFormChange} style={{width:'80px'}} /></td>
                     <td><input name="partyName" value={editFormData.partyName} onChange={handleEditFormChange} /></td>
-                    <td><input name="packSize" type="number" value={editFormData.packSize} onChange={handleEditFormChange} style={{width:'40px', textAlign:'center'}} /></td>
+                    
+                    {/* --- FIX 2: Pack Size Input Width & Value Safety --- */}
+                    <td>
+                        <input 
+                            name="packSize" 
+                            type="number" 
+                            value={editFormData.packSize || ''} 
+                            onChange={handleEditFormChange} 
+                            style={{width:'60px', textAlign:'center'}} 
+                        />
+                    </td>
+
                     <td><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} style={{width:'50px'}} /></td>
                     <td style={{background:'#fff7ed'}}>
                         <input name="looseQty" type="number" value={editFormData.looseQty} onChange={handleEditFormChange} style={{width:'50px', border:'1px solid orange'}} />
@@ -186,7 +200,7 @@ const handleSaveClick = async () => {
                     <td style={{fontWeight: '500'}}>{m.productName}</td>
                     <td className="text-muted">{m.batchNumber}</td>
                     <td style={{fontSize:'0.85rem', color:'#555'}}>{m.partyName || '-'}</td>
-                    <td style={{textAlign:'center', fontWeight:'bold', color:'#555'}}>{m.packSize || 1}</td>
+                    <td style={{textAlign:'center', fontWeight:'bold', color:'#555'}}>{m.packSize || 10}</td>
                     <td>
                         <span style={{fontWeight:'bold', color: m.quantity < 5 ? 'var(--danger)' : 'inherit'}}>
                             {m.quantity}

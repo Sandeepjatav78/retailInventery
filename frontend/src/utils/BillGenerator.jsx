@@ -71,12 +71,12 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
           
           body { font-family: 'Manrope', sans-serif; margin: 0; padding: 0; color: var(--text); background: #fff; font-size: 11px; line-height: 1.3; }
           
-          @page { size: A4; margin: 0; }
+          @page { size: A5; margin: 5; }
           
           .page {
-            width: 210mm;
-            height: 290mm;
-            padding: 10mm;
+            width: 148mm;
+            height: 210mm;
+            padding: mm;
             position: relative;
             box-sizing: border-box;
             display: flex;
