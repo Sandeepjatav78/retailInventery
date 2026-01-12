@@ -58,12 +58,10 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
     } catch (err) { alert("Server Error"); }
   };
 
-  // --- FIX 1: Initialize data safely to prevent input locking ---
   const handleEditClick = (med) => { 
       setEditId(med._id); 
       setEditFormData({ 
           ...med, 
-          // Agar DB me value missing hai to default '0' ya empty string lo
           packSize: med.packSize || '', 
           looseQty: med.looseQty || 0,
           quantity: med.quantity || 0,
@@ -82,7 +80,6 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
 
   const handleSaveClick = async () => {
       const formData = new FormData();
-      
       Object.keys(editFormData).forEach(key => {
           if (key !== 'billImage' && key !== '_id' && key !== '__v' && key !== 'createdAt' && key !== 'updatedAt') {
               const value = editFormData[key];
@@ -91,7 +88,6 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
               }
           }
       });
-
       if (newBillFile) {
           formData.append('billImage', newBillFile);
       }
@@ -109,75 +105,81 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
       }
   };
 
+  // Reusable Classes
+  const thClass = "px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider bg-gray-50 border-b border-gray-200";
+  const tdClass = "px-3 py-4 whitespace-nowrap text-sm text-gray-700 border-b border-gray-100";
+  const inputEditClass = "w-full p-1 border border-gray-300 rounded text-sm focus:border-teal-500 focus:ring-1 focus:ring-teal-500";
+
   return (
-    <div>
-      <div className="flex justify-between items-center" style={{ marginBottom: "15px", flexWrap:'wrap', gap:'10px' }}>
-         <div className="flex items-center gap-4">
-            <h3>📦 Stock List ({filteredMeds.length})</h3>
-            <input 
-                placeholder="🔍 Search Name, Party or Batch..." 
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                style={{padding:'8px', width:'250px'}}
-            />
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      
+      {/* --- HEADER: Search & Buttons --- */}
+      <div className="flex flex-wrap items-center justify-between p-4 gap-4 bg-gray-50 border-b border-gray-200">
+         <div className="flex items-center gap-4 flex-grow">
+            <h3 className="font-bold text-lg text-gray-800 whitespace-nowrap">
+                📦 Stock List <span className="text-gray-500 text-sm font-normal">({filteredMeds.length})</span>
+            </h3>
+            <div className="relative w-full max-w-xs">
+                <input 
+                    placeholder="🔍 Search Name, Party or Batch..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                />
+                <span className="absolute left-3 top-2.5 text-gray-400">🔍</span>
+            </div>
          </div>
          
-         <div className="flex gap-4">
-             <button onClick={handleExport} className="btn btn-success" style={{backgroundColor:'#217346'}}>
-                📊 Export Excel
+         <div className="flex gap-3">
+             <button onClick={handleExport} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2">
+                 📊 Export Excel
              </button>
-             <button onClick={handleToggleCP} className={`btn ${showCP ? 'btn-danger' : 'btn-secondary'}`}>
+             <button 
+                onClick={handleToggleCP} 
+                className={`px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2 ${showCP ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gray-600 hover:bg-gray-700 text-white'}`}
+             >
                 {showCP ? '🙈 Hide Cost' : '🔒 View Cost Price'}
              </button>
          </div>
       </div>
 
-      <div className="table-container">
-        <table>
-            <thead>
+      {/* --- TABLE --- */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
                 <tr>
-                    <th>Name</th>
-                    <th>Batch</th>
-                    <th>Party</th>
-                    <th>Pack</th>
-                    <th>Strips</th>
-                    <th style={{color:'#ea580c', background:'#fff7ed'}}>Loose</th> 
-                    <th>MRP</th>
-                    <th style={{color:'green'}}>S.Price</th>
-                    <th>GST%</th>
-                    {showCP ? <th style={{color:'red'}}>CP</th> : null}
-                    <th>Bill Upload</th>
-                    <th style={{width:'100px'}}>Action</th>
+                    <th className={thClass}>Name</th>
+                    <th className={thClass}>Batch</th>
+                    <th className={thClass}>Party</th>
+                    <th className={`${thClass} text-center`}>Pack</th>
+                    <th className={`${thClass} text-center`}>Strips</th>
+                    <th className={`${thClass} bg-orange-50 text-orange-800 text-center`}>Loose</th> 
+                    <th className={thClass}>MRP</th>
+                    <th className={`${thClass} text-green-700`}>S.Price</th>
+                    <th className={thClass}>GST%</th>
+                    {showCP && <th className={`${thClass} text-red-600`}>CP</th>}
+                    <th className={thClass}>Bill Upload</th>
+                    <th className={`${thClass} text-center`}>Action</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody className="bg-white divide-y divide-gray-100">
             {filteredMeds.map((m) => (
-                <tr key={m._id}>
+                <tr key={m._id} className="hover:bg-gray-50 transition-colors">
                 {editId === m._id ? (
+                    // --- EDIT MODE ---
                     <>
-                    <td><input name="productName" value={editFormData.productName} onChange={handleEditFormChange} /></td>
-                    <td><input name="batchNumber" value={editFormData.batchNumber} onChange={handleEditFormChange} style={{width:'80px'}} /></td>
-                    <td><input name="partyName" value={editFormData.partyName} onChange={handleEditFormChange} /></td>
-                    
-                    {/* --- FIX 2: Pack Size Input Width & Value Safety --- */}
-                    <td>
-                        <input 
-                            name="packSize" 
-                            type="number" 
-                            value={editFormData.packSize || ''} 
-                            onChange={handleEditFormChange} 
-                            style={{width:'60px', textAlign:'center'}} 
-                        />
+                    <td className={tdClass}><input name="productName" value={editFormData.productName} onChange={handleEditFormChange} className={inputEditClass} /></td>
+                    <td className={tdClass}><input name="batchNumber" value={editFormData.batchNumber} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
+                    <td className={tdClass}><input name="partyName" value={editFormData.partyName} onChange={handleEditFormChange} className={inputEditClass} /></td>
+                    <td className={tdClass}><input name="packSize" type="number" value={editFormData.packSize || ''} onChange={handleEditFormChange} className={`${inputEditClass} text-center w-16`} /></td>
+                    <td className={tdClass}><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} className={`${inputEditClass} w-16`} /></td>
+                    <td className={`${tdClass} bg-orange-50`}>
+                        <input name="looseQty" type="number" value={editFormData.looseQty} onChange={handleEditFormChange} className={`${inputEditClass} w-16 border-orange-300 focus:ring-orange-500`} />
                     </td>
-
-                    <td><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} style={{width:'50px'}} /></td>
-                    <td style={{background:'#fff7ed'}}>
-                        <input name="looseQty" type="number" value={editFormData.looseQty} onChange={handleEditFormChange} style={{width:'50px', border:'1px solid orange'}} />
-                    </td>
-                    <td><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} style={{width:'60px'}} /></td>
-                    <td><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={handleEditFormChange} style={{width:'60px', fontWeight:'bold', color:'green'}} /></td>
-                    <td>
-                        <select name="gst" value={editFormData.gst} onChange={handleEditFormChange} style={{padding:'5px'}}>
+                    <td className={tdClass}><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
+                    <td className={tdClass}><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 font-bold text-green-700`} /></td>
+                    <td className={tdClass}>
+                        <select name="gst" value={editFormData.gst} onChange={handleEditFormChange} className={inputEditClass}>
                             <option value="0">0%</option>
                             <option value="5">5%</option>
                             <option value="12">12%</option>
@@ -185,42 +187,49 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                         </select>
                     </td>
                     {showCP && (
-                        <td><input name="costPrice" type="number" value={editFormData.costPrice} onChange={handleEditFormChange} style={{width:'60px', border:'1px solid red'}} /></td>
+                        <td className={tdClass}><input name="costPrice" type="number" value={editFormData.costPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 border-red-300 text-red-600`} /></td>
                     )}
-                    <td>
-                        <input type="file" onChange={handleEditFileChange} style={{width:'180px', fontSize:'0.8rem'}} />
+                    <td className={tdClass}>
+                        <input type="file" onChange={handleEditFileChange} className="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100" />
                     </td>
-                    <td className="flex" style={{gap:'5px'}}>
-                        <button onClick={handleSaveClick} className="btn btn-success" style={{padding:'6px'}}>💾</button>
-                        <button onClick={() => setEditId(null)} className="btn btn-secondary" style={{padding:'6px'}}>❌</button>
+                    <td className={tdClass}>
+                        <div className="flex gap-2 justify-center">
+                            <button onClick={handleSaveClick} className="bg-green-100 text-green-700 hover:bg-green-200 p-1.5 rounded-md" title="Save">💾</button>
+                            <button onClick={() => setEditId(null)} className="bg-gray-100 text-gray-600 hover:bg-gray-200 p-1.5 rounded-md" title="Cancel">❌</button>
+                        </div>
                     </td>
                     </>
                 ) : (
+                    // --- VIEW MODE ---
                     <>
-                    <td style={{fontWeight: '500'}}>{m.productName}</td>
-                    <td className="text-muted">{m.batchNumber}</td>
-                    <td style={{fontSize:'0.85rem', color:'#555'}}>{m.partyName || '-'}</td>
-                    <td style={{textAlign:'center', fontWeight:'bold', color:'#555'}}>{m.packSize || 10}</td>
-                    <td>
-                        <span style={{fontWeight:'bold', color: m.quantity < 5 ? 'var(--danger)' : 'inherit'}}>
+                    <td className={`${tdClass} font-medium text-gray-900`}>{m.productName}</td>
+                    <td className={`${tdClass} text-gray-500`}>{m.batchNumber}</td>
+                    <td className={`${tdClass} text-gray-500 text-xs`}>{m.partyName || '-'}</td>
+                    <td className={`${tdClass} text-center font-semibold text-gray-600`}>{m.packSize || 10}</td>
+                    <td className={tdClass}>
+                        <span className={`font-bold ${m.quantity < 5 ? 'text-red-600 bg-red-50 px-2 py-0.5 rounded' : 'text-gray-900'}`}>
                             {m.quantity}
                         </span>
                     </td>
-                    <td style={{textAlign:'center', fontWeight:'bold', color:'#ea580c', background:'#fff7ed'}}>
+                    <td className={`${tdClass} text-center font-bold text-orange-600 bg-orange-50`}>
                         {m.looseQty || 0}
                     </td>
-                    <td>{m.mrp}</td>
-                    <td style={{fontWeight:'bold', color:'green'}}>₹{m.sellingPrice}</td>
-                    <td><span className="badge badge-online" style={{background:'#e0e7ff', color:'#3730a3'}}>{m.gst}%</span></td>
-                    {showCP && <td style={{fontWeight:'bold', color:'red'}}>₹{m.costPrice}</td>}
-                    <td>
-                        {m.billImage ? (
-                            <a href={m.billImage} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{padding: '4px 8px', fontSize: '0.8rem'}}>View Bill</a>
-                        ) : <span className="text-muted" style={{fontSize:'0.8rem'}}>No Bill</span>}
+                    <td className={tdClass}>{m.mrp}</td>
+                    <td className={`${tdClass} font-bold text-green-700`}>₹{m.sellingPrice}</td>
+                    <td className={tdClass}>
+                        <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-semibold border border-indigo-100">{m.gst}%</span>
                     </td>
-                    <td style={{display:'flex', gap:'8px'}}>
-                        <button onClick={() => handleEditClick(m)} className="btn btn-secondary" style={{padding: '4px 8px'}} title="Edit">✏️</button>
-                        <button onClick={() => handleDeleteClick(m._id)} className="btn btn-danger" style={{padding: '4px 8px'}} title="Delete">🗑️</button>
+                    {showCP && <td className={`${tdClass} font-bold text-red-600`}>₹{m.costPrice}</td>}
+                    <td className={tdClass}>
+                        {m.billImage ? (
+                            <a href={m.billImage} target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:text-teal-800 text-xs underline font-medium">View Bill</a>
+                        ) : <span className="text-gray-400 text-xs italic">No Bill</span>}
+                    </td>
+                    <td className={tdClass}>
+                        <div className="flex gap-2 justify-center">
+                            <button onClick={() => handleEditClick(m)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit">✏️</button>
+                            <button onClick={() => handleDeleteClick(m._id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors" title="Delete">🗑️</button>
+                        </div>
                     </td>
                     </>
                 )}
@@ -228,7 +237,13 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
             ))}
             </tbody>
         </table>
-        {filteredMeds.length === 0 && <div style={{padding:'20px', textAlign:'center', color:'#888'}}>No medicine found matching "{searchTerm}"</div>}
+        
+        {/* Empty State */}
+        {filteredMeds.length === 0 && (
+            <div className="p-8 text-center text-gray-400 italic bg-gray-50 border-t border-gray-100">
+                No medicines found matching "{searchTerm}"
+            </div>
+        )}
       </div>
     </div>
   );

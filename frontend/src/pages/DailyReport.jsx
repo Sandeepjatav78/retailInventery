@@ -1,10 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
 import { generateBillHTML } from '../utils/BillGenerator';
-import '../App.css'; 
 
 const DailyReport = () => {
-  // --- STATES ---
   const [report, setReport] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [dates, setDates] = useState({
@@ -12,10 +10,8 @@ const DailyReport = () => {
     end: new Date().toISOString().split('T')[0]
   });
 
-  // Profit Unlock State
   const [showProfit, setShowProfit] = useState(false);
 
-  // --- FETCH DATA ---
   const fetchReport = () => {
     api.get(`/sales/filter?start=${dates.start}&end=${dates.end}`)
       .then(res => setReport(res.data))
@@ -24,10 +20,9 @@ const DailyReport = () => {
 
   useEffect(() => { fetchReport(); }, [dates]);
 
-  // --- UNLOCK PROFIT FUNCTION ---
   const handleUnlockProfit = async () => {
       if (showProfit) {
-          setShowProfit(false); // Toggle OFF
+          setShowProfit(false);
           return;
       }
       
@@ -36,17 +31,11 @@ const DailyReport = () => {
 
       try {
           const res = await api.post('/admin/verify', { password });
-          if (res.data.success) {
-              setShowProfit(true);
-          } else {
-              alert("❌ Wrong Password!");
-          }
-      } catch (err) {
-          alert("Server Error");
-      }
+          if (res.data.success) setShowProfit(true);
+          else alert("❌ Wrong Password!");
+      } catch (err) { alert("Server Error"); }
   };
 
-  // --- HELPERS ---
   const setRange = (type) => {
     const today = new Date();
     let start = new Date();
@@ -96,12 +85,10 @@ const DailyReport = () => {
 
   const filteredTransactions = getFilteredTransactions();
 
-  // --- CALCULATE TOTAL PROFIT (If Unlocked) ---
   let totalProfit = 0;
   if (showProfit && report) {
       report.transactions.forEach(t => {
           t.items.forEach(item => {
-              // Assuming 'purchasePrice' exists in item, otherwise default to 70% of selling price as estimate
               const cost = item.purchasePrice || (item.price * 0.7); 
               const profit = (item.price - cost) * item.quantity;
               totalProfit += profit;
@@ -109,157 +96,158 @@ const DailyReport = () => {
       });
   }
 
-  if (!report) return <div className="text-center p-5">Loading Records...</div>;
+  if (!report) return <div className="text-center p-10 text-gray-500 font-medium">Loading Records...</div>;
+
+  // Reusable Card Class
+  const cardClass = "bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between";
 
   return (
-    <div>
-      <div className="flex justify-between items-center" style={{marginBottom:'20px'}}>
-        <h2>📊 Sales Report</h2>
+    <div className="p-6 bg-gray-50 min-h-screen">
+      
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+        <h2 className="text-2xl font-extrabold text-gray-800">📊 Sales Report</h2>
         
-        <div className="flex items-center gap-4">
-            {/* PROFIT TOGGLE BUTTON */}
+        <div className="flex flex-wrap items-center gap-3">
+            {/* PROFIT TOGGLE */}
             <button 
                 onClick={handleUnlockProfit}
-                className={`btn ${showProfit ? 'btn-danger' : 'btn-primary'}`}
-                style={{display:'flex', alignItems:'center', gap:'5px'}}
+                className={`px-4 py-2 rounded-lg font-bold text-sm shadow-sm transition-all flex items-center gap-2 ${showProfit ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-teal-600 text-white hover:bg-teal-700'}`}
             >
                 {showProfit ? '🔒 Hide Profit' : '🔓 Show Profit'}
             </button>
 
-            <div className="flex items-center gap-4 bg-white p-2 rounded border">
-                <button onClick={() => setRange('today')} className="btn btn-secondary">Today</button>
-                <button onClick={() => setRange('month')} className="btn btn-secondary">Month</button>
-                <span className="text-muted">From:</span>
-                <input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} />
-                <span className="text-muted">To:</span>
-                <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} />
+            <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm">
+                <button onClick={() => setRange('today')} className="text-xs font-semibold text-gray-600 hover:text-teal-600 px-2 py-1 hover:bg-gray-100 rounded">Today</button>
+                <div className="h-4 w-px bg-gray-300"></div>
+                <button onClick={() => setRange('month')} className="text-xs font-semibold text-gray-600 hover:text-teal-600 px-2 py-1 hover:bg-gray-100 rounded">Month</button>
+                
+                <input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="text-xs border rounded p-1 text-gray-600" />
+                <span className="text-gray-400 text-xs">to</span>
+                <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="text-xs border rounded p-1 text-gray-600" />
             </div>
         </div>
       </div>
 
       {/* SUMMARY CARDS */}
-      <div style={{ display: 'grid', gridTemplateColumns: showProfit ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr', gap: '20px', marginBottom: '30px' }}>
-        <div className="card" style={{borderLeft: '5px solid var(--success)'}}>
-          <h4 className="text-muted">Total Revenue</h4>
-          <h1 className="text-success" style={{fontSize: '2rem'}}>₹{report.totalRevenue.toFixed(0)}</h1>
-          <div className="text-muted">{report.totalSalesCount} Transactions</div>
+      <div className={`grid gap-6 mb-8 ${showProfit ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4' : 'grid-cols-1 md:grid-cols-3'}`}>
+        
+        {/* Total Revenue */}
+        <div className={`${cardClass} border-l-4 border-l-green-500`}>
+          <div>
+             <h4 className="text-gray-500 text-xs font-bold uppercase tracking-wider">Total Revenue</h4>
+             <h1 className="text-3xl font-extrabold text-gray-800 mt-1">₹{report.totalRevenue.toFixed(0)}</h1>
+          </div>
+          <div className="text-green-600 text-xs font-bold mt-2 bg-green-50 w-fit px-2 py-1 rounded">
+             {report.totalSalesCount} Transactions
+          </div>
         </div>
-        <div className="card" style={{borderLeft: '5px solid var(--accent)'}}>
-          <h4 className="text-muted">Cash Received</h4>
-          <h1 style={{color: 'var(--accent)', fontSize: '1.8rem'}}>₹{report.cashRevenue.toFixed(0)}</h1>
+
+        {/* Cash Revenue */}
+        <div className={`${cardClass} border-l-4 border-l-orange-500`}>
+          <h4 className="text-gray-500 text-xs font-bold uppercase tracking-wider">Cash Received</h4>
+          <h1 className="text-3xl font-extrabold text-orange-600 mt-1">₹{report.cashRevenue.toFixed(0)}</h1>
         </div>
-        <div className="card" style={{borderLeft: '5px solid var(--secondary)'}}>
-          <h4 className="text-muted">Online Received</h4>
-          <h1 style={{color: 'var(--secondary)', fontSize: '1.8rem'}}>₹{report.onlineRevenue.toFixed(0)}</h1>
+
+        {/* Online Revenue */}
+        <div className={`${cardClass} border-l-4 border-l-blue-500`}>
+          <h4 className="text-gray-500 text-xs font-bold uppercase tracking-wider">Online Received</h4>
+          <h1 className="text-3xl font-extrabold text-blue-600 mt-1">₹{report.onlineRevenue.toFixed(0)}</h1>
         </div>
         
-        {/* PROFIT CARD (HIDDEN BY DEFAULT) */}
+        {/* PROFIT CARD */}
         {showProfit && (
-            <div className="card" style={{borderLeft: '5px solid #16a34a', background:'#f0fdf4'}}>
-                <h4 style={{color:'#15803d'}}>Estimated Profit</h4>
-                <h1 style={{color: '#16a34a', fontSize: '2rem'}}>₹{totalProfit.toFixed(0)}</h1>
-                <div style={{fontSize:'0.8rem', color:'#15803d'}}>
+            <div className={`${cardClass} border-l-4 border-l-emerald-600 bg-emerald-50`}>
+                <h4 className="text-emerald-800 text-xs font-bold uppercase tracking-wider">Estimated Profit</h4>
+                <h1 className="text-3xl font-extrabold text-emerald-700 mt-1">₹{totalProfit.toFixed(0)}</h1>
+                <div className="text-emerald-800 text-xs font-bold mt-2">
                     Margin: {report.totalRevenue > 0 ? ((totalProfit / report.totalRevenue) * 100).toFixed(1) : 0}%
                 </div>
             </div>
         )}
       </div>
 
-      <div className="card">
-        <div style={{ marginBottom: '20px' }}>
+      {/* TABLE SECTION */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        
+        {/* Search Bar */}
+        <div className="p-4 border-b border-gray-100 bg-gray-50">
             <input 
                 type="text" 
-                placeholder="🔍 Search by Invoice, Customer, Medicine..." 
+                placeholder="🔍 Search by Invoice, Customer, or Medicine..." 
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                style={{padding: '12px', fontSize: '1rem', width: '100%', border:'1px solid #ccc', borderRadius:'5px'}}
+                className="w-full p-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
             />
         </div>
 
-        <div className="table-container">
-            <table>
-                <thead>
+        <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+                <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
-                    <th>Date</th>
-                    <th>Type / Invoice</th>
-                    <th>Details / Items</th>
-                    <th>Amount</th>
-                    {showProfit && <th style={{background:'#dcfce7', color:'#166534'}}>Profit Info</th>} {/* Hidden Column */}
-                    <th>Status</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Date</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Details</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">Customer</th>
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase text-right">Amount</th>
+                    {showProfit && <th className="px-6 py-4 text-xs font-bold text-emerald-700 uppercase bg-emerald-50 text-right">Profit</th>}
+                    <th className="px-6 py-4 text-xs font-bold text-gray-500 uppercase text-center">Status</th>
                 </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-gray-100">
                 {filteredTransactions.length === 0 ? (
-                    <tr><td colSpan={showProfit ? 6 : 5} className="text-center p-5 text-muted">No sales found matching your criteria.</td></tr>
+                    <tr><td colSpan={showProfit ? 6 : 5} className="text-center py-10 text-gray-400 italic">No sales found.</td></tr>
                 ) : (
                     filteredTransactions.map((t) => {
                         const isDose = t.invoiceNo.startsWith('DOSE');
-                        
-                        // Calculate Transaction Profit
                         let tProfit = 0;
                         if(showProfit) {
                             tProfit = t.items.reduce((acc, item) => {
-                                const cost = item.purchasePrice || (item.price * 0.7); // Fallback if purchasePrice missing
+                                const cost = item.purchasePrice || (item.price * 0.7);
                                 return acc + ((item.price - cost) * item.quantity);
                             }, 0);
                         }
 
                         return (
-                        <tr key={t._id} style={{background: isDose ? '#fffbeb' : 'white'}}>
+                        <tr key={t._id} className={`hover:bg-gray-50 transition-colors ${isDose ? 'bg-yellow-50/50' : 'bg-white'}`}>
                             
-                            <td>
-                                <div style={{fontWeight:'600'}}>{new Date(t.date).toLocaleDateString()}</div>
-                                <div className="text-muted" style={{fontSize:'0.8rem'}}>{new Date(t.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                            <td className="px-6 py-4">
+                                <div className="font-bold text-gray-800 text-sm">{new Date(t.date).toLocaleDateString()}</div>
+                                <div className="text-gray-400 text-xs">{new Date(t.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
                             </td>
 
-                            <td>
+                            <td className="px-6 py-4">
+                                <div className="text-sm font-bold text-gray-700 mb-1">{t.invoiceNo}</div>
                                 {(!t.customerDetails || (t.customerDetails.name === 'Cash Sale' && !isDose)) ? (
-                                    <span className="text-muted" style={{fontStyle: 'italic'}}>No Bill <br/><small>{t.invoiceNo}</small></span>
+                                    <span className="text-xs text-gray-400 italic">No Invoice</span>
                                 ) : (
-                                    <button onClick={() => handlePrintInvoice(t)} className="btn btn-secondary" style={{padding: '4px 8px', fontSize: '0.8rem'}}>
-                                        {isDose ? '💊' : '📄'} {t.invoiceNo} 🖨️
+                                    <button onClick={() => handlePrintInvoice(t)} className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded hover:bg-blue-100 transition-colors flex items-center gap-1 w-fit">
+                                        {isDose ? '💊' : '📄'} Print
                                     </button>
                                 )}
                             </td>
 
-                            <td>
-                                <div style={{fontWeight:'500'}}>👤 {t.customerDetails?.name || 'Walk-in'}</div>
-                                <div style={{fontSize:'0.85rem', color:'#555'}}>
-                                    {t.items.map((i, index) => (
-                                        <div key={index}>
-                                            • {i.name} <span className="text-muted">x{i.quantity}</span>
-                                            {/* Show Medicine Level Profit if Unlocked */}
-                                            {showProfit && (
-                                                <span style={{fontSize:'0.75rem', color:'#16a34a', marginLeft:'5px'}}>
-                                                    (Buy: ₹{i.purchasePrice || (i.price*0.7).toFixed(0)} ➔ Sell: ₹{i.price})
-                                                </span>
-                                            )}
-                                        </div>
-                                    ))}
+                            <td className="px-6 py-4">
+                                <div className="font-semibold text-gray-800 text-sm">👤 {t.customerDetails?.name || 'Walk-in'}</div>
+                                <div className="text-xs text-gray-500 mt-1 max-w-xs truncate">
+                                    {t.items.map(i => i.name).join(', ')}
                                 </div>
                             </td>
 
-                            <td className="text-success" style={{fontWeight:'bold', fontSize:'1.1rem'}}>
-                                ₹{t.totalAmount.toFixed(2)}
+                            <td className="px-6 py-4 text-right">
+                                <div className="font-bold text-gray-800 text-base">₹{t.totalAmount.toFixed(2)}</div>
                             </td>
 
-                            {/* HIDDEN PROFIT CELL */}
                             {showProfit && (
-                                <td style={{background:'#f0fdf4'}}>
-                                    <div style={{fontWeight:'bold', color:'#15803d'}}>₹{tProfit.toFixed(2)}</div>
-                                    <div style={{fontSize:'0.7rem', color:'#166534'}}>
-                                        Margin: {((tProfit/t.totalAmount)*100).toFixed(0)}%
+                                <td className="px-6 py-4 text-right bg-emerald-50/50">
+                                    <div className="font-bold text-emerald-700">₹{tProfit.toFixed(2)}</div>
+                                    <div className="text-xs text-emerald-600 font-medium">
+                                        {((tProfit/t.totalAmount)*100).toFixed(0)}%
                                     </div>
                                 </td>
                             )}
 
-                            <td>
-                                <span style={{
-                                    padding: '4px 10px', borderRadius: '20px',
-                                    background: t.paymentMode === 'Cash' ? '#fff7ed' : '#eff6ff',
-                                    color: t.paymentMode === 'Cash' ? '#c2410c' : '#1d4ed8',
-                                    fontWeight: '600', fontSize: '0.8rem'
-                                }}>
+                            <td className="px-6 py-4 text-center">
+                                <span className={`px-3 py-1 rounded-full text-xs font-bold border ${t.paymentMode === 'Cash' ? 'bg-orange-50 text-orange-600 border-orange-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>
                                     {t.paymentMode}
                                 </span>
                             </td>

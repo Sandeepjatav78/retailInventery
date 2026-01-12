@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import api from "../api/axios";
 import { generateBillHTML } from "../utils/BillGenerator";
-import "../App.css";
 
 const SaleForm = () => {
   // --- 1. LOAD SAVED STATE ---
@@ -112,26 +111,6 @@ const SaleForm = () => {
       setCart(c);
   };
 
-  const handleInitiateEdit = async (index, currentPrice) => {
-    const password = prompt("🔒 Admin Password:");
-    if (!password) return;
-    try {
-      const res = await api.post("/admin/verify", { password });
-      if (res.data.success) { setEditingIndex(index); setTempPrice(currentPrice); } 
-      else { alert("❌ Wrong Password!"); }
-    } catch (err) { alert("Server Error"); }
-  };
-
-  const handleSavePrice = (index) => {
-    const newPrice = parseFloat(tempPrice);
-    if (isNaN(newPrice) || newPrice < 0) return alert("Invalid Price");
-    const newCart = [...cart];
-    newCart[index].price = newPrice;
-    newCart[index].total = newPrice * newCart[index].quantity;
-    setCart(newCart);
-    setEditingIndex(null);
-  };
-
   // --- 8. CHECKOUT ---
   const handleCheckout = async () => {
     if (cart.length === 0) return alert("Cart is empty");
@@ -202,37 +181,55 @@ const SaleForm = () => {
     else if (e.key === "Enter" && focusedIndex >= 0) { e.preventDefault(); addToCart(results[focusedIndex]); }
   };
 
+  // Reusable Classes
+  const inputClass = "w-full p-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition-all";
+  
   return (
-    <div className="sale-grid"> {/* THIS CLASS CREATES THE PARTITION */}
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-80px)] p-4 bg-gray-50">
       
-      {/* LEFT PANEL: Medicine Selection & Cart */}
-      <div className="card flex-col" style={{ height: "100%", padding: 0 }}>
+      {/* --- LEFT: SEARCH & CART --- */}
+      <div className="lg:col-span-2 flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         
         {/* Header & Search */}
-        <div style={{ padding: "15px", borderBottom: "1px solid var(--border)" }}>
-            <div className="flex justify-between items-center" style={{marginBottom:'10px'}}>
-                <h3 style={{margin:0, color:'var(--primary)'}}>💊 New Sale</h3>
-                <div className="flex items-center gap-2">
-                    {cart.length > 0 && <button onClick={clearDraft} className="btn-danger" style={{padding:'4px 8px', fontSize:'0.8rem'}}>Clear</button>}
-                    <span style={{background:'#e0e7ff', color:'#3730a3', padding:'4px 8px', borderRadius:'6px', fontSize:'0.8rem', fontWeight:'600'}}>
+        <div className="p-4 bg-gray-50 border-b border-gray-200">
+            <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xl font-bold text-teal-800 flex items-center gap-2">💊 New Sale</h3>
+                <div className="flex items-center gap-3">
+                    {cart.length > 0 && (
+                        <button onClick={clearDraft} className="text-xs font-bold text-red-600 bg-red-50 px-3 py-1 rounded hover:bg-red-100 transition-colors">
+                            Clear Cart
+                        </button>
+                    )}
+                    <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold border border-indigo-200">
                         {invoiceNo}
                     </span>
                 </div>
             </div>
-            <div style={{position:'relative'}}>
+            
+            <div className="relative">
                 <input 
-                    placeholder="Scan barcode or type name..." 
+                    className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-xl focus:outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/20 transition-all"
+                    placeholder="🔍 Scan barcode or type medicine name..." 
                     value={query} onChange={e => setQuery(e.target.value)} onKeyDown={handleKeyDown} autoFocus 
                 />
+                
+                {/* Search Dropdown */}
                 {results.length > 0 && (
-                    <div ref={resultListRef} className="search-dropdown">
+                    <div ref={resultListRef} className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto divide-y divide-gray-100">
                         {results.map((med, idx) => (
-                            <div key={med._id} onClick={() => addToCart(med)} className={`search-item ${idx === focusedIndex ? "active" : ""}`}>
+                            <div 
+                                key={med._id} 
+                                onClick={() => addToCart(med)} 
+                                className={`p-3 hover:bg-teal-50 cursor-pointer transition-colors flex justify-between items-center ${idx === focusedIndex ? "bg-teal-50" : ""}`}
+                            >
                                 <div>
-                                    <div style={{fontWeight:'600'}}>{med.productName}</div>
-                                    <div style={{fontSize:'0.75rem', color:'#64748b'}}>Stock: <b>{med.quantity}</b> | Batch: {med.batchNumber}</div>
+                                    <div className="font-bold text-gray-800">{med.productName}</div>
+                                    <div className="text-xs text-gray-500 mt-1 flex gap-3">
+                                        <span className="font-bold text-green-600">Stock: {med.quantity}</span>
+                                        <span>Batch: {med.batchNumber}</span>
+                                    </div>
                                 </div>
-                                <div style={{fontWeight:'700', color:'var(--success)'}}>₹{med.sellingPrice}</div>
+                                <div className="text-right font-bold text-teal-600 text-lg">₹{med.sellingPrice}</div>
                             </div>
                         ))}
                     </div>
@@ -240,101 +237,104 @@ const SaleForm = () => {
             </div>
         </div>
 
-        {/* Cart Table */}
-        <div className="table-container" style={{flex:1, border:'none', borderRadius:0}}>
-            <table>
-                <thead style={{position:'sticky', top:0, zIndex:10}}>
+        {/* Table Container */}
+        <div className="flex-1 overflow-y-auto">
+            <table className="w-full text-left border-collapse">
+                <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                     <tr>
-                        <th style={{paddingLeft:'20px'}}>Item</th>
-                        <th style={{textAlign:'center', width:'100px'}}>Qty</th>
-                        <th style={{textAlign:'right'}}>Total</th>
-                        <th style={{width:'40px'}}></th>
+                        <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Item</th>
+                        <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Qty</th>
+                        <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">Total</th>
+                        <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase"></th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-gray-100">
                     {cart.map((item, idx) => (
-                        <tr key={idx}>
-                            <td style={{paddingLeft:'20px'}}>
-                                <div style={{fontWeight:'600', fontSize:'0.9rem'}}>{item.name}</div>
-                                <div style={{fontSize:'0.7rem', color:'#64748b'}}>₹{item.price}</div>
+                        <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-3">
+                                <div className="font-semibold text-gray-800 text-sm">{item.name}</div>
+                                <div className="text-xs text-gray-500">₹{item.price}</div>
                             </td>
-                            <td style={{textAlign:'center'}}>
-                                <div className="flex items-center justify-center" style={{gap:'5px'}}>
-                                    <button onClick={() => updateQty(idx, item.quantity - 1)} className="btn-qty">-</button>
-                                    <span style={{width:'30px', textAlign:'center', fontWeight:'bold'}}>{item.quantity}</span>
-                                    <button onClick={() => updateQty(idx, item.quantity + 1)} className="btn-qty">+</button>
+                            <td className="px-2 py-3 text-center">
+                                <div className="flex items-center justify-center gap-1">
+                                    <button onClick={() => updateQty(idx, item.quantity - 1)} className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded">-</button>
+                                    <span className="w-8 text-center text-sm font-bold">{item.quantity}</span>
+                                    <button onClick={() => updateQty(idx, item.quantity + 1)} className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded">+</button>
                                 </div>
                             </td>
-                            <td style={{textAlign:'right', fontWeight:'700', color:'var(--text)'}}>₹{item.total.toFixed(2)}</td>
-                            <td style={{textAlign:'center'}}>
-                                <button onClick={() => removeFromCart(idx)} style={{background:'none', border:'none', color:'var(--danger)', fontSize:'1.2rem', cursor:'pointer'}}>×</button>
+                            <td className="px-4 py-3 text-right font-bold text-teal-700 text-sm">₹{item.total.toFixed(2)}</td>
+                            <td className="px-2 py-3 text-center">
+                                <button onClick={() => removeFromCart(idx)} className="text-gray-400 hover:text-red-500 text-lg transition-colors">×</button>
                             </td>
                         </tr>
                     ))}
-                    {cart.length === 0 && <tr><td colSpan="4" style={{textAlign:'center', padding:'40px', color:'#94a3b8'}}>Start adding items...</td></tr>}
+                    {cart.length === 0 && (
+                        <tr>
+                            <td colSpan="4" className="py-20 text-center text-gray-400 italic">Start adding items...</td>
+                        </tr>
+                    )}
                 </tbody>
             </table>
         </div>
       </div>
 
-      {/* RIGHT PANEL: Details & Payment */}
-      <div className="card flex-col" style={{ padding: "20px", height: 'auto' }}>
+      {/* --- RIGHT: CHECKOUT --- */}
+      <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col h-fit sticky top-4">
         
-        <div style={{background:'var(--primary-light)', padding:'20px', borderRadius:'10px', textAlign:'center', marginBottom:'10px'}}>
-            <div style={{fontSize:'0.8rem', textTransform:'uppercase', letterSpacing:'1px', color:'var(--primary-dark)'}}>Total Payable</div>
-            <div style={{fontSize:'2.5rem', fontWeight:'800', color:'var(--primary-dark)', lineHeight:1}}>
-                ₹{cart.reduce((a, b) => a + b.total, 0).toFixed(0)}
-            </div>
+        {/* Total Card */}
+        <div className="bg-teal-50 p-6 rounded-xl text-center mb-4 border border-teal-100">
+            <div className="text-teal-800 text-xs font-bold uppercase tracking-wider mb-1">Total Payable</div>
+            <div className="text-4xl font-extrabold text-teal-900">₹{cart.reduce((a, b) => a + b.total, 0).toFixed(0)}</div>
         </div>
 
         {lastSale && (
-            <div style={{background:'#dcfce7', color:'#166534', padding:'10px', borderRadius:'8px', fontSize:'0.9rem', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
-                <span>✅ Saved!</span>
-                <button onClick={handleReprint} style={{background:'none', border:'none', textDecoration:'underline', cursor:'pointer', color:'#15803d', fontWeight:'bold'}}>Reprint</button>
+            <div className="mb-4 bg-green-50 border border-green-200 rounded-lg p-3 flex justify-between items-center text-sm">
+                <span className="text-green-700 font-bold">✅ Saved!</span>
+                <button onClick={handleReprint} className="underline font-bold text-green-800 hover:text-green-900">Reprint</button>
             </div>
         )}
 
-        <div style={{borderBottom:'1px solid var(--border)', paddingBottom:'15px', marginBottom:'15px'}}>
-            <div className="flex justify-between" style={{marginBottom:'8px', alignItems:'center'}}>
-                <span style={{fontSize:'0.85rem', fontWeight:'600', color:'var(--text-light)'}}>Customer Details</span>
-                <label style={{fontSize:'0.85rem', display:'flex', alignItems:'center', gap:'6px', cursor:'pointer', fontWeight:'600', color:'var(--primary)'}}>
-                    <input type="checkbox" checked={isBillNeeded} onChange={e => setIsBillNeeded(e.target.checked)} /> 
+        {/* Customer Details */}
+        <div className="border-b border-gray-100 pb-4 mb-4">
+            <div className="flex justify-between items-center mb-2">
+                <span className="text-xs font-semibold text-gray-500 uppercase">Customer Details</span>
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-teal-700">
+                    <input type="checkbox" checked={isBillNeeded} onChange={e => setIsBillNeeded(e.target.checked)} className="rounded text-teal-600 focus:ring-teal-500" /> 
                     Print Bill
                 </label>
             </div>
             
             {isBillNeeded ? (
-                <div className="flex-col">
-                    <input placeholder="Name *" value={customer.name} onChange={e => setCustomer({...customer, name:e.target.value})} />
-                    <div className="flex">
-                        <input placeholder="Phone" value={customer.phone} onChange={e => setCustomer({...customer, phone:e.target.value})} />
-                        <input placeholder="Doctor" value={customer.doctor} onChange={e => setCustomer({...customer, doctor:e.target.value})} />
+                <div className="space-y-2">
+                    <input className={inputClass} placeholder="Name *" value={customer.name} onChange={e => setCustomer({...customer, name:e.target.value})} />
+                    <div className="flex gap-2">
+                        <input className={inputClass} placeholder="Phone" value={customer.phone} onChange={e => setCustomer({...customer, phone:e.target.value})} />
+                        <input className={inputClass} placeholder="Doctor" value={customer.doctor} onChange={e => setCustomer({...customer, doctor:e.target.value})} />
                     </div>
                 </div>
             ) : (
-                <div style={{fontSize:'0.8rem', color:'#64748b', fontStyle:'italic'}}>
-                    (Sale will be recorded as "Cash Sale")
-                </div>
+                <div className="text-xs text-gray-400 italic text-center py-2">(Sale will be recorded as "Cash Sale")</div>
             )}
         </div>
 
-        <div className="flex-col">
-            <select value={paymentMode} onChange={e => setPaymentMode(e.target.value)}>
+        {/* Payment */}
+        <div className="flex flex-col gap-4">
+            <select className={inputClass} value={paymentMode} onChange={e => setPaymentMode(e.target.value)}>
                 <option value="Cash">Cash</option>
                 <option value="Online">Online / UPI</option>
             </select>
             
             {paymentMode === "Cash" && (
-                <div className="flex justify-between items-center" style={{background:'#fff7ed', padding:'10px', borderRadius:'8px', border:'1px solid #ffedd5'}}>
-                    <input type="number" placeholder="Given" value={amountGiven} onChange={e => setAmountGiven(e.target.value)} style={{width:'80px'}} />
-                    <div style={{textAlign:'right'}}>
-                        <div style={{fontSize:'0.75rem', color:'#666'}}>Return</div>
-                        <div style={{fontWeight:'bold', color:changeToReturn < 0 ? 'red' : 'green'}}>₹{changeToReturn.toFixed(0)}</div>
+                <div className="flex justify-between items-center bg-orange-50 p-3 rounded-lg border border-orange-100">
+                    <input type="number" placeholder="Given" value={amountGiven} onChange={e => setAmountGiven(e.target.value)} className="w-20 p-1 text-sm border border-gray-300 rounded" />
+                    <div className="text-right">
+                        <div className="text-xs text-gray-500">Return</div>
+                        <div className={`font-bold ${changeToReturn < 0 ? 'text-red-600' : 'text-green-600'}`}>₹{changeToReturn.toFixed(0)}</div>
                     </div>
                 </div>
             )}
             
-            <button onClick={handleCheckout} className="btn-primary" style={{width:'100%', padding:'15px', fontSize:'1.1rem'}}>
+            <button onClick={handleCheckout} className="w-full bg-teal-800 hover:bg-teal-900 text-white font-bold py-3 rounded-lg shadow-md transition-all text-lg">
                 COMPLETE SALE ➔
             </button>
         </div>

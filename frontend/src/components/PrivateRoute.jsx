@@ -4,8 +4,10 @@ import { Navigate } from 'react-router-dom';
 const PrivateRoute = ({ children }) => {
   const token = localStorage.getItem('token');
   
-  // Agar token nahi hai, to Login page par bhej do
-  return token ? children : <Navigate to="/login" />;
+  // Logic: If token exists, render the page (children).
+  // If not, redirect to Login. 
+  // 'replace' prevents the user from clicking 'Back' to return to this restricted route.
+  return token ? children : <Navigate to="/login" replace />;
 };
 
 export default PrivateRoute;
