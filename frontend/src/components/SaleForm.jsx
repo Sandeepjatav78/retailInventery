@@ -40,14 +40,11 @@ const SaleForm = () => {
   const [tempData, setTempData] = useState({ rate: "", discount: "" });
   const [lastSale, setLastSale] = useState(null);
 
-  // --- 🔥 UPDATED LOGIC HERE ---
   const fetchNextInvoice = async () => {
     if (isStaff) {
-        // AGAR STAFF HAI: To API call mat karo, seedha Time Code dikhao
         const timeCode = Math.floor(Date.now() / 1000);
         setInvoiceNo(`RP-${timeCode}`);
     } else {
-        // AGAR ADMIN HAI: To API se Next Sequential Number lao (RP-101)
         try {
             const res = await api.get("/sales/next-id");
             if (res.data.success) setInvoiceNo(res.data.nextInvoiceNo);
@@ -59,8 +56,6 @@ const SaleForm = () => {
 
   useEffect(() => {
     fetchNextInvoice();
-    
-    // Optional: Agar staff hai to har minute update karo taaki number fresh lage
     let interval;
     if(isStaff) {
         interval = setInterval(() => {
@@ -68,7 +63,7 @@ const SaleForm = () => {
         }, 60000); 
     }
     return () => clearInterval(interval);
-  }, [isStaff]); // Dependency added on userRole
+  }, [isStaff]);
 
   useEffect(() => {
     const total = cart.reduce((a, b) => a + b.total, 0);
@@ -143,9 +138,19 @@ const SaleForm = () => {
     setCart(newCart);
   };
 
+  // --- NEW: STAFF PRICE UPDATE LOGIC ---
+  const handleStaffPriceChange = (index, newPrice) => {
+      const price = parseFloat(newPrice);
+      if(isNaN(price) || price < 0) return;
+      
+      const newCart = [...cart];
+      newCart[index].price = price;
+      newCart[index].total = price * newCart[index].quantity;
+      setCart(newCart);
+  };
+
   const handleEditClick = async (index, item) => {
-    // STAFF CANNOT EDIT PRICE
-    if (isStaff) return;
+    if (isStaff) return; // Staff uses direct input now
 
     const password = prompt("🔒 Admin Password to Edit Rate/Discount:");
     if (!password) return;
@@ -254,8 +259,6 @@ const SaleForm = () => {
       setCart([]);
       setAmountGiven("");
       setCustomer({ name: "", phone: "", doctor: "" });
-      
-      // Refresh the next ID
       fetchNextInvoice();
       
     } catch (err) {
@@ -353,39 +356,31 @@ const SaleForm = () => {
                       <div className="font-bold text-gray-800">
                         {med.productName}
                       </div>
-                      <div className="text-xs text-gray-500 mt-1 flex gap-3">
-                        <span
-                          className={`${
-                            med.quantity < 10
-                              ? "text-orange-600 font-bold"
-                              : "text-green-600"
-                          }`}
-                        >
-                          Stock: {med.quantity}
-                        </span>
-                        <span>Batch: {med.batchNumber}</span>
-                        <span
-                          className={`${
-                            new Date(med.expiryDate) < new Date()
-                              ? "text-red-600 font-bold"
-                              : "text-gray-500"
-                          }`}
-                        >
-                          Exp:{" "}
-                          {new Date(med.expiryDate).toLocaleDateString(
-                            "en-IN",
-                            { month: "short", year: "numeric" }
-                          )}
-                        </span>
-                      </div>
+                      
+                      {/* --- STAFF: ONLY SHOW NAME (NO STOCK/BATCH/EXP) --- */}
+                      {!isStaff && (
+                          <div className="text-xs text-gray-500 mt-1 flex gap-3">
+                            <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600"}`}>
+                              Stock: {med.quantity}
+                            </span>
+                            <span>Batch: {med.batchNumber}</span>
+                            <span className={`${new Date(med.expiryDate) < new Date() ? "text-red-600 font-bold" : "text-gray-500"}`}>
+                              Exp: {new Date(med.expiryDate).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}
+                            </span>
+                          </div>
+                      )}
                     </div>
+                    
                     <div className="text-right">
                       <div className="font-bold text-teal-600 text-lg">
                         ₹{med.sellingPrice}
                       </div>
-                      <div className="text-xs text-gray-400 line-through">
-                        MRP: {med.mrp}
-                      </div>
+                      {/* --- STAFF: ONLY SHOW PRICE (NO MRP) --- */}
+                      {!isStaff && (
+                          <div className="text-xs text-gray-400 line-through">
+                            MRP: {med.mrp}
+                          </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -398,101 +393,53 @@ const SaleForm = () => {
           <table className="w-full text-left border-collapse">
             <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
               <tr>
-                <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">
-                  Item
-                </th>
+                <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Item</th>
 
                 {/* HIDE FOR STAFF */}
-                {!isStaff && (
-                  <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
-                    MRP
-                  </th>
-                )}
-                {!isStaff && (
-                  <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
-                    Disc%
-                  </th>
-                )}
+                {!isStaff && <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">MRP</th>}
+                {!isStaff && <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Disc%</th>}
 
                 <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
-                  Rate
+                  {isStaff ? "Edit Price" : "Rate"}
                 </th>
-                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
-                  Qty
-                </th>
-                <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">
-                  Total
-                </th>
+                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Qty</th>
+                <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">Total</th>
                 <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {cart.map((item, idx) => {
-                const lossWarning = isLoss(
-                  parseFloat(tempData.rate || item.price),
-                  item.costPrice
-                );
-                const discWarning = isHighDisc(
-                  parseFloat(tempData.discount || item.discount),
-                  item.maxDiscount
-                );
+                const lossWarning = isLoss(parseFloat(tempData.rate || item.price), item.costPrice);
+                const discWarning = isHighDisc(parseFloat(tempData.discount || item.discount), item.maxDiscount);
                 return (
-                  <tr
-                    key={idx}
-                    className="hover:bg-gray-50 transition-colors group"
-                  >
+                  <tr key={idx} className="hover:bg-gray-50 transition-colors group">
                     <td className="px-4 py-3">
-                      <div className="font-semibold text-gray-800 text-sm">
-                        {item.name}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        Batch: {item.batch}
-                      </div>
+                      <div className="font-semibold text-gray-800 text-sm">{item.name}</div>
+                      {/* STAFF: HIDE BATCH */}
+                      {!isStaff && <div className="text-xs text-gray-500">Batch: {item.batch}</div>}
                     </td>
 
                     {/* HIDE MRP FOR STAFF */}
-                    {!isStaff && (
-                      <td className="px-2 py-3 text-center text-gray-400 text-sm">
-                        ₹{item.mrp}
-                      </td>
-                    )}
+                    {!isStaff && <td className="px-2 py-3 text-center text-gray-400 text-sm">₹{item.mrp}</td>}
 
-                    {/* EDIT MODE (Only for Admin) */}
+                    {/* ADMIN: EDIT MODE LOGIC */}
                     {editingIndex === idx && !isStaff ? (
                       <>
                         <td className="px-2 py-3 text-center">
                           <input
                             type="number"
                             value={tempData.discount}
-                            onChange={(e) =>
-                              handleTempChange(
-                                "discount",
-                                e.target.value,
-                                item.mrp
-                              )
-                            }
-                            className={`w-14 p-1 text-center text-sm border rounded ${
-                              discWarning
-                                ? "border-red-500 text-red-600 bg-red-50"
-                                : "border-blue-400 focus:ring-blue-200"
-                            }`}
+                            onChange={(e) => handleTempChange("discount", e.target.value, item.mrp)}
+                            className={`w-14 p-1 text-center text-sm border rounded ${discWarning ? "border-red-500 text-red-600 bg-red-50" : "border-blue-400 focus:ring-blue-200"}`}
                           />
                         </td>
                         <td className="px-2 py-3 text-center relative">
                           <input
                             type="number"
                             value={tempData.rate}
-                            onChange={(e) =>
-                              handleTempChange("rate", e.target.value, item.mrp)
-                            }
-                            onKeyDown={(e) =>
-                              e.key === "Enter" && saveEdit(idx)
-                            }
-                            className={`w-16 p-1 text-center text-sm font-bold border rounded ${
-                              lossWarning
-                                ? "border-red-500 text-red-600 bg-red-50"
-                                : "border-blue-400 focus:ring-blue-200"
-                            }`}
+                            onChange={(e) => handleTempChange("rate", e.target.value, item.mrp)}
+                            onKeyDown={(e) => e.key === "Enter" && saveEdit(idx)}
+                            className={`w-16 p-1 text-center text-sm font-bold border rounded ${lossWarning ? "border-red-500 text-red-600 bg-red-50" : "border-blue-400 focus:ring-blue-200"}`}
                             autoFocus
                           />
                           {(lossWarning || discWarning) && (
@@ -503,97 +450,58 @@ const SaleForm = () => {
                           )}
                         </td>
                         <td className="px-2 py-3 text-center">
-                          <button
-                            onClick={() => saveEdit(idx)}
-                            className="bg-green-500 text-white text-xs px-2 py-1 rounded hover:bg-green-600 shadow-sm"
-                          >
-                            OK
-                          </button>
+                          <button onClick={() => saveEdit(idx)} className="bg-green-500 text-white text-xs px-2 py-1 rounded hover:bg-green-600 shadow-sm">OK</button>
                         </td>
                       </>
                     ) : (
                       <>
                         {/* HIDE DISCOUNT FOR STAFF */}
-                        {!isStaff && (
-                          <td className="px-2 py-3 text-center text-sm text-gray-600">
-                            {item.discount}%
-                          </td>
-                        )}
+                        {!isStaff && <td className="px-2 py-3 text-center text-sm text-gray-600">{item.discount}%</td>}
 
-                        {/* RATE COLUMN (Clickable for Admin, Plain Text for Staff) */}
-                        <td className="px-2 py-3 text-center">
+                        {/* PRICE COLUMN */}
+                        <td className="px-2 py-3 text-center relative">
                           {isStaff ? (
-                            <div className="font-bold text-gray-800 text-sm">
-                              ₹{item.price}
-                            </div>
+                            // --- STAFF: EDITABLE INPUT ---
+                            <>
+                                <input 
+                                    type="number" 
+                                    value={item.price} 
+                                    onChange={(e) => handleStaffPriceChange(idx, e.target.value)}
+                                    className="w-16 p-1 text-center text-sm font-bold border border-gray-300 rounded focus:border-teal-500 focus:ring-1 focus:ring-teal-200"
+                                />
+                                {item.price < item.costPrice && (
+                                    <div className="absolute top-full left-1/2 -translate-x-1/2 bg-red-100 text-red-600 text-[9px] px-1 rounded font-bold mt-1">⚠️ Loss</div>
+                                )}
+                            </>
                           ) : (
-                            <div
-                              onClick={() => handleEditClick(idx, item)}
-                              className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-blue-50 text-gray-800 hover:text-blue-600 rounded cursor-pointer transition-colors text-sm font-medium border border-transparent hover:border-blue-200"
-                              title="Click to Edit Rate"
-                            >
-                              ₹{item.price}{" "}
-                              <span className="text-[10px] opacity-50">✎</span>
+                            // --- ADMIN: CLICK TO EDIT ---
+                            <div onClick={() => handleEditClick(idx, item)} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-blue-50 text-gray-800 hover:text-blue-600 rounded cursor-pointer transition-colors text-sm font-medium border border-transparent hover:border-blue-200" title="Click to Edit Rate">
+                              ₹{item.price} <span className="text-[10px] opacity-50">✎</span>
                             </div>
                           )}
                         </td>
 
                         <td className="px-2 py-3 text-center">
                           <div className="flex items-center justify-center border border-gray-300 rounded-lg overflow-hidden w-fit mx-auto shadow-sm">
-                            <button
-                              onClick={() => updateQty(idx, item.quantity - 1)}
-                              className="px-2 py-1 bg-gray-50 hover:bg-gray-200 text-gray-600 font-bold"
-                            >
-                              -
-                            </button>
-                            <span className="w-8 text-center text-sm font-semibold bg-white">
-                              {item.quantity}
-                            </span>
-                            <button
-                              onClick={() => updateQty(idx, item.quantity + 1)}
-                              className="px-2 py-1 bg-gray-50 hover:bg-gray-200 text-gray-600 font-bold"
-                            >
-                              +
-                            </button>
+                            <button onClick={() => updateQty(idx, item.quantity - 1)} className="px-2 py-1 bg-gray-50 hover:bg-gray-200 text-gray-600 font-bold">-</button>
+                            <span className="w-8 text-center text-sm font-semibold bg-white">{item.quantity}</span>
+                            <button onClick={() => updateQty(idx, item.quantity + 1)} className="px-2 py-1 bg-gray-50 hover:bg-gray-200 text-gray-600 font-bold">+</button>
                           </div>
                         </td>
                       </>
                     )}
 
-                    {/* Hide Total if editing */}
-                    {editingIndex !== idx && (
-                      <td className="px-4 py-3 text-right font-bold text-teal-700 text-sm">
-                        ₹{item.total.toFixed(2)}
-                      </td>
-                    )}
+                    {editingIndex !== idx && <td className="px-4 py-3 text-right font-bold text-teal-700 text-sm">₹{item.total.toFixed(2)}</td>}
 
                     {editingIndex !== idx && (
                       <td className="px-2 py-3 text-center">
-                        <button
-                          onClick={() => {
-                            const c = [...cart];
-                            c.splice(idx, 1);
-                            setCart(c);
-                          }}
-                          className="text-gray-400 hover:text-red-500 text-lg transition-colors"
-                        >
-                          ×
-                        </button>
+                        <button onClick={() => { const c = [...cart]; c.splice(idx, 1); setCart(c); }} className="text-gray-400 hover:text-red-500 text-lg transition-colors">×</button>
                       </td>
                     )}
                   </tr>
                 );
               })}
-              {cart.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={isStaff ? 5 : 7}
-                    className="py-20 text-center text-gray-400 italic"
-                  >
-                    Cart is empty. Search above to add items.
-                  </td>
-                </tr>
-              )}
+              {cart.length === 0 && <tr><td colSpan={isStaff ? 5 : 7} className="py-20 text-center text-gray-400 italic">Cart is empty. Search above to add items.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -602,38 +510,17 @@ const SaleForm = () => {
       {/* RIGHT: CHECKOUT */}
       <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col h-fit sticky top-4">
         <div className="bg-gradient-to-br from-teal-600 to-teal-800 rounded-xl p-6 text-center text-white shadow-lg mb-6">
-          <div className="text-teal-100 text-xs font-bold uppercase tracking-wider mb-1">
-            Grand Total
-          </div>
-          <div className="text-4xl font-extrabold">
-            ₹{cart.reduce((a, b) => a + b.total, 0).toFixed(0)}
-          </div>
+          <div className="text-teal-100 text-xs font-bold uppercase tracking-wider mb-1">Grand Total</div>
+          <div className="text-4xl font-extrabold">₹{cart.reduce((a, b) => a + b.total, 0).toFixed(0)}</div>
         </div>
 
         {lastSale && (
-          <div
-            className={`mb-4 border rounded-lg p-3 flex justify-between items-center animate-pulse-once ${
-              lastSale.isBillRequired
-                ? "bg-green-50 border-green-200"
-                : "bg-orange-50 border-orange-200"
-            }`}
-          >
-            <span
-              className={`font-bold text-sm ${
-                lastSale.isBillRequired ? "text-green-700" : "text-orange-700"
-              }`}
-            >
-              {lastSale.isBillRequired
-                ? "✅ Sale Saved!"
-                : "✅ Saved (No Bill Created)"}
+          <div className={`mb-4 border rounded-lg p-3 flex justify-between items-center animate-pulse-once ${lastSale.isBillRequired ? "bg-green-50 border-green-200" : "bg-orange-50 border-orange-200"}`}>
+            <span className={`font-bold text-sm ${lastSale.isBillRequired ? "text-green-700" : "text-orange-700"}`}>
+              {lastSale.isBillRequired ? "✅ Sale Saved!" : "✅ Saved (No Bill Created)"}
             </span>
             {lastSale.isBillRequired && (
-              <button
-                onClick={handleReprint}
-                className="text-sm underline font-bold text-green-800 hover:text-green-900"
-              >
-                Reprint Bill
-              </button>
+              <button onClick={handleReprint} className="text-sm underline font-bold text-green-800 hover:text-green-900">Reprint Bill</button>
             )}
           </div>
         )}
@@ -642,47 +529,16 @@ const SaleForm = () => {
           <div className="flex justify-between items-center mb-2">
             <span className={labelClass}>Customer Details</span>
             <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-teal-700">
-              <input
-                type="checkbox"
-                checked={isBillNeeded}
-                onChange={(e) => setIsBillNeeded(e.target.checked)}
-                className="w-4 h-4 text-teal-600 rounded focus:ring-teal-500"
-              />
-              Print Bill
+              <input type="checkbox" checked={isBillNeeded} onChange={(e) => setIsBillNeeded(e.target.checked)} className="w-4 h-4 text-teal-600 rounded focus:ring-teal-500" /> Print Bill
             </label>
           </div>
 
           <div className="space-y-3">
-            <input
-              className={`${inputClass} ${
-                isBillNeeded && !customer.name ? "border-red-400 bg-red-50" : ""
-              }`}
-              placeholder={
-                isBillNeeded ? "Customer Name *" : "Customer Name (Optional)"
-              }
-              value={customer.name}
-              onChange={(e) =>
-                setCustomer({ ...customer, name: e.target.value })
-              }
-            />
+            <input className={`${inputClass} ${isBillNeeded && !customer.name ? "border-red-400 bg-red-50" : ""}`} placeholder={isBillNeeded ? "Customer Name *" : "Customer Name (Optional)"} value={customer.name} onChange={(e) => setCustomer({ ...customer, name: e.target.value })} />
             {isBillNeeded && (
               <div className="flex gap-3">
-                <input
-                  className={inputClass}
-                  placeholder="Phone"
-                  value={customer.phone}
-                  onChange={(e) =>
-                    setCustomer({ ...customer, phone: e.target.value })
-                  }
-                />
-                <input
-                  className={inputClass}
-                  placeholder="Dr. Ref"
-                  value={customer.doctor}
-                  onChange={(e) =>
-                    setCustomer({ ...customer, doctor: e.target.value })
-                  }
-                />
+                <input className={inputClass} placeholder="Phone" value={customer.phone} onChange={(e) => setCustomer({ ...customer, phone: e.target.value })} />
+                <input className={inputClass} placeholder="Dr. Ref" value={customer.doctor} onChange={(e) => setCustomer({ ...customer, doctor: e.target.value })} />
               </div>
             )}
           </div>
@@ -691,58 +547,21 @@ const SaleForm = () => {
         <div className="mb-6">
           <span className={labelClass}>Payment Mode</span>
           <div className="flex gap-3 mt-2">
-            <button
-              className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${
-                paymentMode === "Cash"
-                  ? "bg-teal-700 text-white border-teal-700 shadow-md"
-                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
-              }`}
-              onClick={() => setPaymentMode("Cash")}
-            >
-              💵 Cash
-            </button>
-            <button
-              className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${
-                paymentMode === "Online"
-                  ? "bg-teal-700 text-white border-teal-700 shadow-md"
-                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
-              }`}
-              onClick={() => setPaymentMode("Online")}
-            >
-              📱 UPI / Online
-            </button>
+            <button className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${paymentMode === "Cash" ? "bg-teal-700 text-white border-teal-700 shadow-md" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"}`} onClick={() => setPaymentMode("Cash")}>💵 Cash</button>
+            <button className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${paymentMode === "Online" ? "bg-teal-700 text-white border-teal-700 shadow-md" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"}`} onClick={() => setPaymentMode("Online")}>📱 UPI / Online</button>
           </div>
           {paymentMode === "Cash" && (
             <div className="mt-4 bg-orange-50 border border-orange-100 rounded-lg p-3 flex justify-between items-center">
-              <input
-                type="number"
-                placeholder="Given Amount"
-                value={amountGiven}
-                onChange={(e) => setAmountGiven(e.target.value)}
-                className="w-24 p-2 text-sm border border-orange-200 rounded focus:outline-none focus:border-orange-400"
-              />
+              <input type="number" placeholder="Given Amount" value={amountGiven} onChange={(e) => setAmountGiven(e.target.value)} className="w-24 p-2 text-sm border border-orange-200 rounded focus:outline-none focus:border-orange-400" />
               <div className="text-right">
-                <div className="text-xs text-gray-500 uppercase font-bold">
-                  Return Change
-                </div>
-                <div
-                  className={`text-xl font-bold ${
-                    changeToReturn < 0 ? "text-red-600" : "text-green-600"
-                  }`}
-                >
-                  ₹{changeToReturn.toFixed(0)}
-                </div>
+                <div className="text-xs text-gray-500 uppercase font-bold">Return Change</div>
+                <div className={`text-xl font-bold ${changeToReturn < 0 ? "text-red-600" : "text-green-600"}`}>₹{changeToReturn.toFixed(0)}</div>
               </div>
             </div>
           )}
         </div>
 
-        <button
-          onClick={handleCheckout}
-          className="w-full bg-teal-800 hover:bg-teal-900 text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all transform active:scale-95 text-lg flex justify-center items-center gap-2"
-        >
-          COMPLETE SALE ➔
-        </button>
+        <button onClick={handleCheckout} className="w-full bg-teal-800 hover:bg-teal-900 text-white font-bold py-4 rounded-xl shadow-lg hover:shadow-xl transition-all transform active:scale-95 text-lg flex justify-center items-center gap-2">COMPLETE SALE ➔</button>
       </div>
     </div>
   );
