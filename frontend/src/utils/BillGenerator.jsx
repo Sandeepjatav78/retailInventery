@@ -34,6 +34,12 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
   const date = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
   const time = new Date().toLocaleTimeString('en-IN', {hour: '2-digit', minute:'2-digit'});
   
+  // --- 🔥 NEW LOGIC START ---
+  const isDuplicate = invoiceData.isDuplicate || false;
+  const headerTitle = isDuplicate ? "DUPLICATE BILL" : "TAX INVOICE";
+  const headerColor ="#0f766e"; // Red if duplicate, Teal if original
+  // --- 🔥 NEW LOGIC END ---
+
   let totalTaxable = 0;
   let totalGST = 0;
   const finalTotal = cartItems.reduce((acc, item) => acc + item.total, 0);
@@ -62,7 +68,7 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
         <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
         <style>
           :root { 
-            --primary: #0f766e; 
+            --primary: ${headerColor}; /* 🔥 Uses dynamic color */
             --primary-light: #f0fdfa;
             --text: #1f2937;
             --gray: #6b7280;
@@ -76,7 +82,7 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
           .page {
             width: 148mm;
             height: 210mm;
-            padding: mm;
+            padding: 10mm;
             position: relative;
             box-sizing: border-box;
             display: flex;
@@ -205,7 +211,7 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
                     </div>
                 </div>
                 <div class="header-right">
-                    <div class="invoice-label">Tax Invoice</div>
+                    <div class="invoice-label">${headerTitle}</div>
                     <div class="invoice-val">#${invoiceData.no}</div>
                     <div class="invoice-time">${date} &bull; ${time}</div>
                 </div>

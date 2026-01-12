@@ -1,60 +1,65 @@
 const Sale = require('../models/Sale');
 const Medicine = require('../models/Medicine');
-const Counter = require('../models/Counter'); // Ensure you created this model
+const Counter = require('../models/Counter'); 
 
-// --- 1. GET NEXT INVOICE ID (For Display Only) ---
+// --- 1. GET NEXT INVOICE ID ---
 exports.getNextInvoiceNumber = async (req, res) => {
   try {
-    // Check current counter, default to 100 if new
     let counter = await Counter.findOne({ id: "invoice_seq" });
     let nextSeq = counter ? counter.seq + 1 : 101;
-    
-    // Send back e.g. "RP-101"
     res.json({ success: true, nextInvoiceNo: `RP-${nextSeq}` });
   } catch (err) {
     res.status(500).json({ message: "Error fetching ID", error: err.message });
   }
 };
 
-// --- 2. CREATE SALE (The Main Logic) ---
+// --- 2. CREATE SALE (Updated Logic) ---
 exports.createSale = async (req, res) => {
   try {
-    const { items, customerDetails, totalAmount, paymentMode } = req.body;
+    const { items, customerDetails, totalAmount, paymentMode, isBillRequired, userRole } = req.body;
 
     let finalInvoiceNo;
 
-    // LOGIC: Only increment invoice number if it's a real bill
-    // If name is "Don't want bill by customer", it means "Print Bill" was unchecked.
-    if (customerDetails && customerDetails.name !== "Don't want bill by customer") {
-        
-        // A. Official Bill -> Increment Counter
-        const counter = await Counter.findOneAndUpdate(
-          { id: "invoice_seq" },
-          { $inc: { seq: 1 } },
-          { new: true, upsert: true }
-        );
-        finalInvoiceNo = `RP-${counter.seq}`;
-
-    } else {
-        
-        // B. Don't want bill by customer -> Do NOT Increment. Use Temp ID.
-        // Format: CS-{timestamp} (e.g. CS-170923...)
-        finalInvoiceNo = `CS-${Math.floor(Date.now() / 1000)}`;
+    // --- 🔥 LOGIC CHANGE HERE ---
+    
+    // CASE 1: Agar User STAFF hai
+    if (userRole === 'staff') {
+        // Staff ke liye hamesha RP-TIMESTAMP format rahega (e.g. RP-1768210216)
+        // Chahe bill required ho ya nahi, staff ka number unique code wala hoga.
+        finalInvoiceNo = `RP-${Math.floor(Date.now() / 1000)}`;
+    } 
+    
+    // CASE 2: Agar User ADMIN hai
+    else {
+        if (isBillRequired === true) {
+            // Admin + Bill Required = Official Series (RP-101, RP-102...)
+            const counter = await Counter.findOneAndUpdate(
+              { id: "invoice_seq" },
+              { $inc: { seq: 1 } },
+              { new: true, upsert: true }
+            );
+            finalInvoiceNo = `RP-${counter.seq}`;
+        } else {
+            // Admin + No Bill = Cash Sale Temp ID (CS-1768...)
+            finalInvoiceNo = `CS-${Math.floor(Date.now() / 1000)}`;
+        }
     }
 
-    // 1. Create Sale Record
+    // --- Save to Database ---
     const newSale = new Sale({
       invoiceNo: finalInvoiceNo,
       customerDetails,
       items,
       totalAmount,
       paymentMode,
+      isBillRequired: isBillRequired,
+      createdBy: userRole || 'admin', 
       date: new Date()
     });
 
     await newSale.save();
 
-    // 2. Update Inventory (Decrease Stock)
+    // Update Inventory
     for (const item of items) {
       await Medicine.findByIdAndUpdate(item.medicineId, { 
         $inc: { quantity: -item.quantity } 

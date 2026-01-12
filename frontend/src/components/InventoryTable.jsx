@@ -120,8 +120,8 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                 📦 Stock List <span className="text-gray-500 text-sm font-normal">({filteredMeds.length})</span>
             </h3>
             <div className="relative w-full max-w-xs">
-                <input 
-                    placeholder="🔍 Search Name, Party or Batch..." 
+                <input  
+                    placeholder=" Search Name, Party or Batch..." 
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"

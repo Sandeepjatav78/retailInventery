@@ -44,7 +44,7 @@ const Sidebar = () => {
       <div className="flex-1 flex items-center justify-center overflow-x-auto no-scrollbar mx-4">
         <ul className="flex items-center gap-1">
             
-            {/* Admin Only Link */}
+            {/* Admin Only Link: Inventory */}
             {userRole === 'admin' && (
                 <li>
                     <Link to="/" className={getLinkClass('/')}>📦 Inventory</Link>
@@ -58,9 +58,14 @@ const Sidebar = () => {
             <li>
                 <Link to="/manual" className={getLinkClass('/manual')}>📝 Bill</Link>
             </li>
-            <li>
-                <Link to="/dose" className={getLinkClass('/dose')}>💊 Dose</Link>
-            </li>
+
+            {/* Admin Only Link: Dose (Modified) */}
+            {userRole === 'admin' && (
+                <li>
+                    <Link to="/dose" className={getLinkClass('/dose')}>💊 Dose</Link>
+                </li>
+            )}
+
             <li>
                 <Link to="/reports" className={getLinkClass('/reports')}>📊 Reports</Link>
             </li>
