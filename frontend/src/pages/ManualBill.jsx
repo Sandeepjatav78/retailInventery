@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { generateBillHTML } from '../utils/BillGenerator';
+import api from '../api/axios'; // Import API for search
 
 const ManualBill = () => {
   // --- STATE ---
@@ -17,7 +18,63 @@ const ManualBill = () => {
 
   const [cart, setCart] = useState([]);
 
+  // --- SEARCH STATES ---
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchRef = useRef(null);
+
+  // --- EFFECT: FETCH SUGGESTIONS ---
+  useEffect(() => {
+    const fetchMedicines = async () => {
+        if (query.length > 1) {
+            try {
+                const res = await api.get(`/medicines/search?q=${query}`);
+                setSuggestions(res.data);
+                setShowSuggestions(true);
+            } catch (err) {
+                setSuggestions([]);
+            }
+        } else {
+            setSuggestions([]);
+            setShowSuggestions(false);
+        }
+    };
+
+    const timer = setTimeout(() => {
+        fetchMedicines();
+    }, 300); // Debounce to reduce API calls
+
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // Handle clicking outside to close suggestions
+  useEffect(() => {
+      const handleClickOutside = (event) => {
+          if (searchRef.current && !searchRef.current.contains(event.target)) {
+              setShowSuggestions(false);
+          }
+      };
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   // --- HANDLERS ---
+  
+  // Select Medicine from Suggestions
+  const handleSelectMedicine = (med) => {
+      setCurrentItem({
+          name: med.productName,
+          batch: med.batchNumber || '',
+          expiry: med.expiryDate ? new Date(med.expiryDate).toISOString().split('T')[0] : '', // Format YYYY-MM-DD
+          mrp: med.mrp || '',
+          price: med.sellingPrice || '',
+          quantity: 1
+      });
+      setQuery(med.productName); // Set input value
+      setShowSuggestions(false);
+  };
+
   const handleAddItem = () => {
     if (!currentItem.name || !currentItem.price || !currentItem.quantity) {
       alert("Please fill Name, Price and Quantity");
@@ -34,7 +91,10 @@ const ManualBill = () => {
     };
 
     setCart([...cart, newItem]);
+    
+    // Reset Form
     setCurrentItem({ name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1 });
+    setQuery(""); 
   };
 
   const removeItem = (index) => {
@@ -70,7 +130,6 @@ const ManualBill = () => {
 
   // Reusable Classes
   const inputClass = "w-full p-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 transition-all";
-  const labelClass = "block text-xs font-bold text-teal-800 uppercase tracking-wide mb-1";
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[85vh]">
@@ -98,8 +157,42 @@ const ManualBill = () => {
         {/* ITEM SECTION */}
         <div className="bg-teal-50 p-5 rounded-lg border border-teal-100 flex-grow">
             <h4 className="text-sm font-bold text-teal-800 mb-3">2. Add Medicine / Item</h4>
-            <div className="flex flex-col gap-3">
-                <input className={inputClass} placeholder="Item Name *" value={currentItem.name} onChange={e=>setCurrentItem({...currentItem, name:e.target.value})} />
+            <div className="flex flex-col gap-3 relative" ref={searchRef}>
+                
+                {/* --- MEDICINE SEARCH INPUT --- */}
+                <div className="relative">
+                    <input 
+                        className={inputClass} 
+                        placeholder="Search or Type Medicine Name *" 
+                        value={query} 
+                        onChange={e => {
+                            setQuery(e.target.value);
+                            setCurrentItem({...currentItem, name: e.target.value});
+                        }} 
+                        onFocus={() => query.length > 1 && setShowSuggestions(true)}
+                    />
+                    
+                    {/* SUGGESTIONS DROPDOWN */}
+                    {showSuggestions && suggestions.length > 0 && (
+                        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                            {suggestions.map((med) => (
+                                <div 
+                                    key={med._id} 
+                                    onClick={() => handleSelectMedicine(med)}
+                                    className="p-3 hover:bg-teal-50 cursor-pointer border-b border-gray-100 last:border-0 flex justify-between items-center"
+                                >
+                                    <div>
+                                        <div className="font-bold text-gray-800">{med.productName}</div>
+                                        <div className="text-xs text-gray-500">
+                                            Batch: {med.batchNumber} | Exp: {new Date(med.expiryDate).toLocaleDateString('en-IN', {month:'short', year:'2-digit'})}
+                                        </div>
+                                    </div>
+                                    <div className="text-right text-teal-600 font-bold text-sm">₹{med.sellingPrice}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
                 
                 <div className="grid grid-cols-2 gap-3">
                     <input className={inputClass} placeholder="Batch" value={currentItem.batch} onChange={e=>setCurrentItem({...currentItem, batch:e.target.value})} />

@@ -13,26 +13,20 @@ exports.getNextInvoiceNumber = async (req, res) => {
   }
 };
 
-// --- 2. CREATE SALE (Updated Logic) ---
+// --- 2. CREATE SALE ---
 exports.createSale = async (req, res) => {
   try {
     const { items, customerDetails, totalAmount, paymentMode, isBillRequired, userRole } = req.body;
 
     let finalInvoiceNo;
 
-    // --- 🔥 LOGIC CHANGE HERE ---
-    
-    // CASE 1: Agar User STAFF hai
+    // --- Invoice Number Logic ---
     if (userRole === 'staff') {
-        // Staff ke liye hamesha RP-TIMESTAMP format rahega (e.g. RP-1768210216)
-        // Chahe bill required ho ya nahi, staff ka number unique code wala hoga.
+        // Staff: Time-based ID
         finalInvoiceNo = `RP-${Math.floor(Date.now() / 1000)}`;
-    } 
-    
-    // CASE 2: Agar User ADMIN hai
-    else {
+    } else {
+        // Admin Logic
         if (isBillRequired === true) {
-            // Admin + Bill Required = Official Series (RP-101, RP-102...)
             const counter = await Counter.findOneAndUpdate(
               { id: "invoice_seq" },
               { $inc: { seq: 1 } },
@@ -40,12 +34,11 @@ exports.createSale = async (req, res) => {
             );
             finalInvoiceNo = `RP-${counter.seq}`;
         } else {
-            // Admin + No Bill = Cash Sale Temp ID (CS-1768...)
             finalInvoiceNo = `CS-${Math.floor(Date.now() / 1000)}`;
         }
     }
 
-    // --- Save to Database ---
+    // --- Save Sale to Database ---
     const newSale = new Sale({
       invoiceNo: finalInvoiceNo,
       customerDetails,
@@ -59,12 +52,16 @@ exports.createSale = async (req, res) => {
 
     await newSale.save();
 
-    // Update Inventory
-    for (const item of items) {
-      await Medicine.findByIdAndUpdate(item.medicineId, { 
-        $inc: { quantity: -item.quantity } 
-      });
-    }
+    // --- 🔥 INVENTORY UPDATE LOGIC (MODIFIED) ---
+    // Only decrease stock if the user is ADMIN
+    if (userRole !== 'staff') { 
+        for (const item of items) {
+          await Medicine.findByIdAndUpdate(item.medicineId, { 
+            $inc: { quantity: -item.quantity } 
+          });
+        }
+    } 
+    // If userRole IS 'staff', this loop is skipped, so stock remains same.
 
     res.status(201).json({ success: true, invoiceNo: finalInvoiceNo, sale: newSale });
 

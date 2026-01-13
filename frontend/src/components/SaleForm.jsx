@@ -15,27 +15,21 @@ const SaleForm = () => {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [cart, setCart] = useState(() => getSavedState("cart", []));
-  const [paymentMode, setPaymentMode] = useState(() =>
-    getSavedState("paymentMode", "Cash")
-  );
-  const [amountGiven, setAmountGiven] = useState(() =>
-    getSavedState("amountGiven", "")
-  );
+  const [paymentMode, setPaymentMode] = useState(() => getSavedState("paymentMode", "Cash"));
+  const [amountGiven, setAmountGiven] = useState(() => getSavedState("amountGiven", ""));
   const [changeToReturn, setChangeToReturn] = useState(0);
-  const [isBillNeeded, setIsBillNeeded] = useState(() =>
-    getSavedState("isBillNeeded", true)
-  );
-  const [customer, setCustomer] = useState(() =>
-    getSavedState("customer", { name: "", phone: "", doctor: "" })
-  );
+  const [isBillNeeded, setIsBillNeeded] = useState(() => getSavedState("isBillNeeded", true));
+  const [customer, setCustomer] = useState(() => getSavedState("customer", { name: "", phone: "", doctor: "" }));
   const [invoiceNo, setInvoiceNo] = useState("Loading...");
 
   // ROLE CHECK
-  const userRole = localStorage.getItem("userRole"); // 'admin' or 'staff'
+  const userRole = localStorage.getItem("userRole"); 
   const isStaff = userRole === "staff";
 
+  // --- KEYBOARD NAVIGATION STATES ---
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const resultListRef = useRef(null);
+  
   const [editingIndex, setEditingIndex] = useState(null);
   const [tempData, setTempData] = useState({ rate: "", discount: "" });
   const [lastSale, setLastSale] = useState(null);
@@ -79,18 +73,52 @@ const SaleForm = () => {
     if (query.length > 1) {
       api.get(`/medicines/search?q=${query}`).then((res) => {
         setResults(res.data);
-        setFocusedIndex(-1);
+        setFocusedIndex(-1); // Reset focus on new search
       });
     } else {
       setResults([]);
+      setFocusedIndex(-1);
     }
   }, [query]);
+
+  // --- 🔥 AUTO-SCROLL TO FOCUSED ITEM ---
+  useEffect(() => {
+    if (focusedIndex >= 0 && resultListRef.current) {
+      const listItems = resultListRef.current.children;
+      if (listItems[focusedIndex]) {
+        listItems[focusedIndex].scrollIntoView({
+          block: "nearest", 
+          behavior: "smooth"
+        });
+      }
+    }
+  }, [focusedIndex]);
+
+  // --- 🔥 HANDLE KEYBOARD NAVIGATION ---
+  const handleKeyDown = (e) => {
+    if (results.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setFocusedIndex((prev) => (prev < results.length - 1 ? prev + 1 : prev));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setFocusedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (focusedIndex >= 0 && results[focusedIndex]) {
+        addToCart(results[focusedIndex]);
+      }
+    } else if (e.key === "Escape") {
+      setResults([]);
+      setFocusedIndex(-1);
+    }
+  };
 
   const addToCart = (med) => {
     setLastSale(null);
     const idx = cart.findIndex((item) => item.medicineId === med._id);
-    const discount =
-      med.mrp > 0 ? ((med.mrp - med.sellingPrice) / med.mrp) * 100 : 0;
+    const discount = med.mrp > 0 ? ((med.mrp - med.sellingPrice) / med.mrp) * 100 : 0;
 
     if (idx !== -1) {
       const newCart = [...cart];
@@ -125,6 +153,7 @@ const SaleForm = () => {
     }
     setQuery("");
     setResults([]);
+    setFocusedIndex(-1); // Reset focus after adding
   };
 
   const updateQty = (index, val) => {
@@ -138,7 +167,6 @@ const SaleForm = () => {
     setCart(newCart);
   };
 
-  // --- NEW: STAFF PRICE UPDATE LOGIC ---
   const handleStaffPriceChange = (index, newPrice) => {
       const price = parseFloat(newPrice);
       if(isNaN(price) || price < 0) return;
@@ -150,7 +178,7 @@ const SaleForm = () => {
   };
 
   const handleEditClick = async (index, item) => {
-    if (isStaff) return; // Staff uses direct input now
+    if (isStaff) return; 
 
     const password = prompt("🔒 Admin Password to Edit Rate/Discount:");
     if (!password) return;
@@ -322,7 +350,6 @@ const SaleForm = () => {
                   Clear Cart
                 </button>
               )}
-              {/* INVOICE NUMBER BADGE */}
               <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-bold border border-indigo-200">
                 {invoiceNo}
               </span>
@@ -330,11 +357,13 @@ const SaleForm = () => {
           </div>
 
           <div className="relative">
+            {/* 🔥 ADDED ONKEYDOWN HERE */}
             <input
               className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-xl focus:outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/20 transition-all"
               placeholder="🔍 Scan barcode or type medicine name..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown} 
               autoFocus
             />
 
@@ -350,14 +379,19 @@ const SaleForm = () => {
                       e.preventDefault();
                       addToCart(med);
                     }}
-                    className="p-3 hover:bg-teal-50 cursor-pointer transition-colors flex justify-between items-center"
+                    // 🔥 UPDATED CLASS FOR ACTIVE FOCUS STATE
+                    className={`p-3 cursor-pointer transition-colors flex justify-between items-center ${
+                      idx === focusedIndex 
+                        ? "bg-teal-100 border-l-4 border-teal-600" 
+                        : "hover:bg-teal-50"
+                    }`}
                   >
                     <div>
                       <div className="font-bold text-gray-800">
                         {med.productName}
                       </div>
                       
-                      {/* --- STAFF: ONLY SHOW NAME (NO STOCK/BATCH/EXP) --- */}
+                      {/* --- STAFF: ONLY SHOW NAME --- */}
                       {!isStaff && (
                           <div className="text-xs text-gray-500 mt-1 flex gap-3">
                             <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600"}`}>
@@ -375,7 +409,6 @@ const SaleForm = () => {
                       <div className="font-bold text-teal-600 text-lg">
                         ₹{med.sellingPrice}
                       </div>
-                      {/* --- STAFF: ONLY SHOW PRICE (NO MRP) --- */}
                       {!isStaff && (
                           <div className="text-xs text-gray-400 line-through">
                             MRP: {med.mrp}
@@ -389,19 +422,15 @@ const SaleForm = () => {
           </div>
         </div>
 
+        {/* ... (REST OF THE TABLE CODE REMAINS EXACTLY SAME) ... */}
         <div className="flex-1 overflow-y-auto">
           <table className="w-full text-left border-collapse">
             <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
               <tr>
                 <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Item</th>
-
-                {/* HIDE FOR STAFF */}
                 {!isStaff && <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">MRP</th>}
                 {!isStaff && <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Disc%</th>}
-
-                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
-                  {isStaff ? "Edit Price" : "Rate"}
-                </th>
+                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">{isStaff ? "Edit Price" : "Rate"}</th>
                 <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Qty</th>
                 <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">Total</th>
                 <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase"></th>
@@ -415,33 +444,16 @@ const SaleForm = () => {
                   <tr key={idx} className="hover:bg-gray-50 transition-colors group">
                     <td className="px-4 py-3">
                       <div className="font-semibold text-gray-800 text-sm">{item.name}</div>
-                      {/* STAFF: HIDE BATCH */}
                       {!isStaff && <div className="text-xs text-gray-500">Batch: {item.batch}</div>}
                     </td>
-
-                    {/* HIDE MRP FOR STAFF */}
                     {!isStaff && <td className="px-2 py-3 text-center text-gray-400 text-sm">₹{item.mrp}</td>}
-
-                    {/* ADMIN: EDIT MODE LOGIC */}
                     {editingIndex === idx && !isStaff ? (
                       <>
                         <td className="px-2 py-3 text-center">
-                          <input
-                            type="number"
-                            value={tempData.discount}
-                            onChange={(e) => handleTempChange("discount", e.target.value, item.mrp)}
-                            className={`w-14 p-1 text-center text-sm border rounded ${discWarning ? "border-red-500 text-red-600 bg-red-50" : "border-blue-400 focus:ring-blue-200"}`}
-                          />
+                          <input type="number" value={tempData.discount} onChange={(e) => handleTempChange("discount", e.target.value, item.mrp)} className={`w-14 p-1 text-center text-sm border rounded ${discWarning ? "border-red-500 text-red-600 bg-red-50" : "border-blue-400 focus:ring-blue-200"}`} />
                         </td>
                         <td className="px-2 py-3 text-center relative">
-                          <input
-                            type="number"
-                            value={tempData.rate}
-                            onChange={(e) => handleTempChange("rate", e.target.value, item.mrp)}
-                            onKeyDown={(e) => e.key === "Enter" && saveEdit(idx)}
-                            className={`w-16 p-1 text-center text-sm font-bold border rounded ${lossWarning ? "border-red-500 text-red-600 bg-red-50" : "border-blue-400 focus:ring-blue-200"}`}
-                            autoFocus
-                          />
+                          <input type="number" value={tempData.rate} onChange={(e) => handleTempChange("rate", e.target.value, item.mrp)} onKeyDown={(e) => e.key === "Enter" && saveEdit(idx)} className={`w-16 p-1 text-center text-sm font-bold border rounded ${lossWarning ? "border-red-500 text-red-600 bg-red-50" : "border-blue-400 focus:ring-blue-200"}`} autoFocus />
                           {(lossWarning || discWarning) && (
                             <div className="absolute top-full left-1/2 -translate-x-1/2 bg-red-100 border border-red-200 text-red-600 text-[10px] px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap mt-1 font-bold z-20 flex flex-col items-center">
                               {lossWarning && <span>⚠️ Below CP</span>}
@@ -455,32 +467,19 @@ const SaleForm = () => {
                       </>
                     ) : (
                       <>
-                        {/* HIDE DISCOUNT FOR STAFF */}
                         {!isStaff && <td className="px-2 py-3 text-center text-sm text-gray-600">{item.discount}%</td>}
-
-                        {/* PRICE COLUMN */}
                         <td className="px-2 py-3 text-center relative">
                           {isStaff ? (
-                            // --- STAFF: EDITABLE INPUT ---
                             <>
-                                <input 
-                                    type="number" 
-                                    value={item.price} 
-                                    onChange={(e) => handleStaffPriceChange(idx, e.target.value)}
-                                    className="w-16 p-1 text-center text-sm font-bold border border-gray-300 rounded focus:border-teal-500 focus:ring-1 focus:ring-teal-200"
-                                />
-                                {item.price < item.costPrice && (
-                                    <div className="absolute top-full left-1/2 -translate-x-1/2 bg-red-100 text-red-600 text-[9px] px-1 rounded font-bold mt-1">⚠️ Loss</div>
-                                )}
+                                <input type="number" value={item.price} onChange={(e) => handleStaffPriceChange(idx, e.target.value)} className="w-16 p-1 text-center text-sm font-bold border border-gray-300 rounded focus:border-teal-500 focus:ring-1 focus:ring-teal-200" />
+                                {item.price < item.costPrice && (<div className="absolute top-full left-1/2 -translate-x-1/2 bg-red-100 text-red-600 text-[9px] px-1 rounded font-bold mt-1">⚠️ Loss</div>)}
                             </>
                           ) : (
-                            // --- ADMIN: CLICK TO EDIT ---
                             <div onClick={() => handleEditClick(idx, item)} className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-blue-50 text-gray-800 hover:text-blue-600 rounded cursor-pointer transition-colors text-sm font-medium border border-transparent hover:border-blue-200" title="Click to Edit Rate">
                               ₹{item.price} <span className="text-[10px] opacity-50">✎</span>
                             </div>
                           )}
                         </td>
-
                         <td className="px-2 py-3 text-center">
                           <div className="flex items-center justify-center border border-gray-300 rounded-lg overflow-hidden w-fit mx-auto shadow-sm">
                             <button onClick={() => updateQty(idx, item.quantity - 1)} className="px-2 py-1 bg-gray-50 hover:bg-gray-200 text-gray-600 font-bold">-</button>
@@ -490,9 +489,7 @@ const SaleForm = () => {
                         </td>
                       </>
                     )}
-
                     {editingIndex !== idx && <td className="px-4 py-3 text-right font-bold text-teal-700 text-sm">₹{item.total.toFixed(2)}</td>}
-
                     {editingIndex !== idx && (
                       <td className="px-2 py-3 text-center">
                         <button onClick={() => { const c = [...cart]; c.splice(idx, 1); setCart(c); }} className="text-gray-400 hover:text-red-500 text-lg transition-colors">×</button>
