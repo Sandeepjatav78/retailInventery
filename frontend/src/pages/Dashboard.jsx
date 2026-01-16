@@ -7,8 +7,12 @@ import { useNavigate } from "react-router-dom";
 const Dashboard = () => {
   const navigate = useNavigate();
   const [meds, setMeds] = useState([]);
-  // const [showDoseModal, setShowDoseModal] = useState(false); // Only use if you have the component
   
+  // --- NEW STATE FOR AUTOCOMPLETE ---
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
+
   const [form, setForm] = useState({
     productName: "",
     batchNumber: "",
@@ -43,9 +47,75 @@ const Dashboard = () => {
   const handleFileChange = (e) =>
     setForm({ ...form, billFile: e.target.files[0] });
 
-  // --- INPUT HANDLER ---
+  // --- GENERIC INPUT HANDLER ---
   const handleInputChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  // --- NEW: PRODUCT NAME HANDLER (For Suggestions) ---
+  const handleNameChange = (e) => {
+    const userInput = e.target.value;
+    
+    // Update form normally
+    setForm({ ...form, productName: userInput });
+
+    // Filter Suggestions
+    if (userInput.length > 1) {
+      const filtered = meds.filter(
+        (m) =>
+          m.productName.toLowerCase().includes(userInput.toLowerCase())
+      );
+      // Remove duplicates based on Product Name to keep list clean (optional)
+      // For now, we show all matches so user can pick specific batch data
+      setSuggestions(filtered);
+      setShowSuggestions(true);
+      setActiveSuggestionIndex(0);
+    } else {
+      setShowSuggestions(false);
+    }
+  };
+
+  // --- NEW: SELECT SUGGESTION LOGIC ---
+  const selectSuggestion = (selectedMed) => {
+    setForm((prev) => ({
+      ...prev,
+      productName: selectedMed.productName,
+      batchNumber: selectedMed.batchNumber, // Fills old batch (User can edit)
+      hsnCode: selectedMed.hsnCode || "",
+      // Use logic to format date for input type="date" (YYYY-MM-DD)
+      expiryDate: selectedMed.expiryDate ? new Date(selectedMed.expiryDate).toISOString().split('T')[0] : "",
+      partyName: selectedMed.partyName || "",
+      mrp: selectedMed.mrp,
+      sellingPrice: selectedMed.sellingPrice,
+      costPrice: selectedMed.costPrice,
+      maxDiscount: selectedMed.maxDiscount || "",
+      gst: selectedMed.gst || "0",
+      packSize: selectedMed.packSize || "10",
+      // We usually reset quantity for new stock, but you asked to fill ALL fields:
+      quantity: "", // Keeping quantity empty so user forces input, or set to selectedMed.quantity
+    }));
+    
+    setShowSuggestions(false);
+  };
+
+  // --- NEW: KEYBOARD NAVIGATION ---
+  const handleKeyDown = (e) => {
+    if (!showSuggestions) return;
+
+    if (e.key === "Enter") {
+      e.preventDefault(); // Prevent form submission
+      if (suggestions[activeSuggestionIndex]) {
+        selectSuggestion(suggestions[activeSuggestionIndex]);
+      }
+    } else if (e.key === "ArrowUp") {
+      if (activeSuggestionIndex === 0) return;
+      setActiveSuggestionIndex(activeSuggestionIndex - 1);
+    } else if (e.key === "ArrowDown") {
+      if (activeSuggestionIndex === suggestions.length - 1) return;
+      setActiveSuggestionIndex(activeSuggestionIndex + 1);
+    } else if (e.key === "Escape") {
+      setShowSuggestions(false);
+    }
   };
 
   // --- PRICE WARNING LOGIC ---
@@ -141,10 +211,37 @@ const Dashboard = () => {
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
           
           {/* Row 1 */}
-          <div className="col-span-2 md:col-span-1">
+          <div className="col-span-2 md:col-span-1 relative"> 
+            {/* Added relative here for positioning the dropdown */}
             <label className={labelClass}>Product Name</label>
-            <input name="productName" value={form.productName} onChange={handleInputChange} placeholder="Dolo 650" className={inputClass} />
+            <input 
+                name="productName" 
+                value={form.productName} 
+                onChange={handleNameChange} // CHANGED to specific handler
+                onKeyDown={handleKeyDown}   // ADDED Key listener
+                placeholder="Dolo 650" 
+                autoComplete="off"
+                className={inputClass} 
+            />
+            
+            {/* --- SUGGESTION DROPDOWN --- */}
+            {showSuggestions && suggestions.length > 0 && (
+                <ul className="absolute z-10 w-full bg-white border border-gray-300 rounded-lg shadow-lg mt-1 max-h-60 overflow-y-auto">
+                    {suggestions.map((suggestion, index) => (
+                        <li 
+                            key={suggestion._id}
+                            onClick={() => selectSuggestion(suggestion)}
+                            className={`px-3 py-2 text-sm cursor-pointer border-b border-gray-100 flex justify-between items-center
+                                ${index === activeSuggestionIndex ? "bg-teal-100 text-teal-800" : "hover:bg-gray-50 text-gray-700"}`}
+                        >
+                            <span className="font-semibold">{suggestion.productName}</span>
+                            <span className="text-xs text-gray-400">Batch: {suggestion.batchNumber}</span>
+                        </li>
+                    ))}
+                </ul>
+            )}
           </div>
+
           <div>
             <label className={labelClass}>Batch No.</label>
             <input name="batchNumber" value={form.batchNumber} onChange={handleInputChange} placeholder="Batch" className={inputClass} />
@@ -172,7 +269,6 @@ const Dashboard = () => {
             <input type="file" onChange={handleFileChange} className="w-full text-xs text-gray-500 file:mr-2 file:py-2 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100 border border-gray-300 rounded-lg" />
           </div>
           
-          {/* Empty spacer for grid alignment on large screens */}
           <div className="hidden lg:block"></div> 
 
           {/* Row 3 - Pricing & Config */}
