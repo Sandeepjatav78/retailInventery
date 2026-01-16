@@ -57,16 +57,16 @@ const updateMedicine = async (req, res) => {
     const safeNumber = (val) => (val !== undefined && val !== '') ? Number(val) : undefined;
 
     let updateData = {
-        ...req.body,
-        // Explicitly cast numeric fields to ensure updates work
-        // If a field is not sent, it remains undefined and won't delete the DB value
-        mrp: safeNumber(req.body.mrp),
-        sellingPrice: safeNumber(req.body.sellingPrice),
-        costPrice: safeNumber(req.body.costPrice),
-        quantity: safeNumber(req.body.quantity),
-        looseQty: safeNumber(req.body.looseQty),
-        packSize: safeNumber(req.body.packSize), // <--- FIX FOR PACK SIZE
-        gst: safeNumber(req.body.gst),
+      ...req.body,
+      // Explicitly cast numeric fields to ensure updates work
+      // If a field is not sent, it remains undefined and won't delete the DB value
+      mrp: safeNumber(req.body.mrp),
+      sellingPrice: safeNumber(req.body.sellingPrice),
+      costPrice: safeNumber(req.body.costPrice),
+      quantity: safeNumber(req.body.quantity),
+      looseQty: safeNumber(req.body.looseQty),
+      packSize: safeNumber(req.body.packSize), // <--- FIX FOR PACK SIZE
+      gst: safeNumber(req.body.gst),
     };
 
     // Remove undefined keys so we don't accidentally unset fields
@@ -104,17 +104,27 @@ const deleteMedicine = async (req, res) => {
 const getExpiringMedicines = async (req, res) => {
   try {
     const today = new Date();
-    const nextMonth = new Date();
-    nextMonth.setDate(today.getDate() + 30);
+    const futureDate = new Date();
+
+    // 1. Get the number of days from the URL (e.g., ?days=90)
+    // 2. If no days provided, DEFAULT to 90 days (3 months)
+    const daysThreshold = req.query.days ? parseInt(req.query.days) : 90;
+
+    // Add the days to the current date
+    futureDate.setDate(today.getDate() + daysThreshold);
+
     const expiring = await Medicine.find({
-      expiryDate: { $gte: today, $lte: nextMonth }
+      expiryDate: {
+        $gte: today,
+        $lte: futureDate
+      }
     });
+
     res.json(expiring);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
-
 // ---------------------------------------------------------
 // --- SPECIAL LOGIC FOR LOOSE SALES (DOSE) ---
 // ---------------------------------------------------------

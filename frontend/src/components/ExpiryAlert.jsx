@@ -5,7 +5,8 @@ const ExpiryAlert = () => {
   const [expiring, setExpiring] = useState([]);
 
   useEffect(() => {
-    api.get('/medicines/expiring')
+    // UPDATED: Passing a query param to request 90 days (approx 3 months)
+    api.get('/medicines/expiring?days=90') 
       .then(res => setExpiring(res.data))
       .catch(err => console.error("Expiry fetch error", err));
   }, []);
@@ -23,8 +24,9 @@ const ExpiryAlert = () => {
         flexDirection: 'column',
         gap: '8px'
     }}>
+      {/* UPDATED: Changed text to "Next 3 Months" */}
       <div style={{display:'flex', alignItems:'center', gap:'10px', color: '#9a3412', fontWeight:'700'}}>
-         <span>⚠️</span> Expiry Alerts (Next 30 Days)
+          <span>⚠️</span> Expiry Alerts (Next 3 Months)
       </div>
       
       <div style={{display: 'flex', flexWrap: 'wrap', gap: '10px'}}>
