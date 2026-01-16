@@ -12,6 +12,7 @@ const getMedicines = async (req, res) => {
   }
 };
 
+
 // 2. SEARCH MEDICINES
 const searchMedicines = async (req, res) => {
   const { q } = req.query;
@@ -22,7 +23,10 @@ const searchMedicines = async (req, res) => {
         { productName: { $regex: q, $options: 'i' } },
         { batchNumber: { $regex: q, $options: 'i' } }
       ]
-    });
+    })
+      .sort({ expiryDate: 1 }) // <--- 🔥 THIS LINE DOES THE MAGIC (1 = Ascending/Oldest First)
+      .limit(20); // Optional: Limit results to keep it fast
+
     res.json(meds);
   } catch (err) {
     res.status(500).json({ message: err.message });

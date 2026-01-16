@@ -9,26 +9,36 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   const [showCP, setShowCP] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
+  // --- FILTER LOGIC ---
   const filteredMeds = meds.filter(m => 
     m.productName.toLowerCase().includes(searchTerm.toLowerCase()) || 
     (m.partyName && m.partyName.toLowerCase().includes(searchTerm.toLowerCase())) ||
     m.batchNumber.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // --- EXPORT TO EXCEL ---
   const handleExport = () => {
-    const dataToExport = filteredMeds.map(m => ({
-        "Product Name": m.productName,
-        "Batch": m.batchNumber,
-        "Party Name": m.partyName || '-',
-        "Packing": m.packSize || 1,
-        "Qty (Sealed Strips)": m.quantity,
-        "Loose (Open Tabs)": m.looseQty || 0, 
-        "MRP": m.mrp,
-        "Selling Price": m.sellingPrice,
-        "Cost Price": m.costPrice,
-        "GST %": m.gst,
-        "Expiry Date": new Date(m.expiryDate).toLocaleDateString(),
-    }));
+    const dataToExport = filteredMeds.map(m => {
+        // Calculate loose for export too
+        const packSize = m.packSize || 10;
+        const totalStock = m.quantity || 0;
+        const strips = Math.floor(totalStock);
+        const loose = Math.round((totalStock - strips) * packSize);
+
+        return {
+            "Product Name": m.productName,
+            "Batch": m.batchNumber,
+            "Party Name": m.partyName || '-',
+            "Packing": packSize,
+            "Qty (Sealed Strips)": strips,
+            "Loose (Open Tabs)": loose, 
+            "MRP": m.mrp,
+            "Selling Price": m.sellingPrice,
+            "Cost Price": m.costPrice,
+            "GST %": m.gst,
+            "Expiry Date": new Date(m.expiryDate).toLocaleDateString(),
+        };
+    });
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
     const workbook = XLSX.utils.book_new();
@@ -36,19 +46,28 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
     XLSX.writeFile(workbook, "Radhe_Pharmacy_Inventory.xlsx");
   };
 
-  const handleToggleCP = async () => {
-    if (showCP) { setShowCP(false); return; }
-    const password = prompt("🔒 Enter Admin Password to view COST PRICES:");
+  // --- SIMPLE PASSWORD FOR CP VIEW ---
+  const handleToggleCP = () => {
+    if (showCP) { 
+        setShowCP(false); 
+        return; 
+    }
+    const password = prompt("🔒 Enter Secret Code to view COST PRICES:");
     if (!password) return;
-    try {
-      const res = await api.post('/admin/verify', { password });
-      if (res.data.success) setShowCP(true);
-      else alert("❌ Wrong Password!");
-    } catch (err) { alert("Server Error"); }
+
+    const SECRET_CODE = "1234"; 
+
+    if (password === SECRET_CODE) {
+        setShowCP(true);
+    } else {
+        alert("❌ Wrong Code!");
+    }
   };
 
+  // --- DELETE ITEM ---
   const handleDeleteClick = async (id) => {
     if(!window.confirm("⚠️ Are you sure you want to delete this medicine permanently?")) return;
+    
     const password = prompt("🧨 Enter Admin Password to DELETE:");
     if (!password) return;
     try {
@@ -58,12 +77,13 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
     } catch (err) { alert("Server Error"); }
   };
 
+  // --- EDIT HANDLERS ---
   const handleEditClick = (med) => { 
       setEditId(med._id); 
       setEditFormData({ 
           ...med, 
           packSize: med.packSize || '', 
-          looseQty: med.looseQty || 0,
+          // We don't need to edit loose separately now, it's part of quantity
           quantity: med.quantity || 0,
           gst: med.gst || 0
       }); 
@@ -151,8 +171,8 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <th className={thClass}>Name</th>
                     <th className={thClass}>Batch</th>
                     <th className={thClass}>Party</th>
-                    <th className={`${thClass} text-center`}>Pack</th>
-                    <th className={`${thClass} text-center`}>Strips</th>
+                    <th className={`${thClass} text-center`}>Pack of</th>
+                    <th className={`${thClass} text-center`}>Qty (Strips)</th>
                     <th className={`${thClass} bg-orange-50 text-orange-800 text-center`}>Loose</th> 
                     <th className={thClass}>MRP</th>
                     <th className={`${thClass} text-green-700`}>S.Price</th>
@@ -163,7 +183,17 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                 </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
-            {filteredMeds.map((m) => (
+            {filteredMeds.map((m) => {
+                // --- 🔥 DYNAMIC LOGIC FOR LOOSE CALCULATION ---
+                // Total Quantity (e.g., 55.8)
+                const totalQty = m.quantity || 0;
+                // Full Strips (e.g., 55)
+                const fullStrips = Math.floor(totalQty);
+                // Decimal Part (e.g., 0.8) * Pack Size (10) = 8 Loose Tablets
+                // Use Math.round to fix floating point errors (like 7.99999)
+                const looseTablets = Math.round((totalQty - fullStrips) * (m.packSize || 10));
+
+                return (
                 <tr key={m._id} className="hover:bg-gray-50 transition-colors">
                 {editId === m._id ? (
                     // --- EDIT MODE ---
@@ -173,9 +203,12 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <td className={tdClass}><input name="partyName" value={editFormData.partyName} onChange={handleEditFormChange} className={inputEditClass} /></td>
                     <td className={tdClass}><input name="packSize" type="number" value={editFormData.packSize || ''} onChange={handleEditFormChange} className={`${inputEditClass} text-center w-16`} /></td>
                     <td className={tdClass}><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} className={`${inputEditClass} w-16`} /></td>
-                    <td className={`${tdClass} bg-orange-50`}>
-                        <input name="looseQty" type="number" value={editFormData.looseQty} onChange={handleEditFormChange} className={`${inputEditClass} w-16 border-orange-300 focus:ring-orange-500`} />
+                    
+                    {/* Loose is read-only in edit mode because it's derived from quantity */}
+                    <td className={`${tdClass} bg-orange-50 text-center text-gray-400 font-bold`}>
+                        -
                     </td>
+
                     <td className={tdClass}><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
                     <td className={tdClass}><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 font-bold text-green-700`} /></td>
                     <td className={tdClass}>
@@ -207,13 +240,18 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <td className={`${tdClass} text-gray-500 text-xs`}>{m.partyName || '-'}</td>
                     <td className={`${tdClass} text-center font-semibold text-gray-600`}>{m.packSize || 10}</td>
                     <td className={tdClass}>
-                        <span className={`font-bold ${m.quantity < 5 ? 'text-red-600 bg-red-50 px-2 py-0.5 rounded' : 'text-gray-900'}`}>
-                            {m.quantity}
-                        </span>
+                        <div className="text-center">
+                            <span className={`font-bold ${fullStrips < 5 ? 'text-red-600 bg-red-50 px-2 py-0.5 rounded' : 'text-gray-900'}`}>
+                                {fullStrips}
+                            </span>
+                        </div>
                     </td>
+                    
+                    {/* 🔥 DYNAMIC LOOSE COLUMN */}
                     <td className={`${tdClass} text-center font-bold text-orange-600 bg-orange-50`}>
-                        {m.looseQty || 0}
+                        {looseTablets}
                     </td>
+
                     <td className={tdClass}>{m.mrp}</td>
                     <td className={`${tdClass} font-bold text-green-700`}>₹{m.sellingPrice}</td>
                     <td className={tdClass}>
@@ -234,7 +272,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     </>
                 )}
                 </tr>
-            ))}
+            )})}
             </tbody>
         </table>
         

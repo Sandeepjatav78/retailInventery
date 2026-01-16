@@ -272,14 +272,14 @@ const Dashboard = () => {
           <div className="hidden lg:block"></div> 
 
           {/* Row 3 - Pricing & Config */}
-          <div className="bg-orange-50 p-2 rounded-lg border border-orange-100">
-            <label className="text-xs font-bold text-orange-700 uppercase mb-1 block">Packing (Tabs/Strip)</label>
-            <input name="packSize" type="number" value={form.packSize} onChange={handleInputChange} placeholder="10" className="w-full p-1.5 border border-orange-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-orange-500 font-bold text-center" />
+          <div className="p-2 rounded-lg">
+            <label className={labelClass}>Packing (Tabs/Strip)</label>
+            <input name="packSize" type="number" value={form.packSize} onChange={handleInputChange} placeholder="10" className="w-full p-1.5 border rounded text-sm focus:outline-none focus:ring-1 font-bold text-center" />
           </div>
 
-          <div className="bg-green-50 p-2 rounded-lg border border-green-100">
-            <label className="text-xs font-bold text-green-700 uppercase mb-1 block">Total Strips (Qty)</label>
-            <input name="quantity" type="number" value={form.quantity} onChange={handleInputChange} placeholder="Strips" className="w-full p-1.5 border border-green-200 rounded text-sm focus:outline-none focus:ring-1 focus:ring-green-500 font-bold text-center" />
+          <div className="p-2 rounded-lg">
+            <label className={labelClass}>Total Strips (Qty)</label>
+            <input name="quantity" type="number" value={form.quantity} onChange={handleInputChange} placeholder="Strips" className="w-full p-1.5 border  rounded text-sm focus:outline-none focus:ring-1 font-bold text-center" />
           </div>
 
           <div>
