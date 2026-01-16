@@ -1,4 +1,4 @@
-import QRCode from 'qrcode'; 
+import QRCode from "qrcode";
 
 // --- CONFIGURATION ---
 const PHARMACY_DETAILS = {
@@ -8,48 +8,62 @@ const PHARMACY_DETAILS = {
   dlNo: "RLF20HR2025005933, RLF21HR2025005925",
   phone: "9817500669, 8278357882",
   email: "radhepharmacy099@gmail.com",
-  googleReviewUrl: "https://g.page/r/CQ4qGnEkSoD0EBM/review", 
-  upiId: "9817500669@okbizaxis" 
+  googleReviewUrl: "https://g.page/r/CQ4qGnEkSoD0EBM/review",
+  upiId: "9817500669@okbizaxis",
 };
 
 // --- HELPER: NUMBER TO WORDS ---
 const numberToWords = (num) => {
-  const a = ['','One ','Two ','Three ','Four ', 'Five ','Six ','Seven ','Eight ','Nine ','Ten ','Eleven ','Twelve ','Thirteen ','Fourteen ','Fifteen ','Sixteen ','Seventeen ','Eighteen ','Nineteen '];
-  const b = ['', '', 'Twenty','Thirty','Forty','Fifty', 'Sixty','Seventy','Eighty','Ninety'];
-  if ((num = num.toString()).length > 9) return 'overflow';
-  let n = ('000000000' + num).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
-  if (!n) return; var str = '';
-  str += (n[1] != 0) ? (a[Number(n[1])] || b[n[1][0]] + ' ' + a[n[1][1]]) + 'Crore ' : '';
-  str += (n[2] != 0) ? (a[Number(n[2])] || b[n[2][0]] + ' ' + a[n[2][1]]) + 'Lakh ' : '';
-  str += (n[3] != 0) ? (a[Number(n[3])] || b[n[3][0]] + ' ' + a[n[3][1]]) + 'Thousand ' : '';
-  str += (n[4] != 0) ? (a[Number(n[4])] || b[n[4][0]] + ' ' + a[n[4][1]]) + 'Hundred ' : '';
-  str += (n[5] != 0) ? ((str != '') ? 'and ' : '') + (a[Number(n[5])] || b[n[5][0]] + ' ' + a[n[5][1]]) + 'only ' : '';
+  const a = ["", "One ", "Two ", "Three ", "Four ", "Five ", "Six ", "Seven ", "Eight ", "Nine ", "Ten ", "Eleven ", "Twelve ", "Thirteen ", "Fourteen ", "Fifteen ", "Sixteen ", "Seventeen ", "Eighteen ", "Nineteen "];
+  const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  if ((num = num.toString()).length > 9) return "overflow";
+  let n = ("000000000" + num).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+  if (!n) return;
+  var str = "";
+  str += n[1] != 0 ? (a[Number(n[1])] || b[n[1][0]] + " " + a[n[1][1]]) + "Crore " : "";
+  str += n[2] != 0 ? (a[Number(n[2])] || b[n[2][0]] + " " + a[n[2][1]]) + "Lakh " : "";
+  str += n[3] != 0 ? (a[Number(n[3])] || b[n[3][0]] + " " + a[n[3][1]]) + "Thousand " : "";
+  str += n[4] != 0 ? (a[Number(n[4])] || b[n[4][0]] + " " + a[n[4][1]]) + "Hundred " : "";
+  str += n[5] != 0 ? (str != "" ? "and " : "") + (a[Number(n[5])] || b[n[5][0]] + " " + a[n[5][1]]) + "only " : "";
   return str;
 };
 
 // --- MAIN GENERATOR FUNCTION ---
 export const generateBillHTML = async (cartItems, invoiceData) => {
-  const date = new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-  const time = new Date().toLocaleTimeString('en-IN', {hour: '2-digit', minute:'2-digit'});
-  
+  let dateStr, timeStr;
+
+  // 🔥 HANDLE MANUAL DATE/TIME VS CURRENT
+  if (invoiceData.customDate) {
+    const d = new Date(invoiceData.customDate);
+    dateStr = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  } else {
+    dateStr = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  if (invoiceData.customTime) {
+    timeStr = invoiceData.customTime;
+  } else {
+    timeStr = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  }
+
   const isDuplicate = invoiceData.isDuplicate || false;
   const headerTitle = isDuplicate ? "DUPLICATE BILL" : "TAX INVOICE";
-  const headerColor ="#0f766e";
+  const headerColor = "#0f766e";
 
   let totalTaxable = 0;
   let totalGST = 0;
-  
+
   // Use passed Grand Total or calculate
   const finalTotal = invoiceData.grandTotal || cartItems.reduce((acc, item) => acc + item.total, 0);
   const doseAmount = invoiceData.doseAmount || 0;
 
-  cartItems.forEach(item => {
-      const gstPercent = item.gst || 0;
-      const inclusiveTotal = item.total; 
-      const baseValue = inclusiveTotal / (1 + (gstPercent / 100));
-      const taxAmount = inclusiveTotal - baseValue;
-      totalTaxable += baseValue;
-      totalGST += taxAmount;
+  cartItems.forEach((item) => {
+    const gstPercent = item.gst || 0;
+    const inclusiveTotal = item.total;
+    const baseValue = inclusiveTotal / (1 + gstPercent / 100);
+    const taxAmount = inclusiveTotal - baseValue;
+    totalTaxable += baseValue;
+    totalGST += taxAmount;
   });
 
   const amountInWords = numberToWords(Math.round(finalTotal));
@@ -61,7 +75,7 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
   // --- 🔥 DOSE ROW HTML ---
   let doseRow = "";
   if (doseAmount > 0) {
-      doseRow = `
+    doseRow = `
         <tr style="background-color: #f0fdfa;">
             <td colspan="2"></td>
             <td colspan="5" style="text-align:right; font-weight:700; color:#0f766e; padding-right:10px;">Medical / Dose Charge</td>
@@ -90,6 +104,8 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
           .brand-info { font-size: 10px; color: #444; margin-top: 5px; }
           .header-right { text-align: right; width: 35%; }
           .invoice-label { background: var(--primary); color: white; padding: 6px 12px; font-size: 14px; font-weight: 700; text-transform: uppercase; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+          .invoice-val { font-size: 14px; font-weight: 700; color: #000; margin-bottom: 2px; }
+          .invoice-time { font-size: 11px; color: #666; }
           .info-grid { display: flex; justify-content: space-between; margin-bottom: 8px; background: #f8fafc; padding: 8px; border-radius: 6px; border: 1px solid #e2e8f0; }
           .info-box h4 { font-size: 9px; text-transform: uppercase; color: var(--gray); margin: 0 0 2px 0; }
           .info-box div { font-weight: 700; color: #000; font-size: 12px; }
@@ -118,13 +134,13 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
                 <div class="header-right">
                     <div class="invoice-label">${headerTitle}</div>
                     <div class="invoice-val">#${invoiceData.no}</div>
-                    <div class="invoice-time">${date} &bull; ${time}</div>
+                    <div class="invoice-time">${dateStr} &bull; ${timeStr}</div>
                 </div>
             </div>
 
             <div class="info-grid">
-                <div class="info-box"><h4>Billed To</h4><div>${invoiceData.name}</div><div style="font-weight:400; font-size:10px">${invoiceData.phone || ''}</div></div>
-                <div class="info-box" style="text-align: center;"><h4>Dr. Ref</h4><div>${invoiceData.doctor || 'Self'}</div></div>
+                <div class="info-box"><h4>Billed To</h4><div>${invoiceData.name}</div><div style="font-weight:400; font-size:10px">${invoiceData.phone || ""}</div></div>
+                <div class="info-box" style="text-align: center;"><h4>Dr. Ref</h4><div>${invoiceData.doctor || "Self"}</div></div>
                 <div class="info-box" style="text-align: right;"><h4>Mode</h4><div>${invoiceData.mode}</div></div>
             </div>
 
@@ -145,17 +161,15 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
                     <tbody>
                         ${cartItems.map((item, i) => `
                             <tr>
-                                <td>${i+1}</td>
-                                <td><div style="font-weight:700; color:#000;">${item.name}</div><div style="font-size:9px; color:#666">Exp: ${item.expiry ? new Date(item.expiry).toLocaleDateString('en-IN', {month:'short', year:'2-digit'}) : '-'}</div></td>
+                                <td>${i + 1}</td>
+                                <td><div style="font-weight:700; color:#000;">${item.name}</div><div style="font-size:9px; color:#666">Exp: ${item.expiry ? new Date(item.expiry).toLocaleDateString("en-IN", { month: "short", year: "2-digit" }) : "-"}</div></td>
                                 <td>${item.batch}</td>
                                 <td class="text-right" style="color:#666; text-decoration: line-through;">₹${item.mrp}</td>
                                 <td class="text-right" style="font-weight:bold">₹${item.price}</td>
-                                <td class="text-center" style="color:red; font-size:9px">${item.discount > 0 ? item.discount + '%' : '-'}</td>
-                                <td class="text-center">
-                                    ${item.quantity} ${item.unit === 'loose' ? 'L' : 'P'}
-                                </td>
+                                <td class="text-center" style="color:red; font-size:9px">${item.discount > 0 ? item.discount + "%" : "-"}</td>
+                                <td class="text-center">${item.quantity} ${item.unit === "loose" ? "L" : "P"}</td>
                                 <td class="text-right" style="font-weight:700;">₹${item.total.toFixed(2)}</td>
-                            </tr>`).join('')}
+                            </tr>`).join("")}
                         ${doseRow}
                     </tbody>
                 </table>
@@ -182,8 +196,8 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
                     <div style="font-family: 'Dancing Script', cursive; font-size: 28px; color: var(--primary);">Thank You!</div>
                     <div style="font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--gray); margin-bottom: 10px;">For Choosing Radhe Pharmacy</div>
                     <div class="qr-area">
-                        ${paymentQR ? `<div class="qr-card"><img src="${paymentQR}" class="qr-img" /><div style="font-size: 9px; font-weight: 700; margin-top: 5px;">Scan to Pay<br>₹${Math.round(finalTotal)}</div></div>` : ''}
-                        ${reviewQR ? `<div class="qr-card"><img src="${reviewQR}" class="qr-img" /><div style="font-size: 9px; font-weight: 700; margin-top: 5px;">Rate Us</div></div>` : ''}
+                        ${paymentQR ? `<div class="qr-card"><img src="${paymentQR}" class="qr-img" /><div style="font-size: 9px; font-weight: 700; margin-top: 5px;">Scan to Pay<br>₹${Math.round(finalTotal)}</div></div>` : ""}
+                        ${reviewQR ? `<div class="qr-card"><img src="${reviewQR}" class="qr-img" /><div style="font-size: 9px; font-weight: 700; margin-top: 5px;">Rate Us</div></div>` : ""}
                     </div>
                 </div>
                 <div style="background: #ecfdf5; border: 1px solid #6ee7b7; padding: 10px; border-radius: 8px; width: 100%; text-align: left;">
