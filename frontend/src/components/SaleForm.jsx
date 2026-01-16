@@ -17,10 +17,12 @@ const SaleForm = () => {
   const [cart, setCart] = useState(() => getSavedState("cart", []));
   const [paymentMode, setPaymentMode] = useState(() => getSavedState("paymentMode", "Cash"));
   const [amountGiven, setAmountGiven] = useState(() => getSavedState("amountGiven", ""));
-  const [changeToReturn, setChangeToReturn] = useState(0);
   const [isBillNeeded, setIsBillNeeded] = useState(() => getSavedState("isBillNeeded", true));
   const [customer, setCustomer] = useState(() => getSavedState("customer", { name: "", phone: "", doctor: "" }));
   const [invoiceNo, setInvoiceNo] = useState("Loading...");
+
+  // --- 🔥 NEW DOSE LOGIC STATE ---
+  const [doseAmount, setDoseAmount] = useState(() => getSavedState("doseAmount", "")); 
 
   // ROLE CHECK
   const userRole = localStorage.getItem("userRole"); 
@@ -56,15 +58,23 @@ const SaleForm = () => {
     return () => clearInterval(interval);
   }, [isStaff]);
 
+  // --- 🔥 UPDATED MATH FOR GRAND TOTAL ---
+  const cartTotal = cart.reduce((a, b) => a + b.total, 0);
+  const doseVal = parseFloat(doseAmount) || 0;
+  const grandTotal = cartTotal + doseVal;
+
   useEffect(() => {
-    const total = cart.reduce((a, b) => a + b.total, 0);
     const given = parseFloat(amountGiven) || 0;
-    setChangeToReturn(paymentMode === "Cash" ? given - total : 0);
+    // Calculate change based on Grand Total (Cart + Dose)
+    setChangeToReturn(paymentMode === "Cash" ? given - grandTotal : 0);
+    
     localStorage.setItem(
       "draft_sale_v3",
-      JSON.stringify({ cart, customer, paymentMode, isBillNeeded, amountGiven })
+      JSON.stringify({ cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount }) // Save Dose
     );
-  }, [cart, customer, paymentMode, isBillNeeded, amountGiven]);
+  }, [cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, grandTotal]);
+
+  const [changeToReturn, setChangeToReturn] = useState(0);
 
   useEffect(() => {
     if (query.length > 1) {
@@ -77,42 +87,27 @@ const SaleForm = () => {
     }
   }, [query]);
 
-  // --- 🔥 DIRECT EDIT FUNCTIONS (No Click Needed) ---
-
-  // 1. Handle Rate Change (Direct Input)
+  // --- EDIT FUNCTIONS ---
   const handleRateChange = (index, newRate) => {
       const val = parseFloat(newRate);
       const newCart = [...cart];
       const item = newCart[index];
-
-      // Update Rate
       item.price = isNaN(val) ? 0 : val;
-      
-      // Auto Update Discount (If Admin)
       if (!isStaff && item.mrp > 0) {
           item.discount = parseFloat((((item.mrp - item.price) / item.mrp) * 100).toFixed(2));
       }
-
-      // Update Total
       item.total = item.price * item.quantity;
       setCart(newCart);
   };
 
-  // 2. Handle Discount Change (Direct Input - Admin Only)
   const handleDiscountChange = (index, newDisc) => {
       const val = parseFloat(newDisc);
       const newCart = [...cart];
       const item = newCart[index];
-
-      // Update Discount
       item.discount = isNaN(val) ? 0 : val;
-
-      // Auto Update Rate
       if (item.mrp > 0) {
           item.price = parseFloat((item.mrp - (item.mrp * (item.discount / 100))).toFixed(2));
       }
-
-      // Update Total
       item.total = item.price * item.quantity;
       setCart(newCart);
   };
@@ -162,11 +157,11 @@ const SaleForm = () => {
   };
 
   const handleCheckout = async () => {
-    if (cart.length === 0) return alert("Cart is empty");
-    const total = cart.reduce((a, b) => a + b.total, 0);
+    if (cart.length === 0 && doseVal <= 0) return alert("Cart is empty");
+    
     const given = parseFloat(amountGiven) || 0;
 
-    if (paymentMode === "Cash" && given < total)
+    if (paymentMode === "Cash" && given < grandTotal)
       return alert("Insufficient Cash!");
     if (isBillNeeded && !customer.name.trim())
       return alert("Customer Name is required for Bill");
@@ -177,11 +172,31 @@ const SaleForm = () => {
       doctor: isBillNeeded ? customer.doctor : "",
     };
 
+    // --- 🔥 ADD DOSE AS AN ITEM FOR BACKEND & BILL ---
+    // We clone the cart so we don't mess up the UI
+    const finalItems = cart.map((i) => ({ ...i }));
+
+    if (doseVal > 0) {
+        finalItems.push({
+            medicineId: null, // No ID for service charge
+            name: "Medical/Dose Charge",
+            batch: "-",
+            expiry: null,
+            hsn: "999",
+            gst: 0,
+            mrp: doseVal,
+            price: doseVal,
+            quantity: 1,
+            total: doseVal,
+            discount: 0
+        });
+    }
+
     const saleData = {
       customerDetails: finalCustomer,
-      totalAmount: total,
+      totalAmount: grandTotal, // Updated Total
       paymentMode,
-      items: cart.map((i) => ({ ...i })),
+      items: finalItems, // Send items including Dose
       isBillRequired: isBillNeeded,
       userRole: userRole, 
     };
@@ -201,7 +216,8 @@ const SaleForm = () => {
       const finalInvoiceNo = res.data.invoiceNo || "SAVED";
 
       if (isBillNeeded === true && billWindow) {
-        const html = await generateBillHTML(cart, {
+        // Generate HTML using finalItems (which has the dose)
+        const html = await generateBillHTML(finalItems, {
           no: finalInvoiceNo,
           ...finalCustomer,
           mode: paymentMode,
@@ -215,15 +231,17 @@ const SaleForm = () => {
       }
 
       setLastSale({
-        cart: [...cart],
+        cart: finalItems, // Store items with Dose for reprint
         invoiceNo: finalInvoiceNo,
         isBillRequired: isBillNeeded,
         customer: finalCustomer,
         paymentMode,
       });
 
+      // Reset Form
       setCart([]);
       setAmountGiven("");
+      setDoseAmount(""); // Reset Dose
       setCustomer({ name: "", phone: "", doctor: "" });
       fetchNextInvoice();
       
@@ -234,7 +252,7 @@ const SaleForm = () => {
 
   const clearDraft = () => {
     localStorage.removeItem("draft_sale_v3");
-    setCart([]); setAmountGiven(""); setChangeToReturn(0); setPaymentMode("Cash");
+    setCart([]); setAmountGiven(""); setDoseAmount(""); setChangeToReturn(0); setPaymentMode("Cash");
     setCustomer({ name: "", phone: "", doctor: "" });
     setResults([]); setQuery("");
   };
@@ -276,6 +294,7 @@ const SaleForm = () => {
       
       {/* LEFT: SEARCH & CART */}
       <div className="lg:col-span-2 flex flex-col bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {/* ... (Search UI remains the same) ... */}
         <div className="p-4 bg-gray-50 border-b border-gray-200">
           <div className="flex justify-between items-center mb-3">
             <h3 className="text-xl font-bold text-teal-800 flex items-center gap-2">
@@ -283,10 +302,7 @@ const SaleForm = () => {
             </h3>
             <div className="flex items-center gap-3">
               {cart.length > 0 && (
-                <button
-                  onClick={clearDraft}
-                  className="text-xs font-bold text-red-600 bg-red-50 px-3 py-1 rounded hover:bg-red-100 transition-colors"
-                >
+                <button onClick={clearDraft} className="text-xs font-bold text-red-600 bg-red-50 px-3 py-1 rounded hover:bg-red-100 transition-colors">
                   Clear Cart
                 </button>
               )}
@@ -295,7 +311,6 @@ const SaleForm = () => {
               </span>
             </div>
           </div>
-
           <div className="relative">
             <input
               className="w-full px-4 py-3 text-base border-2 border-gray-300 rounded-xl focus:outline-none focus:border-teal-500 focus:ring-4 focus:ring-teal-500/20 transition-all"
@@ -305,53 +320,23 @@ const SaleForm = () => {
               onKeyDown={handleKeyDown} 
               autoFocus
             />
-
             {results.length > 0 && (
-              <div
-                ref={resultListRef}
-                className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto divide-y divide-gray-100"
-              >
+              <div ref={resultListRef} className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto divide-y divide-gray-100">
                 {results.map((med, idx) => (
-                  <div
-                    key={med._id}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      addToCart(med);
-                    }}
-                    className={`p-3 cursor-pointer transition-colors flex justify-between items-center ${
-                      idx === focusedIndex 
-                        ? "bg-teal-100 border-l-4 border-teal-600" 
-                        : "hover:bg-teal-50"
-                    }`}
-                  >
+                  <div key={med._id} onMouseDown={(e) => { e.preventDefault(); addToCart(med); }}
+                    className={`p-3 cursor-pointer transition-colors flex justify-between items-center ${idx === focusedIndex ? "bg-teal-100 border-l-4 border-teal-600" : "hover:bg-teal-50"}`}>
                     <div>
-                      <div className="font-bold text-gray-800">
-                        {med.productName}
-                      </div>
-                      
-                      {/* Show Details based on Role */}
+                      <div className="font-bold text-gray-800">{med.productName}</div>
                       {!isStaff && (
                           <div className="text-xs text-gray-500 mt-1 flex gap-3">
-                            <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600"}`}>
-                              Stock: {med.quantity}
-                            </span>
+                            <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600"}`}>Stock: {med.quantity}</span>
                             <span>Batch: {med.batchNumber}</span>
-                            <span className={`${new Date(med.expiryDate) < new Date() ? "text-red-600 font-bold" : "text-gray-500"}`}>
-                              Exp: {new Date(med.expiryDate).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}
-                            </span>
+                            <span className={`${new Date(med.expiryDate) < new Date() ? "text-red-600 font-bold" : "text-gray-500"}`}>Exp: {new Date(med.expiryDate).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}</span>
                           </div>
                       )}
                     </div>
-                    
                     <div className="text-right">
-                      <div className="font-bold text-teal-600 text-lg">
-                        ₹{med.sellingPrice}
-                      </div>
-                      {!isStaff && (
-                          <div className="text-xs text-gray-400 line-through">
-                            MRP: {med.mrp}
-                          </div>
-                      )}
+                      <div className="font-bold text-teal-600 text-lg">₹{med.sellingPrice}</div>
                     </div>
                   </div>
                 ))}
@@ -360,19 +345,15 @@ const SaleForm = () => {
           </div>
         </div>
 
+        {/* ... (Table UI remains the same) ... */}
         <div className="flex-1 overflow-y-auto">
           <table className="w-full text-left border-collapse">
             <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
               <tr>
                 <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase">Item</th>
-
-                {/* HIDE FOR STAFF */}
                 {!isStaff && <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">MRP</th>}
                 {!isStaff && <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Disc%</th>}
-
-                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
-                  Rate
-                </th>
+                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Rate</th>
                 <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Qty</th>
                 <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">Total</th>
                 <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase"></th>
@@ -388,31 +369,16 @@ const SaleForm = () => {
                       <div className="font-semibold text-gray-800 text-sm">{item.name}</div>
                       {!isStaff && <div className="text-xs text-gray-500">Batch: {item.batch}</div>}
                     </td>
-
-                    {/* HIDE MRP FOR STAFF */}
                     {!isStaff && <td className="px-2 py-3 text-center text-gray-400 text-sm">₹{item.mrp}</td>}
-
-                    {/* --- DISCOUNT INPUT (Admin Only) --- */}
                     {!isStaff && (
                         <td className="px-2 py-3 text-center">
-                            <input 
-                                type="number" 
-                                value={item.discount} 
-                                onChange={(e) => handleDiscountChange(idx, e.target.value)}
-                                className={`w-14 p-1 text-center text-sm border rounded outline-none focus:ring-2 focus:ring-teal-500 ${discWarning ? 'border-red-500 text-red-600 bg-red-50' : 'border-gray-300'}`}
-                            />
+                            <input type="number" value={item.discount} onChange={(e) => handleDiscountChange(idx, e.target.value)}
+                                className={`w-14 p-1 text-center text-sm border rounded outline-none focus:ring-2 focus:ring-teal-500 ${discWarning ? 'border-red-500 text-red-600 bg-red-50' : 'border-gray-300'}`} />
                         </td>
                     )}
-
-                    {/* --- RATE INPUT (Always Visible for Both) --- */}
                     <td className="px-2 py-3 text-center relative">
-                        <input 
-                            type="number" 
-                            value={item.price} 
-                            onChange={(e) => handleRateChange(idx, e.target.value)}
-                            className={`w-16 p-1 text-center text-sm font-bold border rounded outline-none focus:ring-2 focus:ring-teal-500 ${lossWarning ? 'border-red-500 text-red-600 bg-red-50' : 'border-gray-300'}`}
-                        />
-                        {/* Warnings */}
+                        <input type="number" value={item.price} onChange={(e) => handleRateChange(idx, e.target.value)}
+                            className={`w-16 p-1 text-center text-sm font-bold border rounded outline-none focus:ring-2 focus:ring-teal-500 ${lossWarning ? 'border-red-500 text-red-600 bg-red-50' : 'border-gray-300'}`} />
                         {(lossWarning || discWarning) && (
                             <div className="absolute top-full left-1/2 -translate-x-1/2 bg-red-100 border border-red-200 text-red-600 text-[9px] px-1.5 py-0.5 rounded shadow-sm whitespace-nowrap mt-1 font-bold z-20 flex flex-col items-center">
                                 {lossWarning && <span>⚠️ Below CP</span>}
@@ -420,8 +386,6 @@ const SaleForm = () => {
                             </div>
                         )}
                     </td>
-
-                    {/* QTY CONTROLS */}
                     <td className="px-2 py-3 text-center">
                       <div className="flex items-center justify-center border border-gray-300 rounded-lg overflow-hidden w-fit mx-auto shadow-sm">
                         <button onClick={() => updateQty(idx, item.quantity - 1)} className="px-2 py-1 bg-gray-50 hover:bg-gray-200 text-gray-600 font-bold">-</button>
@@ -429,16 +393,13 @@ const SaleForm = () => {
                         <button onClick={() => updateQty(idx, item.quantity + 1)} className="px-2 py-1 bg-gray-50 hover:bg-gray-200 text-gray-600 font-bold">+</button>
                       </div>
                     </td>
-
                     <td className="px-4 py-3 text-right font-bold text-teal-700 text-sm">₹{item.total.toFixed(2)}</td>
-
                     <td className="px-2 py-3 text-center">
                       <button onClick={() => { const c = [...cart]; c.splice(idx, 1); setCart(c); }} className="text-gray-400 hover:text-red-500 text-lg transition-colors">×</button>
                     </td>
                   </tr>
                 );
               })}
-              {cart.length === 0 && <tr><td colSpan={isStaff ? 5 : 7} className="py-20 text-center text-gray-400 italic">Cart is empty. Search above to add items.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -446,10 +407,22 @@ const SaleForm = () => {
 
       {/* RIGHT: CHECKOUT */}
       <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col h-fit sticky top-4">
-        {/* ... (Checkout UI remains same) ... */}
-        <div className="bg-gradient-to-br from-teal-600 to-teal-800 rounded-xl p-6 text-center text-white shadow-lg mb-6">
+        
+        {/* --- 🔥 DOSE INPUT UI --- */}
+        <div className="bg-gradient-to-br from-teal-600 to-teal-800 rounded-xl p-6 text-center text-white shadow-lg mb-4">
           <div className="text-teal-100 text-xs font-bold uppercase tracking-wider mb-1">Grand Total</div>
-          <div className="text-4xl font-extrabold">₹{cart.reduce((a, b) => a + b.total, 0).toFixed(0)}</div>
+          <div className="text-4xl font-extrabold">₹{grandTotal.toFixed(0)}</div>
+          
+          <div className="mt-4 flex items-center justify-center gap-2 bg-teal-800/50 p-2 rounded-lg border border-teal-500/30">
+            <span className="text-xs font-bold text-teal-100 uppercase">💉 Dose/Service Charge:</span>
+            <input 
+                type="number" 
+                placeholder="0"
+                value={doseAmount}
+                onChange={(e) => setDoseAmount(e.target.value)}
+                className="w-20 bg-white text-teal-900 font-bold text-center rounded px-1 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400"
+            />
+          </div>
         </div>
 
         {lastSale && (
@@ -490,7 +463,7 @@ const SaleForm = () => {
           </div>
           {paymentMode === "Cash" && (
             <div className="mt-4 bg-orange-50 border border-orange-100 rounded-lg p-3 flex justify-between items-center">
-              <input type="number" placeholder="Given Amount" value={amountGiven} onChange={(e) => setAmountGiven(e.target.value)} className="w-24 p-2 text-sm border border-orange-200 rounded focus:outline-none focus:border-orange-400" />
+              <input type="number" placeholder="Given Amount" value={amountGiven} onChange={(e) => setAmountGiven(e.target.value)} className="w-28 p-2 text-sm border border-orange-200 rounded focus:outline-none focus:border-orange-400" />
               <div className="text-right">
                 <div className="text-xs text-gray-500 uppercase font-bold">Return Change</div>
                 <div className={`text-xl font-bold ${changeToReturn < 0 ? "text-red-600" : "text-green-600"}`}>₹{changeToReturn.toFixed(0)}</div>
