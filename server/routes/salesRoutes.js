@@ -11,4 +11,5 @@ router.post('/', salesController.createSale);
 // 3. Get Sales Report
 router.get('/filter', salesController.getAllSales);
 router.put('/:id', salesController.updateSale);
+router.delete('/:id', salesController.deleteSale);
 module.exports = router;

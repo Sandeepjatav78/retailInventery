@@ -112,6 +112,35 @@ exports.getAllSales = async (req, res) => {
   }
 };
 
+// ... existing functions ...
+
+// --- 🔥 NEW: DELETE SALE & RESTORE STOCK ---
+exports.deleteSale = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // 1. Find Sale
+        const sale = await Sale.findById(id);
+        if (!sale) return res.status(404).json({ message: "Sale not found" });
+
+        // 2. Restore Stock (Only for Inventory items, skip Manual)
+        for (const item of sale.items) {
+            if (item.medicineId) {
+                await Medicine.findByIdAndUpdate(item.medicineId, { 
+                    $inc: { quantity: item.quantity } // Add qty back
+                });
+            }
+        }
+
+        // 3. Delete Record
+        await Sale.findByIdAndDelete(id);
+
+        res.json({ success: true, message: "Sale deleted and stock restored" });
+
+    } catch (err) {
+        res.status(500).json({ message: "Delete failed", error: err.message });
+    }
+};
 
 exports.updateSale = async (req, res) => {
     try {
