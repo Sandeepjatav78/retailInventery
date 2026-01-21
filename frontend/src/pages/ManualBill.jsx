@@ -3,25 +3,24 @@ import { generateBillHTML } from '../utils/BillGenerator';
 import api from '../api/axios'; 
 
 const ManualBill = () => {
-  // --- STATE ---
   const [customer, setCustomer] = useState({ name: '', phone: '', doctor: '', mode: 'Cash' });
   const [invoiceNo, setInvoiceNo] = useState(`MAN-${Math.floor(Date.now() / 1000)}`);
   
-  // Manual Date & Time (Defaults to Current)
+  // Manual Date & Time
   const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]); 
   const [billTime, setBillTime] = useState(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
 
   const [currentItem, setCurrentItem] = useState({
-    name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1
+    name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1
   });
 
   const [cart, setCart] = useState([]);
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(-1); // Added for Key Nav
   const searchRef = useRef(null);
 
-  // Get Current User Role
   const currentUserRole = localStorage.getItem('userRole') || 'admin';
 
   // --- SEARCH EFFECT ---
@@ -32,6 +31,7 @@ const ManualBill = () => {
                 const res = await api.get(`/medicines/search?q=${query}`);
                 setSuggestions(res.data);
                 setShowSuggestions(true);
+                setFocusedIndex(-1); // Reset focus
             } catch (err) { setSuggestions([]); }
         } else { setSuggestions([]); setShowSuggestions(false); }
     };
@@ -39,7 +39,6 @@ const ManualBill = () => {
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Click Outside Logic
   useEffect(() => {
       const handleClickOutside = (event) => {
           if (searchRef.current && !searchRef.current.contains(event.target)) {
@@ -50,7 +49,26 @@ const ManualBill = () => {
       return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // --- HANDLERS ---
+  // --- KEYBOARD NAVIGATION HANDLER ---
+  const handleKeyDown = (e) => {
+    if (!showSuggestions || suggestions.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedIndex(prev => (prev < suggestions.length - 1 ? prev + 1 : prev));
+    } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedIndex(prev => (prev > 0 ? prev - 1 : 0));
+    } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (focusedIndex >= 0 && suggestions[focusedIndex]) {
+            handleSelectMedicine(suggestions[focusedIndex]);
+        }
+    } else if (e.key === "Escape") {
+        setShowSuggestions(false);
+    }
+  };
+
   const handleSelectMedicine = (med) => {
       setCurrentItem({
           name: med.productName,
@@ -58,7 +76,9 @@ const ManualBill = () => {
           expiry: med.expiryDate ? new Date(med.expiryDate).toISOString().split('T')[0] : '',
           mrp: med.mrp || '',
           price: med.sellingPrice || '',
-          quantity: 1
+          quantity: 1,
+          unit: 'pack', // Default
+          packSize: med.packSize || 10 // Default pack size
       });
       setQuery(med.productName);
       setShowSuggestions(false);
@@ -68,16 +88,23 @@ const ManualBill = () => {
     if (!currentItem.name || !currentItem.price || !currentItem.quantity) {
       return alert("Please fill Name, Price and Quantity");
     }
+
+    // Calculate Total based on Unit
+    let rowTotal = parseFloat(currentItem.price) * parseFloat(currentItem.quantity);
+    if(currentItem.unit === 'loose') {
+        rowTotal = (parseFloat(currentItem.price) / (currentItem.packSize || 1)) * parseFloat(currentItem.quantity);
+    }
+
     const newItem = {
       ...currentItem,
-      total: parseFloat(currentItem.price) * parseFloat(currentItem.quantity),
+      total: rowTotal,
       hsn: '-', gst: 0, 
-      medicineId: null, // 🔥 CRITICAL: Set null so backend doesn't deduct stock
-      packSize: '1',
-      unit: 'loose'
+      medicineId: null, 
     };
     setCart([...cart, newItem]);
-    setCurrentItem({ name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1 });
+    
+    // Reset but keep some fields empty
+    setCurrentItem({ name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1 });
     setQuery(""); 
   };
 
@@ -87,37 +114,62 @@ const ManualBill = () => {
     setCart(newCart);
   };
 
+  // --- UNIT TOGGLE LOGIC ---
+  const toggleUnit = (index) => {
+    const newCart = [...cart];
+    const item = newCart[index];
+    item.unit = item.unit === 'pack' ? 'loose' : 'pack';
+    
+    // Recalculate Total
+    let pricePerUnit = item.price;
+    if(item.unit === 'loose') pricePerUnit = item.price / (item.packSize || 1);
+    item.total = pricePerUnit * item.quantity;
+    
+    setCart(newCart);
+  };
+
+  const updateCartQty = (index, val) => {
+      const newQty = parseFloat(val);
+      if(!newQty || newQty <= 0) return;
+      const newCart = [...cart];
+      const item = newCart[index];
+      item.quantity = newQty;
+      
+      let pricePerUnit = item.price;
+      if(item.unit === 'loose') pricePerUnit = item.price / (item.packSize || 1);
+      item.total = pricePerUnit * item.quantity;
+
+      setCart(newCart);
+  };
+
   const handleGenerateBill = async () => {
     if (cart.length === 0) return alert("Add items first!");
     if (!customer.name) return alert("Customer Name is required!");
 
-    // 1. Calculate Combined Date for Backend (ISO Format)
     const combinedDateTime = new Date(`${billDate}T${billTime}`);
 
     const saleData = {
-        invoiceNo: invoiceNo, // Force the Manual ID
+        invoiceNo: invoiceNo, 
         customerDetails: customer,
         totalAmount: cart.reduce((a,b)=>a+b.total,0),
         paymentMode: customer.mode,
         items: cart,
         isBillRequired: true,
-        userRole: currentUserRole, // 🔥 Save as current user (Staff/Admin)
-        customDate: combinedDateTime // 🔥 Send this to backend
+        userRole: currentUserRole, 
+        customDate: combinedDateTime
     };
 
     try {
-        // --- 🔥 SAVE TO DATABASE ---
         await api.post('/sales', saleData);
 
-        // --- GENERATE PRINT ---
         const invData = {
             no: invoiceNo,
             name: customer.name,
             phone: customer.phone,
             doctor: customer.doctor,
             mode: customer.mode,
-            customDate: billDate, // Send raw date string for print
-            customTime: billTime  // Send raw time string for print
+            customDate: billDate, 
+            customTime: billTime  
         };
 
         const billHTML = await generateBillHTML(cart, invData);
@@ -127,11 +179,9 @@ const ManualBill = () => {
             billWindow.document.close();
         }
 
-        // --- RESET ---
         setCustomer({ name: '', phone: '', doctor: '', mode: 'Cash' });
         setCart([]);
         setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
-        // Reset Date/Time to current for next bill
         setBillDate(new Date().toISOString().split('T')[0]);
         setBillTime(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
 
@@ -155,7 +205,6 @@ const ManualBill = () => {
                 1. Bill Details
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {/* 🔥 NEW: DATE & TIME INPUTS */}
                 <input type="date" className={inputClass} value={billDate} onChange={e => setBillDate(e.target.value)} />
                 <input type="time" className={inputClass} value={billTime} onChange={e => setBillTime(e.target.value)} />
                 
@@ -182,15 +231,23 @@ const ManualBill = () => {
                             setQuery(e.target.value);
                             setCurrentItem({...currentItem, name: e.target.value});
                         }} 
+                        onKeyDown={handleKeyDown} // 🔥 Added Key Navigation
                         onFocus={() => query.length > 1 && setShowSuggestions(true)}
                     />
                     {showSuggestions && suggestions.length > 0 && (
                         <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                            {suggestions.map((med) => (
-                                <div key={med._id} onClick={() => handleSelectMedicine(med)} className="p-3 hover:bg-teal-50 cursor-pointer border-b border-gray-100 last:border-0 flex justify-between items-center">
+                            {suggestions.map((med, idx) => (
+                                <div 
+                                    key={med._id} 
+                                    onClick={() => handleSelectMedicine(med)} 
+                                    // 🔥 Highlight Focused Item
+                                    className={`p-3 cursor-pointer border-b border-gray-100 flex justify-between items-center
+                                        ${idx === focusedIndex ? 'bg-teal-100 border-l-4 border-teal-600' : 'hover:bg-teal-50'}
+                                    `}
+                                >
                                     <div>
                                         <div className="font-bold text-gray-800">{med.productName}</div>
-                                        <div className="text-xs text-gray-500">Batch: {med.batchNumber} | Exp: {new Date(med.expiryDate).toLocaleDateString('en-IN', {month:'short', year:'2-digit'})}</div>
+                                        <div className="text-xs text-gray-500">Batch: {med.batchNumber}</div>
                                     </div>
                                     <div className="text-right text-teal-600 font-bold text-sm">₹{med.sellingPrice}</div>
                                 </div>
@@ -207,7 +264,24 @@ const ManualBill = () => {
                 <div className="grid grid-cols-3 gap-3">
                     <input type="number" className={inputClass} placeholder="MRP" value={currentItem.mrp} onChange={e=>setCurrentItem({...currentItem, mrp:e.target.value})} />
                     <input type="number" className={`${inputClass} font-bold text-teal-700`} placeholder="Price *" value={currentItem.price} onChange={e=>setCurrentItem({...currentItem, price:e.target.value})} />
-                    <input type="number" className={`${inputClass} font-bold`} placeholder="Qty *" value={currentItem.quantity} onChange={e=>setCurrentItem({...currentItem, quantity:e.target.value})} />
+                    {/* Unit Select for Manual Entry */}
+                    <select 
+                        className={inputClass} 
+                        value={currentItem.unit} 
+                        onChange={e=>setCurrentItem({...currentItem, unit:e.target.value})}
+                    >
+                        <option value="pack">Pack</option>
+                        <option value="loose">Loose</option>
+                    </select>
+                </div>
+                
+                {/* Pack Size Input (Only shows if Loose is selected manually, or user wants to edit) */}
+                <div className="flex items-center gap-2">
+                     <span className="text-xs font-bold text-gray-500">Qty:</span>
+                     <input type="number" className={`${inputClass} font-bold`} placeholder="Qty *" value={currentItem.quantity} onChange={e=>setCurrentItem({...currentItem, quantity:e.target.value})} />
+                     
+                     <span className="text-xs font-bold text-gray-500 ml-2">Pack Size:</span>
+                     <input type="number" className={inputClass} placeholder="10" value={currentItem.packSize} onChange={e=>setCurrentItem({...currentItem, packSize:e.target.value})} />
                 </div>
 
                 <button onClick={handleAddItem} className="w-full mt-2 bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 rounded-lg shadow-md transition-all transform active:scale-95">
@@ -231,7 +305,7 @@ const ManualBill = () => {
                         <tr>
                             <th className="p-3 font-semibold text-gray-600">Item</th>
                             <th className="p-3 font-semibold text-gray-600">Batch</th>
-                            <th className="p-3 font-semibold text-gray-600 text-center">Qty</th>
+                            <th className="p-3 font-semibold text-gray-600 text-center">Qty / Unit</th>
                             <th className="p-3 font-semibold text-gray-600 text-right">Price</th>
                             <th className="p-3 font-semibold text-gray-600 text-right">Total</th>
                             <th className="p-3 font-semibold text-gray-600 w-8"></th>
@@ -243,9 +317,30 @@ const ManualBill = () => {
                         ) : (
                             cart.map((item, i) => (
                                 <tr key={i} className="hover:bg-gray-50 transition-colors">
-                                    <td className="p-3 text-gray-800 font-medium">{item.name}</td>
+                                    <td className="p-3 text-gray-800 font-medium">
+                                        {item.name} 
+                                        <div className="text-[10px] text-gray-400">Pk: {item.packSize}</div>
+                                    </td>
                                     <td className="p-3 text-gray-500 text-xs">{item.batch}</td>
-                                    <td className="p-3 text-center font-bold text-gray-700">{item.quantity}</td>
+                                    
+                                    {/* 🔥 TOGGLE UNIT BUTTON */}
+                                    <td className="p-3 text-center">
+                                        <div className="flex flex-col items-center gap-1">
+                                            <input 
+                                                type="number" 
+                                                value={item.quantity} 
+                                                onChange={(e) => updateCartQty(i, e.target.value)} 
+                                                className="w-10 text-center font-bold border rounded outline-none text-gray-700" 
+                                            />
+                                            <span 
+                                                onClick={() => toggleUnit(i)}
+                                                className={`text-[9px] font-bold px-2 py-0.5 rounded cursor-pointer uppercase border ${item.unit === 'loose' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-teal-50 text-teal-700 border-teal-200'}`}
+                                            >
+                                                {item.unit === 'loose' ? '✂️ LOOSE' : '📦 PACK'}
+                                            </span>
+                                        </div>
+                                    </td>
+
                                     <td className="p-3 text-right text-gray-600">₹{item.price}</td>
                                     <td className="p-3 text-right font-bold text-teal-600">₹{item.total.toFixed(2)}</td>
                                     <td className="p-3 text-center">
