@@ -9,6 +9,7 @@ const DailyReport = () => {
   const [dates, setDates] = useState({ start: new Date().toISOString().split('T')[0], end: new Date().toISOString().split('T')[0] });
   const userRole = localStorage.getItem('userRole'); 
 
+  // --- EDIT STATE ---
   const [editingSale, setEditingSale] = useState(null);
 
   const fetchReport = () => {
@@ -17,19 +18,7 @@ const DailyReport = () => {
     else { url = `/sales/filter?start=${dates.start}&end=${dates.end}`; }
 
     api.get(url).then(res => {
-          let transactions = res.data.transactions;
-
-          // --- 🔥 STRICT ISOLATION LOGIC ---
-          // Admin sees everything. Staff only sees staff bills.
-          if (userRole === 'staff') {
-              transactions = transactions.filter(t => {
-                  const billCreator = t.createdBy || 'admin'; // Default to admin if missing
-                  return billCreator === 'staff';
-              });
-          }
-          // If Admin, no filter applied (sees all)
-
-          setReport({ ...res.data, transactions: transactions });
+          setReport(res.data); 
       }).catch(err => console.error("Failed to fetch report"));
   };
 
@@ -57,20 +46,25 @@ const DailyReport = () => {
 
   const filteredTransactions = report ? report.transactions : [];
   
-  // --- CALCULATIONS ---
-  // If user is Admin, they see Admin totals + (Staff totals in brackets)
-  // If user is Staff, they only see their own totals
+  // --- 🔥 STRICT REVENUE CALCULATIONS ---
 
-  // 1. Manual Filter
-  const calcTransactions = filteredTransactions.filter(t => !t.invoiceNo.startsWith('MAN'));
+  // 1. ADMIN TOTALS (The "My Total"): 
+  // Excludes 'staff' bills AND excludes 'MAN' (Manual) bills.
+  const adminTxns = filteredTransactions.filter(t => 
+      t.createdBy !== 'staff' && !t.invoiceNo.startsWith('MAN')
+  );
+  
+  const adminTotal = adminTxns.reduce((acc, t) => acc + t.totalAmount, 0);
+  const adminCash = adminTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + t.totalAmount, 0);
+  const adminOnline = adminTxns.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + t.totalAmount, 0);
 
-  // 2. Main Totals (Based on what is visible)
-  const totalRevenue = calcTransactions.reduce((acc, t) => acc + t.totalAmount, 0);
-  const totalCash = calcTransactions.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + t.totalAmount, 0);
-  const totalOnline = calcTransactions.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + t.totalAmount, 0);
+  // 2. STAFF TOTALS (For Brackets):
+  // Only 'staff' bills (Excluding Manual)
+  const staffTxns = filteredTransactions.filter(t => 
+      t.createdBy === 'staff' && !t.invoiceNo.startsWith('MAN')
+  );
 
-  // 3. Staff Breakdown (Only relevant if Admin is viewing)
-  const staffTxns = calcTransactions.filter(t => t.createdBy === 'staff');
+  const staffTotal = staffTxns.reduce((acc, t) => acc + t.totalAmount, 0);
   const staffCash = staffTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + t.totalAmount, 0);
   const staffOnline = staffTxns.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + t.totalAmount, 0);
 
@@ -78,36 +72,43 @@ const DailyReport = () => {
 
   return (
     <div className="p-4 md:p-6 bg-gray-50 min-h-screen">
+      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-        <h2 className="text-2xl font-bold text-gray-800">📊 Sales Report <span className="text-sm font-medium text-gray-500 uppercase">({userRole})</span></h2>
+        <h2 className="text-2xl font-bold text-gray-800">📊 Sales Report</h2>
         <div className="flex items-center gap-2 bg-white px-2 py-1 rounded border shadow-sm"><button onClick={() => setRange('today')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Today</button><div className="h-4 w-px bg-gray-300"></div><button onClick={() => setRange('month')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Month</button><input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="text-xs border rounded p-1" /><span className="text-xs">-</span><input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="text-xs border rounded p-1" /></div>
       </div>
 
       <div className="grid gap-4 mb-6 grid-cols-1 md:grid-cols-3">
-        {/* Total Revenue */}
+        
+        {/* Total Revenue (Admin Only) */}
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-green-500">
-            <h4 className="text-gray-500 text-xs font-bold uppercase">Total Revenue</h4>
-            <h1 className="text-2xl font-bold text-gray-800">₹{totalRevenue.toFixed(0)}</h1>
-            <div className="text-green-600 text-xs font-bold mt-1">{filteredTransactions.length} Bills</div>
+            <h4 className="text-gray-500 text-xs font-bold uppercase">Total Revenue (Admin)</h4>
+            <div className="flex flex-wrap items-baseline gap-2 mt-1">
+                <h1 className="text-2xl font-bold text-gray-800">₹{adminTotal.toFixed(0)}</h1>
+                {/* Staff bracket display */}
+                {staffTotal > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffTotal.toFixed(0)})</span>}
+            </div>
+            <div className="text-green-600 text-xs font-bold mt-1">{filteredTransactions.length} Bills Found</div>
         </div>
 
-        {/* Cash */}
+        {/* Cash (Admin Only) */}
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-orange-500">
-            <h4 className="text-gray-500 text-xs font-bold uppercase">Cash</h4>
+            <h4 className="text-gray-500 text-xs font-bold uppercase">Cash (Admin)</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-orange-600">₹{totalCash.toFixed(0)}</h1>
-                {userRole === 'admin' && staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(Staff: ₹{staffCash.toFixed(0)})</span>}
+                <h1 className="text-2xl font-bold text-orange-600">₹{adminCash.toFixed(0)}</h1>
+                {staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffCash.toFixed(0)})</span>}
             </div>
         </div>
 
-        {/* Online */}
+        {/* Online (Admin Only) */}
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-blue-500">
-            <h4 className="text-gray-500 text-xs font-bold uppercase">Online</h4>
+            <h4 className="text-gray-500 text-xs font-bold uppercase">Online (Admin)</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-blue-600">₹{totalOnline.toFixed(0)}</h1>
-                {userRole === 'admin' && staffOnline > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(Staff: ₹{staffOnline.toFixed(0)})</span>}
+                <h1 className="text-2xl font-bold text-blue-600">₹{adminOnline.toFixed(0)}</h1>
+                {staffOnline > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffOnline.toFixed(0)})</span>}
             </div>
         </div>
+
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
