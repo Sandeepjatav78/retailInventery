@@ -130,7 +130,14 @@ const DailyReport = () => {
                         return (
                         <tr key={t._id} className={`hover:bg-gray-50 ${isDose ? 'bg-yellow-50/50' : isManual ? 'bg-blue-50/30' : 'bg-white'}`}>
                             <td className="px-4 py-3"><div className="font-bold text-gray-800 text-sm">{new Date(t.date).toLocaleDateString()}</div><div className="text-gray-400 text-xs">{new Date(t.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div></td>
-                            <td className="px-4 py-3"><div className="text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">{t.invoiceNo}{isStaffBill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200 uppercase font-bold tracking-wider">STAFF</span>}</div>{isManual && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded mr-2">MANUAL</span>}</td>
+                            <td className="px-4 py-3">
+                                <div className="text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
+                                    {t.invoiceNo}
+                                    {/* 🔥 CHANGED: Only show STAFF tag if logged in as Admin */}
+                                    {userRole === 'admin' && isStaffBill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200 uppercase font-bold tracking-wider">STAFF</span>}
+                                </div>
+                                {isManual && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded mr-2">MANUAL</span>}
+                            </td>
                             <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-sm">{t.customerDetails?.name || 'Walk-in'}</div></td>
                             <td className="px-4 py-3 text-right"><div className="font-bold text-gray-800">₹{t.totalAmount.toFixed(2)}</div></td>
                             <td className="px-4 py-3 text-center flex justify-center gap-2">
