@@ -3,13 +3,22 @@ import api from '../api/axios';
 import { generateBillHTML } from '../utils/BillGenerator';
 import EditBillModal from '../components/EditBillModal';
 
+const getLocalDateString = (date = new Date()) => {
+  const offset = date.getTimezoneOffset() * 60000; 
+  return new Date(date.getTime() - offset).toISOString().split('T')[0];
+};
+
 const DailyReport = () => {
   const [report, setReport] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [dates, setDates] = useState({ start: new Date().toISOString().split('T')[0], end: new Date().toISOString().split('T')[0] });
+  
+  const [dates, setDates] = useState({ 
+      start: getLocalDateString(), 
+      end: getLocalDateString() 
+  });
+  
   const userRole = localStorage.getItem('userRole'); 
 
-  // --- EDIT STATE ---
   const [editingSale, setEditingSale] = useState(null);
 
   const fetchReport = () => {
@@ -28,23 +37,65 @@ const DailyReport = () => {
   }, [dates, searchTerm]); 
 
   const setRange = (type) => {
-    const today = new Date(); let start = new Date(); let end = new Date();
-    if (type === 'month') { start = new Date(today.getFullYear(), today.getMonth(), 1); end = new Date(today.getFullYear(), today.getMonth() + 1, 0); } 
-    setDates({ start: start.toISOString().split('T')[0], end: end.toISOString().split('T')[0] }); setSearchTerm('');
+    const today = new Date(); 
+    let start = new Date(today); 
+    let end = new Date(today);
+    
+    if (type === 'month') { 
+        start = new Date(today.getFullYear(), today.getMonth(), 1); 
+        end = new Date(today.getFullYear(), today.getMonth() + 1, 0); 
+    } 
+    
+    setDates({ 
+        start: getLocalDateString(start), 
+        end: getLocalDateString(end) 
+    }); 
+    setSearchTerm('');
   };
 
+  // --- 🔥 FIXED: PRINT LOGIC FOR REPRINT ---
   const handlePrintInvoice = async(t) => {
+    // 1. Identify Dose Charge safely by Name (not ID)
+    const doseItem = t.items.find(i => i.name === "Medical/Dose Charge");
+    const doseAmount = doseItem ? doseItem.total : 0;
+
+    // 2. Get Real Items and Fix Display Quantities (e.g., 0.1 Pack -> 1 Loose)
+    const itemsToPrint = t.items
+        .filter(i => i.name !== "Medical/Dose Charge")
+        .map(i => {
+            let visualQty = i.quantity;
+            // Restore the whole number quantity for loose items
+            if (i.unit === 'loose' && i.packSize) {
+                visualQty = Math.round(i.quantity * i.packSize);
+            }
+            return { ...i, quantity: visualQty };
+        });
+
+    const saleDate = new Date(t.date);
+
     const invData = { 
-        no: t.invoiceNo, name: t.customerDetails?.name || 'Cash', phone: t.customerDetails?.phone || '', doctor: t.customerDetails?.doctor || 'Self', mode: t.paymentMode, isDuplicate: true, 
-        grandTotal: t.totalAmount, doseAmount: t.items.find(i => i.medicineId === null)?.total || 0, 
-        customDate: t.date, customTime: new Date(t.date).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}) 
+        no: t.invoiceNo, 
+        name: t.customerDetails?.name || 'Cash', 
+        phone: t.customerDetails?.phone || '', 
+        doctor: t.customerDetails?.doctor || 'Self', 
+        mode: t.paymentMode, 
+        isDuplicate: true, 
+        grandTotal: t.totalAmount, 
+        doseAmount: doseAmount, 
+        customDate: saleDate.toISOString().split('T')[0], // Fixed Date Format
+        customTime: saleDate.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}) 
     };
-    const itemsToPrint = t.items.filter(i => i.medicineId !== null);
+
     const billHTML = await generateBillHTML(itemsToPrint, invData);
-    const w = window.open('', '', 'width=900,height=900'); if(w) { w.document.write(billHTML); w.document.close(); }
+    const w = window.open('', '', 'width=900,height=900'); 
+    if(w) { 
+        w.document.write(billHTML); 
+        w.document.close(); 
+    } else {
+        alert("Popup blocked! Please allow popups to print.");
+    }
   };
 
-  // --- 🔥 NEW DELETE HANDLER ---
   const handleDeleteSale = async (id) => {
       if(!window.confirm("⚠️ Are you sure you want to DELETE this bill?\nStock will be restored automatically.")) return;
       
@@ -52,22 +103,23 @@ const DailyReport = () => {
       if (!password) return;
 
       try {
-          // Verify Password First
           const verify = await api.post('/admin/verify', { password });
           if (!verify.data.success) return alert("❌ Wrong Password!");
 
-          // Perform Delete
           await api.delete(`/sales/${id}`);
           alert("✅ Bill Deleted & Stock Restored!");
-          fetchReport(); // Refresh List
+          fetchReport(); 
       } catch (err) {
           alert("Delete Failed: " + err.message);
       }
   };
 
-  const filteredTransactions = report ? report.transactions : [];
-  
-  // --- CALCULATIONS (Strict Isolation) ---
+  let filteredTransactions = report ? report.transactions : [];
+
+  if (userRole === 'staff') {
+      filteredTransactions = filteredTransactions.filter(t => t.createdBy === 'staff');
+  }
+
   const calcTransactions = filteredTransactions.filter(t => !t.invoiceNo.startsWith('MAN'));
 
   const adminTxns = calcTransactions.filter(t => t.createdBy !== 'staff');
@@ -85,31 +137,33 @@ const DailyReport = () => {
   return (
     <div className="p-4 md:p-6 bg-gray-50 min-h-screen">
       <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-        <h2 className="text-2xl font-bold text-gray-800">📊 Sales Report</h2>
+        <h2 className="text-2xl font-bold text-gray-800">
+            📊 Sales Report {userRole === 'staff' && <span className="text-sm font-medium text-gray-500">(My Sales Only)</span>}
+        </h2>
         <div className="flex items-center gap-2 bg-white px-2 py-1 rounded border shadow-sm"><button onClick={() => setRange('today')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Today</button><div className="h-4 w-px bg-gray-300"></div><button onClick={() => setRange('month')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Month</button><input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="text-xs border rounded p-1" /><span className="text-xs">-</span><input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="text-xs border rounded p-1" /></div>
       </div>
 
       <div className="grid gap-4 mb-6 grid-cols-1 md:grid-cols-3">
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-green-500">
-            <h4 className="text-gray-500 text-xs font-bold uppercase">Total Revenue (Admin)</h4>
+            <h4 className="text-gray-500 text-xs font-bold uppercase">{userRole === 'admin' ? 'Total Revenue (Admin)' : 'My Total Revenue'}</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-gray-800">₹{adminTotal.toFixed(0)}</h1>
-                {staffTotal > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffTotal.toFixed(0)})</span>}
+                <h1 className="text-2xl font-bold text-gray-800">₹{userRole === 'admin' ? adminTotal.toFixed(0) : staffTotal.toFixed(0)}</h1>
+                {userRole === 'admin' && staffTotal > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffTotal.toFixed(0)})</span>}
             </div>
             <div className="text-green-600 text-xs font-bold mt-1">{filteredTransactions.length} Bills Found</div>
         </div>
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-orange-500">
-            <h4 className="text-gray-500 text-xs font-bold uppercase">Cash (Admin)</h4>
+            <h4 className="text-gray-500 text-xs font-bold uppercase">Cash</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-orange-600">₹{adminCash.toFixed(0)}</h1>
-                {staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffCash.toFixed(0)})</span>}
+                <h1 className="text-2xl font-bold text-orange-600">₹{userRole === 'admin' ? adminCash.toFixed(0) : staffCash.toFixed(0)}</h1>
+                {userRole === 'admin' && staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffCash.toFixed(0)})</span>}
             </div>
         </div>
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-blue-500">
-            <h4 className="text-gray-500 text-xs font-bold uppercase">Online (Admin)</h4>
+            <h4 className="text-gray-500 text-xs font-bold uppercase">Online</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-blue-600">₹{adminOnline.toFixed(0)}</h1>
-                {staffOnline > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffOnline.toFixed(0)})</span>}
+                <h1 className="text-2xl font-bold text-blue-600">₹{userRole === 'admin' ? adminOnline.toFixed(0) : staffOnline.toFixed(0)}</h1>
+                {userRole === 'admin' && staffOnline > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffOnline.toFixed(0)})</span>}
             </div>
         </div>
       </div>
@@ -133,7 +187,6 @@ const DailyReport = () => {
                             <td className="px-4 py-3">
                                 <div className="text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
                                     {t.invoiceNo}
-                                    {/* 🔥 CHANGED: Only show STAFF tag if logged in as Admin */}
                                     {userRole === 'admin' && isStaffBill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200 uppercase font-bold tracking-wider">STAFF</span>}
                                 </div>
                                 {isManual && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded mr-2">MANUAL</span>}
@@ -143,7 +196,7 @@ const DailyReport = () => {
                             <td className="px-4 py-3 text-center flex justify-center gap-2">
                                 <button onClick={() => handlePrintInvoice(t)} className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded hover:bg-blue-100 border border-blue-100">🖨️</button>
                                 
-                                {/* 🔥 ADMIN ONLY: Edit & Delete */}
+                                {/* ADMIN ONLY: Edit & Delete */}
                                 {userRole === 'admin' && (
                                     <>
                                         <button onClick={() => setEditingSale(t)} className="text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded hover:bg-purple-100 border border-purple-100">✏️</button>

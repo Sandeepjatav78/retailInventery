@@ -2,12 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import { generateBillHTML } from '../utils/BillGenerator';
 import api from '../api/axios'; 
 
+const getLocalDateString = () => {
+    const date = new Date();
+    const offset = date.getTimezoneOffset() * 60000; 
+    return new Date(date.getTime() - offset).toISOString().split('T')[0];
+};
+
 const ManualBill = () => {
   const [customer, setCustomer] = useState({ name: '', phone: '', doctor: '', mode: 'Cash' });
   const [invoiceNo, setInvoiceNo] = useState(`MAN-${Math.floor(Date.now() / 1000)}`);
   
-  // Manual Date & Time
-  const [billDate, setBillDate] = useState(new Date().toISOString().split('T')[0]); 
+  const [billDate, setBillDate] = useState(getLocalDateString()); 
   const [billTime, setBillTime] = useState(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
 
   const [currentItem, setCurrentItem] = useState({
@@ -18,26 +23,43 @@ const ManualBill = () => {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [focusedIndex, setFocusedIndex] = useState(-1); // Added for Key Nav
-  const searchRef = useRef(null);
+  const [focusedIndex, setFocusedIndex] = useState(-1); 
+  
+  // --- 🔥 NEW: State for toggling suggestions via F2 ---
+  const [isSuggestionsEnabled, setIsSuggestionsEnabled] = useState(true);
 
+  const searchRef = useRef(null);
   const currentUserRole = localStorage.getItem('userRole') || 'admin';
+
+  // --- 🔥 NEW: Global Keyboard Listener for F2 ---
+  useEffect(() => {
+    const handleGlobalKeyDown = (e) => {
+        if (e.key === "F2") {
+            e.preventDefault(); // Prevent default browser actions
+            setIsSuggestionsEnabled(prev => !prev);
+            setShowSuggestions(false); // Hide immediately if turned off
+        }
+    };
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
 
   // --- SEARCH EFFECT ---
   useEffect(() => {
     const fetchMedicines = async () => {
-        if (query.length > 1) {
+        // --- 🔥 MODIFIED: Only fetch if isSuggestionsEnabled is true ---
+        if (isSuggestionsEnabled && query.length > 1) {
             try {
                 const res = await api.get(`/medicines/search?q=${query}`);
                 setSuggestions(res.data);
                 setShowSuggestions(true);
-                setFocusedIndex(-1); // Reset focus
+                setFocusedIndex(-1); 
             } catch (err) { setSuggestions([]); }
         } else { setSuggestions([]); setShowSuggestions(false); }
     };
     const timer = setTimeout(fetchMedicines, 300);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, isSuggestionsEnabled]); // 🔥 ADDED isSuggestionsEnabled as dependency
 
   useEffect(() => {
       const handleClickOutside = (event) => {
@@ -49,7 +71,6 @@ const ManualBill = () => {
       return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // --- KEYBOARD NAVIGATION HANDLER ---
   const handleKeyDown = (e) => {
     if (!showSuggestions || suggestions.length === 0) return;
 
@@ -77,8 +98,8 @@ const ManualBill = () => {
           mrp: med.mrp || '',
           price: med.sellingPrice || '',
           quantity: 1,
-          unit: 'pack', // Default
-          packSize: med.packSize || 10 // Default pack size
+          unit: 'pack', 
+          packSize: med.packSize || 10 
       });
       setQuery(med.productName);
       setShowSuggestions(false);
@@ -89,7 +110,6 @@ const ManualBill = () => {
       return alert("Please fill Name, Price and Quantity");
     }
 
-    // Calculate Total based on Unit
     let rowTotal = parseFloat(currentItem.price) * parseFloat(currentItem.quantity);
     if(currentItem.unit === 'loose') {
         rowTotal = (parseFloat(currentItem.price) / (currentItem.packSize || 1)) * parseFloat(currentItem.quantity);
@@ -103,7 +123,6 @@ const ManualBill = () => {
     };
     setCart([...cart, newItem]);
     
-    // Reset but keep some fields empty
     setCurrentItem({ name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1 });
     setQuery(""); 
   };
@@ -114,13 +133,11 @@ const ManualBill = () => {
     setCart(newCart);
   };
 
-  // --- UNIT TOGGLE LOGIC ---
   const toggleUnit = (index) => {
     const newCart = [...cart];
     const item = newCart[index];
     item.unit = item.unit === 'pack' ? 'loose' : 'pack';
     
-    // Recalculate Total
     let pricePerUnit = item.price;
     if(item.unit === 'loose') pricePerUnit = item.price / (item.packSize || 1);
     item.total = pricePerUnit * item.quantity;
@@ -182,7 +199,7 @@ const ManualBill = () => {
         setCustomer({ name: '', phone: '', doctor: '', mode: 'Cash' });
         setCart([]);
         setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
-        setBillDate(new Date().toISOString().split('T')[0]);
+        setBillDate(getLocalDateString());
         setBillTime(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
 
     } catch (err) {
@@ -220,19 +237,27 @@ const ManualBill = () => {
 
         {/* ITEM SECTION */}
         <div className="bg-teal-50 p-5 rounded-lg border border-teal-100 flex-grow">
-            <h4 className="text-sm font-bold text-teal-800 mb-3">2. Add Medicine / Item</h4>
+            <div className="flex justify-between items-center mb-3">
+                <h4 className="text-sm font-bold text-teal-800">2. Add Medicine / Item</h4>
+                
+                {/* --- 🔥 NEW: Visual indicator for the F2 Toggle --- */}
+                <div className={`text-xs px-2 py-1 rounded-full font-bold transition-colors ${isSuggestionsEnabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {isSuggestionsEnabled ? '' : ''}
+                </div>
+            </div>
+
             <div className="flex flex-col gap-3 relative" ref={searchRef}>
                 <div className="relative">
                     <input 
                         className={inputClass} 
-                        placeholder="Search or Type Medicine Name *" 
+                        placeholder={isSuggestionsEnabled ? "Search or Type Medicine Name *" : "Type Medicine Name (Manual Mode) *"} 
                         value={query} 
                         onChange={e => {
                             setQuery(e.target.value);
                             setCurrentItem({...currentItem, name: e.target.value});
                         }} 
-                        onKeyDown={handleKeyDown} // 🔥 Added Key Navigation
-                        onFocus={() => query.length > 1 && setShowSuggestions(true)}
+                        onKeyDown={handleKeyDown} 
+                        onFocus={() => isSuggestionsEnabled && query.length > 1 && setShowSuggestions(true)}
                     />
                     {showSuggestions && suggestions.length > 0 && (
                         <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
@@ -240,7 +265,6 @@ const ManualBill = () => {
                                 <div 
                                     key={med._id} 
                                     onClick={() => handleSelectMedicine(med)} 
-                                    // 🔥 Highlight Focused Item
                                     className={`p-3 cursor-pointer border-b border-gray-100 flex justify-between items-center
                                         ${idx === focusedIndex ? 'bg-teal-100 border-l-4 border-teal-600' : 'hover:bg-teal-50'}
                                     `}
@@ -264,7 +288,6 @@ const ManualBill = () => {
                 <div className="grid grid-cols-3 gap-3">
                     <input type="number" className={inputClass} placeholder="MRP" value={currentItem.mrp} onChange={e=>setCurrentItem({...currentItem, mrp:e.target.value})} />
                     <input type="number" className={`${inputClass} font-bold text-teal-700`} placeholder="Price *" value={currentItem.price} onChange={e=>setCurrentItem({...currentItem, price:e.target.value})} />
-                    {/* Unit Select for Manual Entry */}
                     <select 
                         className={inputClass} 
                         value={currentItem.unit} 
@@ -275,7 +298,6 @@ const ManualBill = () => {
                     </select>
                 </div>
                 
-                {/* Pack Size Input (Only shows if Loose is selected manually, or user wants to edit) */}
                 <div className="flex items-center gap-2">
                      <span className="text-xs font-bold text-gray-500">Qty:</span>
                      <input type="number" className={`${inputClass} font-bold`} placeholder="Qty *" value={currentItem.quantity} onChange={e=>setCurrentItem({...currentItem, quantity:e.target.value})} />
@@ -323,7 +345,6 @@ const ManualBill = () => {
                                     </td>
                                     <td className="p-3 text-gray-500 text-xs">{item.batch}</td>
                                     
-                                    {/* 🔥 TOGGLE UNIT BUTTON */}
                                     <td className="p-3 text-center">
                                         <div className="flex flex-col items-center gap-1">
                                             <input 
