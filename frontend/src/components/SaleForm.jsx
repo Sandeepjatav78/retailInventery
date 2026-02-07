@@ -476,7 +476,7 @@ const SaleForm = () => {
             ₹{grandTotal.toFixed(0)}
           </div>
           <div className="mt-4 flex items-center justify-center gap-2 bg-teal-800/50 p-2 rounded-lg border border-teal-500/30">
-            <span className="text-xs font-bold text-teal-100 uppercase">💉 Dose Charge:</span>
+            <span className="text-xs font-bold text-teal-100 uppercase">Charge:</span>
             <input type="number" placeholder="0" value={doseAmount} onChange={(e) => setDoseAmount(e.target.value)} className="w-20 bg-white text-teal-900 font-bold text-center rounded px-1 py-1 text-sm focus:outline-none" />
           </div>
         </div>

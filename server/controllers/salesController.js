@@ -69,29 +69,32 @@ exports.createSale = async (req, res) => {
   }
 };
 
-// --- 3. GET REPORT (With Global Search) ---
+// --- 3. GET REPORT (With Global Search including Medicines) ---
 exports.getAllSales = async (req, res) => {
   try {
-    const { start, end, search } = req.query; // Added 'search' param
+    const { start, end, search } = req.query; 
     let query = {};
 
     // --- 🔥 GLOBAL SEARCH LOGIC ---
     if (search) {
-      // Ignore dates, search everywhere
+      // Ignore dates, search everywhere (Invoice, Customer, AND Medicine Items)
       query.$or = [
         { invoiceNo: { $regex: search, $options: 'i' } },
-        { "customerDetails.name": { $regex: search, $options: 'i' } }
+        { "customerDetails.name": { $regex: search, $options: 'i' } },
+        { "items.name": { $regex: search, $options: 'i' } } // <--- ✅ ADDED THIS LINE
       ];
     }
     // --- 📅 DATE FILTER LOGIC ---
     else if (start && end) {
-      let startDate = new Date(start); startDate.setHours(0, 0, 0, 0);
-      let endDate = new Date(end); endDate.setHours(23, 59, 59, 999);
+      let startDate = new Date(start); 
+      startDate.setHours(0, 0, 0, 0);
+      let endDate = new Date(end); 
+      endDate.setHours(23, 59, 59, 999);
       query.date = { $gte: startDate, $lte: endDate };
     }
 
-    // Limit to 100 results for performance
-    const sales = await Sale.find(query).sort({ date: -1 }).limit(100);
+    // Fetch data and sort by date (newest first)
+    const sales = await Sale.find(query).sort({ date: -1 }); // Removed .limit(100) so you see all results when searching
 
     let totalRevenue = 0, cashRevenue = 0, onlineRevenue = 0;
     sales.forEach(s => {
@@ -183,3 +186,4 @@ exports.updateSale = async (req, res) => {
         res.status(500).json({ message: "Update failed", error: err.message });
     }
 };
+

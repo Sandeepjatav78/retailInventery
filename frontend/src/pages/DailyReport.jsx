@@ -23,8 +23,12 @@ const DailyReport = () => {
 
   const fetchReport = () => {
     let url = '';
-    if (searchTerm.length > 1) { url = `/sales/filter?search=${searchTerm}`; } 
-    else { url = `/sales/filter?start=${dates.start}&end=${dates.end}`; }
+    // ✅ LOGIC: If searching, ignore dates (Show "All Times")
+    if (searchTerm.length > 1) { 
+        url = `/sales/filter?search=${searchTerm}`; 
+    } else { 
+        url = `/sales/filter?start=${dates.start}&end=${dates.end}`; 
+    }
 
     api.get(url).then(res => {
           setReport(res.data); 
@@ -53,18 +57,14 @@ const DailyReport = () => {
     setSearchTerm('');
   };
 
-  // --- 🔥 FIXED: PRINT LOGIC FOR REPRINT ---
   const handlePrintInvoice = async(t) => {
-    // 1. Identify Dose Charge safely by Name (not ID)
     const doseItem = t.items.find(i => i.name === "Medical/Dose Charge");
     const doseAmount = doseItem ? doseItem.total : 0;
 
-    // 2. Get Real Items and Fix Display Quantities (e.g., 0.1 Pack -> 1 Loose)
     const itemsToPrint = t.items
         .filter(i => i.name !== "Medical/Dose Charge")
         .map(i => {
             let visualQty = i.quantity;
-            // Restore the whole number quantity for loose items
             if (i.unit === 'loose' && i.packSize) {
                 visualQty = Math.round(i.quantity * i.packSize);
             }
@@ -82,7 +82,7 @@ const DailyReport = () => {
         isDuplicate: true, 
         grandTotal: t.totalAmount, 
         doseAmount: doseAmount, 
-        customDate: saleDate.toISOString().split('T')[0], // Fixed Date Format
+        customDate: saleDate.toISOString().split('T')[0], 
         customTime: saleDate.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}) 
     };
 
@@ -114,14 +114,20 @@ const DailyReport = () => {
       }
   };
 
-  let filteredTransactions = report ? report.transactions : [];
+  // --- FILTER & SORT LOGIC ---
+  let filteredTransactions = report ? [...report.transactions] : [];
 
+  // 1. Filter by Role (Staff sees only their own)
   if (userRole === 'staff') {
       filteredTransactions = filteredTransactions.filter(t => t.createdBy === 'staff');
   }
 
-  const calcTransactions = filteredTransactions.filter(t => !t.invoiceNo.startsWith('MAN'));
+  // 2. ✅ FORCE SORT: Newest First (Recent First)
+  filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
+
+  // --- CALCULATE TOTALS (Based on filtered list) ---
+  const calcTransactions = filteredTransactions.filter(t => !t.invoiceNo.startsWith('MAN'));
   const adminTxns = calcTransactions.filter(t => t.createdBy !== 'staff');
   const adminTotal = adminTxns.reduce((acc, t) => acc + t.totalAmount, 0);
   const adminCash = adminTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + t.totalAmount, 0);
@@ -143,6 +149,7 @@ const DailyReport = () => {
         <div className="flex items-center gap-2 bg-white px-2 py-1 rounded border shadow-sm"><button onClick={() => setRange('today')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Today</button><div className="h-4 w-px bg-gray-300"></div><button onClick={() => setRange('month')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Month</button><input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="text-xs border rounded p-1" /><span className="text-xs">-</span><input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="text-xs border rounded p-1" /></div>
       </div>
 
+      {/* STATS CARDS */}
       <div className="grid gap-4 mb-6 grid-cols-1 md:grid-cols-3">
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-green-500">
             <h4 className="text-gray-500 text-xs font-bold uppercase">{userRole === 'admin' ? 'Total Revenue (Admin)' : 'My Total Revenue'}</h4>
@@ -169,11 +176,12 @@ const DailyReport = () => {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="p-3 border-b bg-gray-50"><input type="text" placeholder="🔍 Search Invoice / Name..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-2 border rounded text-sm focus:outline-none focus:border-teal-500" /></div>
+        {/* ✅ UPDATED PLACEHOLDER */}
+        <div className="p-3 border-b bg-gray-50"><input type="text" placeholder="🔍 Search Invoice / Name / Medicine..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-2 border rounded text-sm focus:outline-none focus:border-teal-500" /></div>
         <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[700px]">
                 <thead className="bg-gray-50 border-b">
-                <tr><th className="px-4 py-3 text-xs font-bold text-gray-500">Date</th><th className="px-4 py-3 text-xs font-bold text-gray-500">Invoice</th><th className="px-4 py-3 text-xs font-bold text-gray-500">Customer</th><th className="px-4 py-3 text-xs font-bold text-gray-500 text-right">Amount</th><th className="px-4 py-3 text-xs font-bold text-gray-500 text-center">Actions</th></tr>
+                <tr><th className="px-4 py-3 text-xs font-bold text-gray-500">Date</th><th className="px-4 py-3 text-xs font-bold text-gray-500">Invoice</th><th className="px-4 py-3 text-xs font-bold text-gray-500">Customer & Medicines</th><th className="px-4 py-3 text-xs font-bold text-gray-500 text-right">Amount</th><th className="px-4 py-3 text-xs font-bold text-gray-500 text-center">Actions</th></tr>
                 </thead>
                 <tbody className="divide-y">
                 {filteredTransactions.length === 0 ? (<tr><td colSpan={5} className="text-center py-8 text-gray-400 text-sm">No sales found.</td></tr>) : (
@@ -181,6 +189,13 @@ const DailyReport = () => {
                         const isDose = t.invoiceNo.startsWith('DOSE');
                         const isManual = t.invoiceNo.startsWith('MAN');
                         const isStaffBill = t.createdBy === 'staff';
+                        
+                        // Extract Medicine Names
+                        const medicineNames = t.items
+                            .filter(i => i.name !== "Medical/Dose Charge")
+                            .map(i => i.name)
+                            .join(', ');
+
                         return (
                         <tr key={t._id} className={`hover:bg-gray-50 ${isDose ? 'bg-yellow-50/50' : isManual ? 'bg-blue-50/30' : 'bg-white'}`}>
                             <td className="px-4 py-3"><div className="font-bold text-gray-800 text-sm">{new Date(t.date).toLocaleDateString()}</div><div className="text-gray-400 text-xs">{new Date(t.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div></td>
@@ -191,12 +206,17 @@ const DailyReport = () => {
                                 </div>
                                 {isManual && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded mr-2">MANUAL</span>}
                             </td>
-                            <td className="px-4 py-3"><div className="font-semibold text-gray-800 text-sm">{t.customerDetails?.name || 'Walk-in'}</div></td>
+                            <td className="px-4 py-3">
+                                <div className="font-semibold text-gray-800 text-sm">{t.customerDetails?.name || 'Walk-in'}</div>
+                                {medicineNames && (
+                                    <div className="text-xs text-gray-500 mt-1 italic max-w-xs break-words">
+                                        ({medicineNames})
+                                    </div>
+                                )}
+                            </td>
                             <td className="px-4 py-3 text-right"><div className="font-bold text-gray-800">₹{t.totalAmount.toFixed(2)}</div></td>
                             <td className="px-4 py-3 text-center flex justify-center gap-2">
                                 <button onClick={() => handlePrintInvoice(t)} className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded hover:bg-blue-100 border border-blue-100">🖨️</button>
-                                
-                                {/* ADMIN ONLY: Edit & Delete */}
                                 {userRole === 'admin' && (
                                     <>
                                         <button onClick={() => setEditingSale(t)} className="text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded hover:bg-purple-100 border border-purple-100">✏️</button>

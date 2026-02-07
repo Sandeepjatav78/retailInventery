@@ -52,7 +52,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
         setShowCP(false); 
         return; 
     }
-    const password = prompt("🔒 Enter Secret Code to view COST PRICES:");
+    const password = prompt("🔒 Enter :");
     if (!password) return;
 
     const SECRET_CODE = "1234"; 
@@ -158,7 +158,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                 onClick={handleToggleCP} 
                 className={`px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2 ${showCP ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gray-600 hover:bg-gray-700 text-white'}`}
              >
-                {showCP ? '🙈 Hide Cost' : '🔒 View Cost Price'}
+                {showCP ? '🙈' : '🔒'}
              </button>
          </div>
       </div>
