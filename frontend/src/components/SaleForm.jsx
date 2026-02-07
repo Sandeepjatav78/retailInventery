@@ -12,6 +12,7 @@ const SaleForm = () => {
 
   // --- REFS ---
   const searchInputRef = useRef(null);
+  const resultListRef = useRef(null); // Ref for the suggestion container
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -28,11 +29,23 @@ const SaleForm = () => {
   const isStaff = userRole === "staff";
 
   const [focusedIndex, setFocusedIndex] = useState(-1);
-  const resultListRef = useRef(null);
   const [lastSale, setLastSale] = useState(null);
 
   // --- SUGGESTION TOGGLE STATE ---
   const [suggestionsEnabled, setSuggestionsEnabled] = useState(true);
+
+  // --- 🔥 NEW: SCROLL INTO VIEW LOGIC ---
+  useEffect(() => {
+    if (focusedIndex >= 0 && resultListRef.current) {
+      const listItems = resultListRef.current.children;
+      if (listItems[focusedIndex]) {
+        listItems[focusedIndex].scrollIntoView({
+          behavior: "smooth",
+          block: "nearest", // Ensures it scrolls just enough to be visible
+        });
+      }
+    }
+  }, [focusedIndex]);
 
   // --- GLOBAL KEYBOARD SHORTCUT LOGIC ---
   useEffect(() => {
@@ -188,14 +201,13 @@ const SaleForm = () => {
 
     const finalCustomer = { name: customer.name.trim() || "Cash Sale", phone: isBillNeeded ? customer.phone : "", doctor: isBillNeeded ? customer.doctor : "" };
 
-    // 🔥 PREPARE ITEMS (Preserve medicineId for stock reduction)
     const finalItems = cart.map((i) => {
         let quantityToSend = i.unit === 'loose' ? (i.quantity / i.packSize) : i.quantity;
         quantityToSend = parseFloat(quantityToSend.toFixed(4));
         return { 
             ...i, 
             quantity: quantityToSend,
-            medicineId: i.medicineId // ✅ ID Sent to Backend
+            medicineId: i.medicineId 
         };
     });
 
@@ -359,6 +371,7 @@ const SaleForm = () => {
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          {/* Table Code... */}
           <table className="w-full text-left border-collapse">
             <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
               <tr>
@@ -466,8 +479,9 @@ const SaleForm = () => {
         </div>
       </div>
 
-      {/* RIGHT: CHECKOUT */}
+      {/* RIGHT: CHECKOUT (Same as before) */}
       <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col h-fit sticky top-4">
+        {/* ... Checkout UI ... */}
         <div className="bg-gradient-to-br from-teal-600 to-teal-800 rounded-xl p-6 text-center text-white shadow-lg mb-6">
           <div className="text-teal-100 text-xs font-bold uppercase tracking-wider mb-1">
             Grand Total

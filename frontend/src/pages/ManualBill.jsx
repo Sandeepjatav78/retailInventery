@@ -15,7 +15,6 @@ const ManualBill = () => {
   const [billDate, setBillDate] = useState(getLocalDateString()); 
   const [billTime, setBillTime] = useState(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
 
-  // ✅ Added 'id' to state to track selected medicine
   const [currentItem, setCurrentItem] = useState({
     id: null, 
     name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1
@@ -27,13 +26,26 @@ const ManualBill = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1); 
   
-  // State for toggling suggestions via F2
   const [isSuggestionsEnabled, setIsSuggestionsEnabled] = useState(true);
 
   const searchRef = useRef(null);
+  const resultListRef = useRef(null); // Ref for suggestion scroll
   const currentUserRole = localStorage.getItem('userRole') || 'admin';
 
-  // Global Keyboard Listener for F2
+  // --- 🔥 NEW: SCROLL INTO VIEW LOGIC ---
+  useEffect(() => {
+    if (focusedIndex >= 0 && resultListRef.current) {
+      const listItems = resultListRef.current.children;
+      if (listItems[focusedIndex]) {
+        listItems[focusedIndex].scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        });
+      }
+    }
+  }, [focusedIndex]);
+
+  // Global Keyboard Listener
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
         if (e.key === "F2") {
@@ -91,10 +103,9 @@ const ManualBill = () => {
     }
   };
 
-  // ✅ CAPTURE MEDICINE ID HERE
   const handleSelectMedicine = (med) => {
       setCurrentItem({
-          id: med._id, // <--- Capture Database ID
+          id: med._id, 
           name: med.productName,
           batch: med.batchNumber || '',
           expiry: med.expiryDate ? new Date(med.expiryDate).toISOString().split('T')[0] : '',
@@ -108,7 +119,6 @@ const ManualBill = () => {
       setShowSuggestions(false);
   };
 
-  // ✅ PASS MEDICINE ID TO CART
   const handleAddItem = () => {
     if (!currentItem.name || !currentItem.price || !currentItem.quantity) {
       return alert("Please fill Name, Price and Quantity");
@@ -123,11 +133,10 @@ const ManualBill = () => {
       ...currentItem,
       total: rowTotal,
       hsn: '-', gst: 0, 
-      medicineId: currentItem.id || null, // <--- Send ID if selected, else null
+      medicineId: currentItem.id || null, 
     };
     setCart([...cart, newItem]);
     
-    // Reset form
     setCurrentItem({ id: null, name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1 });
     setQuery(""); 
   };
@@ -175,7 +184,7 @@ const ManualBill = () => {
         customerDetails: customer,
         totalAmount: cart.reduce((a,b)=>a+b.total,0),
         paymentMode: customer.mode,
-        items: cart, // This now contains medicineId
+        items: cart, 
         isBillRequired: true,
         userRole: currentUserRole, 
         customDate: combinedDateTime
@@ -263,8 +272,12 @@ const ManualBill = () => {
                         onKeyDown={handleKeyDown} 
                         onFocus={() => isSuggestionsEnabled && query.length > 1 && setShowSuggestions(true)}
                     />
+                    {/* ✅ ATTACHED REF HERE */}
                     {showSuggestions && suggestions.length > 0 && (
-                        <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                        <div 
+                            ref={resultListRef} 
+                            className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-xl max-h-60 overflow-y-auto"
+                        >
                             {suggestions.map((med, idx) => (
                                 <div 
                                     key={med._id} 
@@ -317,8 +330,9 @@ const ManualBill = () => {
         </div>
       </div>
 
-      {/* RIGHT: PREVIEW & PRINT */}
+      {/* RIGHT: PREVIEW & PRINT (Same as before) */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col justify-between h-full">
+        {/* ...Preview & Print logic... */}
         <div className="flex-grow flex flex-col">
             <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-4">
                 <h3 className="text-lg font-bold text-gray-800">Bill Preview</h3>
