@@ -5,10 +5,6 @@ const verifyAdmin = async (req, res) => {
   const ENV_ADMIN_PASS = process.env.ADMIN_PASSWORD;
   const ENV_STAFF_PASS = process.env.STAFF_PASSWORD;
 
-  // Debugging Logs
-  console.log("--- Password Check ---");
-  console.log("Input Pass:", password);
-  console.log("Admin Pass (.env):", ENV_ADMIN_PASS);
 
   // 2. Check Logic
   // Agar password match kare to 'admin' role bhejo
