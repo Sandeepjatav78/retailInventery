@@ -15,7 +15,9 @@ const ManualBill = () => {
   const [billDate, setBillDate] = useState(getLocalDateString()); 
   const [billTime, setBillTime] = useState(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
 
+  // ✅ Added 'id' to state to track selected medicine
   const [currentItem, setCurrentItem] = useState({
+    id: null, 
     name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1
   });
 
@@ -25,29 +27,28 @@ const ManualBill = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1); 
   
-  // --- 🔥 NEW: State for toggling suggestions via F2 ---
+  // State for toggling suggestions via F2
   const [isSuggestionsEnabled, setIsSuggestionsEnabled] = useState(true);
 
   const searchRef = useRef(null);
   const currentUserRole = localStorage.getItem('userRole') || 'admin';
 
-  // --- 🔥 NEW: Global Keyboard Listener for F2 ---
+  // Global Keyboard Listener for F2
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
         if (e.key === "F2") {
-            e.preventDefault(); // Prevent default browser actions
+            e.preventDefault(); 
             setIsSuggestionsEnabled(prev => !prev);
-            setShowSuggestions(false); // Hide immediately if turned off
+            setShowSuggestions(false); 
         }
     };
     window.addEventListener("keydown", handleGlobalKeyDown);
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
   }, []);
 
-  // --- SEARCH EFFECT ---
+  // SEARCH EFFECT
   useEffect(() => {
     const fetchMedicines = async () => {
-        // --- 🔥 MODIFIED: Only fetch if isSuggestionsEnabled is true ---
         if (isSuggestionsEnabled && query.length > 1) {
             try {
                 const res = await api.get(`/medicines/search?q=${query}`);
@@ -59,7 +60,7 @@ const ManualBill = () => {
     };
     const timer = setTimeout(fetchMedicines, 300);
     return () => clearTimeout(timer);
-  }, [query, isSuggestionsEnabled]); // 🔥 ADDED isSuggestionsEnabled as dependency
+  }, [query, isSuggestionsEnabled]);
 
   useEffect(() => {
       const handleClickOutside = (event) => {
@@ -90,8 +91,10 @@ const ManualBill = () => {
     }
   };
 
+  // ✅ CAPTURE MEDICINE ID HERE
   const handleSelectMedicine = (med) => {
       setCurrentItem({
+          id: med._id, // <--- Capture Database ID
           name: med.productName,
           batch: med.batchNumber || '',
           expiry: med.expiryDate ? new Date(med.expiryDate).toISOString().split('T')[0] : '',
@@ -105,6 +108,7 @@ const ManualBill = () => {
       setShowSuggestions(false);
   };
 
+  // ✅ PASS MEDICINE ID TO CART
   const handleAddItem = () => {
     if (!currentItem.name || !currentItem.price || !currentItem.quantity) {
       return alert("Please fill Name, Price and Quantity");
@@ -119,11 +123,12 @@ const ManualBill = () => {
       ...currentItem,
       total: rowTotal,
       hsn: '-', gst: 0, 
-      medicineId: null, 
+      medicineId: currentItem.id || null, // <--- Send ID if selected, else null
     };
     setCart([...cart, newItem]);
     
-    setCurrentItem({ name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1 });
+    // Reset form
+    setCurrentItem({ id: null, name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1 });
     setQuery(""); 
   };
 
@@ -170,7 +175,7 @@ const ManualBill = () => {
         customerDetails: customer,
         totalAmount: cart.reduce((a,b)=>a+b.total,0),
         paymentMode: customer.mode,
-        items: cart,
+        items: cart, // This now contains medicineId
         isBillRequired: true,
         userRole: currentUserRole, 
         customDate: combinedDateTime
@@ -240,9 +245,8 @@ const ManualBill = () => {
             <div className="flex justify-between items-center mb-3">
                 <h4 className="text-sm font-bold text-teal-800">2. Add Medicine / Item</h4>
                 
-                {/* --- 🔥 NEW: Visual indicator for the F2 Toggle --- */}
                 <div className={`text-xs px-2 py-1 rounded-full font-bold transition-colors ${isSuggestionsEnabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                    {isSuggestionsEnabled ? '' : ''}
+                    {isSuggestionsEnabled ? 'Suggestions ON (F2)' : 'Suggestions OFF (F2)'}
                 </div>
             </div>
 
@@ -299,11 +303,11 @@ const ManualBill = () => {
                 </div>
                 
                 <div className="flex items-center gap-2">
-                     <span className="text-xs font-bold text-gray-500">Qty:</span>
-                     <input type="number" className={`${inputClass} font-bold`} placeholder="Qty *" value={currentItem.quantity} onChange={e=>setCurrentItem({...currentItem, quantity:e.target.value})} />
-                     
-                     <span className="text-xs font-bold text-gray-500 ml-2">Pack Size:</span>
-                     <input type="number" className={inputClass} placeholder="10" value={currentItem.packSize} onChange={e=>setCurrentItem({...currentItem, packSize:e.target.value})} />
+                      <span className="text-xs font-bold text-gray-500">Qty:</span>
+                      <input type="number" className={`${inputClass} font-bold`} placeholder="Qty *" value={currentItem.quantity} onChange={e=>setCurrentItem({...currentItem, quantity:e.target.value})} />
+                      
+                      <span className="text-xs font-bold text-gray-500 ml-2">Pack Size:</span>
+                      <input type="number" className={inputClass} placeholder="10" value={currentItem.packSize} onChange={e=>setCurrentItem({...currentItem, packSize:e.target.value})} />
                 </div>
 
                 <button onClick={handleAddItem} className="w-full mt-2 bg-teal-600 hover:bg-teal-700 text-white font-bold py-3 rounded-lg shadow-md transition-all transform active:scale-95">

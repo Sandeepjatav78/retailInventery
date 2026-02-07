@@ -31,19 +31,17 @@ const SaleForm = () => {
   const resultListRef = useRef(null);
   const [lastSale, setLastSale] = useState(null);
 
-  // --- 🔥 NEW: SUGGESTION TOGGLE STATE ---
+  // --- SUGGESTION TOGGLE STATE ---
   const [suggestionsEnabled, setSuggestionsEnabled] = useState(true);
 
-  // --- 🔥 GLOBAL KEYBOARD SHORTCUT LOGIC ---
+  // --- GLOBAL KEYBOARD SHORTCUT LOGIC ---
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
-      // 1. FOCUS SEARCH BAR (F4 or Ctrl+Space)
       if (e.key === "F4" || (e.ctrlKey && e.code === "Space")) {
         e.preventDefault(); 
         if (searchInputRef.current) searchInputRef.current.focus(); 
       }
       
-      // 2. TOGGLE SUGGESTIONS ON/OFF (F2)
       if (e.key === "F2") {
         e.preventDefault();
         setSuggestionsEnabled(prev => !prev);
@@ -88,7 +86,6 @@ const SaleForm = () => {
   }, [cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, grandTotal]);
 
   useEffect(() => {
-    // Only fetch if suggestions are enabled
     if (query.length > 1 && suggestionsEnabled) {
       api.get(`/medicines/search?q=${query}`).then((res) => {
         setResults(res.data);
@@ -182,6 +179,7 @@ const SaleForm = () => {
     setQuery(""); setResults([]);
   };
 
+  // ✅ CHECKOUT LOGIC
   const handleCheckout = async () => {
     if (cart.length === 0 && doseVal <= 0) return alert("Cart is empty");
     const given = parseFloat(amountGiven) || 0;
@@ -190,10 +188,15 @@ const SaleForm = () => {
 
     const finalCustomer = { name: customer.name.trim() || "Cash Sale", phone: isBillNeeded ? customer.phone : "", doctor: isBillNeeded ? customer.doctor : "" };
 
+    // 🔥 PREPARE ITEMS (Preserve medicineId for stock reduction)
     const finalItems = cart.map((i) => {
         let quantityToSend = i.unit === 'loose' ? (i.quantity / i.packSize) : i.quantity;
         quantityToSend = parseFloat(quantityToSend.toFixed(4));
-        return { ...i, quantity: quantityToSend };
+        return { 
+            ...i, 
+            quantity: quantityToSend,
+            medicineId: i.medicineId // ✅ ID Sent to Backend
+        };
     });
 
     const itemsForPrint = [...cart];
@@ -249,7 +252,6 @@ const SaleForm = () => {
       w.document.open(); w.document.write(html); w.document.close(); 
   };
   
-  // --- 🔥 SEARCH KEYDOWN GUARDED BY TOGGLE ---
   const handleKeyDown = (e) => { 
       if (!suggestionsEnabled || results.length === 0) return; 
 
@@ -284,7 +286,6 @@ const SaleForm = () => {
           </div>
 
           <div className="relative">
-            {/* Input with Toggle Indicator inside */}
             <div className="relative">
                 <input
                   ref={searchInputRef}
@@ -304,7 +305,6 @@ const SaleForm = () => {
                 </span>
             </div>
 
-            {/* --- 🔥 HIDE SUGGESTIONS IF DISABLED --- */}
             {suggestionsEnabled && results.length > 0 && (
               <div
                 ref={resultListRef}

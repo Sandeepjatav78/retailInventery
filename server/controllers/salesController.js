@@ -13,29 +13,37 @@ exports.getNextInvoiceNumber = async (req, res) => {
   }
 };
 
-// --- 2. CREATE SALE ---
+// --- 2. CREATE SALE (Fixes Invoice ID & Stock Reduction) ---
 exports.createSale = async (req, res) => {
   try {
     const { items, customerDetails, totalAmount, paymentMode, isBillRequired, userRole, invoiceNo, customDate } = req.body;
 
-    let finalInvoiceNo = invoiceNo; // Use provided ID (e.g., MAN-...) or generate new one
+    let finalInvoiceNo = invoiceNo; // Gets value if Manual Bill sends it
 
-    // If invoiceNo is not provided (Regular Sale), handle as before
+    // --- 🔥 INVOICE GENERATION LOGIC (Restored) ---
+    // If no ID provided (SaleForm), generate one automatically
     if (!finalInvoiceNo) {
       if (userRole === 'staff') {
+        // Staff uses Time-based ID
         finalInvoiceNo = `RP-${Math.floor(Date.now() / 1000)}`;
       } else {
+        // Admin Logic
         if (isBillRequired === true) {
+          // Generate Sequential ID (RP-101, RP-102...)
           const counter = await Counter.findOneAndUpdate(
-            { id: "invoice_seq" }, { $inc: { seq: 1 } }, { new: true, upsert: true }
+            { id: "invoice_seq" }, 
+            { $inc: { seq: 1 } }, 
+            { new: true, upsert: true }
           );
           finalInvoiceNo = `RP-${counter.seq}`;
         } else {
+          // Cash Sale ID (CS-timestamp)
           finalInvoiceNo = `CS-${Math.floor(Date.now() / 1000)}`;
         }
       }
     }
 
+    // 1. Create Sale Record
     const newSale = new Sale({
       invoiceNo: finalInvoiceNo,
       customerDetails,
@@ -44,21 +52,20 @@ exports.createSale = async (req, res) => {
       paymentMode,
       isBillRequired: isBillRequired,
       createdBy: userRole || 'admin',
-      date: customDate ? new Date(customDate) : new Date() // 🔥 USE CUSTOM DATE IF AVAILABLE
+      date: customDate ? new Date(customDate) : new Date()
     });
 
     await newSale.save();
 
-    // Inventory Update Logic
-    if (userRole !== 'staff') {
-      for (const item of items) {
-        // 🔥 CRITICAL FIX: Skip if medicineId is null (Manual/Dose items)
-        if (!item.medicineId) continue;
-
-        await Medicine.findByIdAndUpdate(item.medicineId, {
-          $inc: { quantity: -item.quantity }
-        });
-      }
+    // --- 🔥 STOCK REDUCTION LOGIC ---
+    // Runs for EVERYONE (Admin & Staff)
+    // Runs for Manual Bill items ONLY if they are linked to a medicine ID
+    for (const item of items) {
+        if (item.medicineId) {
+            await Medicine.findByIdAndUpdate(item.medicineId, {
+                $inc: { quantity: -item.quantity }
+            });
+        }
     }
 
     res.status(201).json({ success: true, invoiceNo: finalInvoiceNo, sale: newSale });
@@ -69,7 +76,7 @@ exports.createSale = async (req, res) => {
   }
 };
 
-// --- 3. GET REPORT (With Global Search including Medicines) ---
+// --- 3. GET REPORT (With Medicine Search Fixed) ---
 exports.getAllSales = async (req, res) => {
   try {
     const { start, end, search } = req.query; 
@@ -77,24 +84,22 @@ exports.getAllSales = async (req, res) => {
 
     // --- 🔥 GLOBAL SEARCH LOGIC ---
     if (search) {
-      // Ignore dates, search everywhere (Invoice, Customer, AND Medicine Items)
+      // Search in Invoice, Customer Name, AND Medicine Names
       query.$or = [
         { invoiceNo: { $regex: search, $options: 'i' } },
         { "customerDetails.name": { $regex: search, $options: 'i' } },
-        { "items.name": { $regex: search, $options: 'i' } } // <--- ✅ ADDED THIS LINE
+        { "items.name": { $regex: search, $options: 'i' } } // <--- Checks inside items array
       ];
     }
     // --- 📅 DATE FILTER LOGIC ---
     else if (start && end) {
-      let startDate = new Date(start); 
-      startDate.setHours(0, 0, 0, 0);
-      let endDate = new Date(end); 
-      endDate.setHours(23, 59, 59, 999);
+      let startDate = new Date(start); startDate.setHours(0, 0, 0, 0);
+      let endDate = new Date(end); endDate.setHours(23, 59, 59, 999);
       query.date = { $gte: startDate, $lte: endDate };
     }
 
-    // Fetch data and sort by date (newest first)
-    const sales = await Sale.find(query).sort({ date: -1 }); // Removed .limit(100) so you see all results when searching
+    // Sort by Date (Newest First)
+    const sales = await Sale.find(query).sort({ date: -1 });
 
     let totalRevenue = 0, cashRevenue = 0, onlineRevenue = 0;
     sales.forEach(s => {
@@ -115,29 +120,24 @@ exports.getAllSales = async (req, res) => {
   }
 };
 
-// ... existing functions ...
-
-// --- 🔥 NEW: DELETE SALE & RESTORE STOCK ---
+// --- 4. DELETE SALE & RESTORE STOCK ---
 exports.deleteSale = async (req, res) => {
     try {
         const { id } = req.params;
 
-        // 1. Find Sale
         const sale = await Sale.findById(id);
         if (!sale) return res.status(404).json({ message: "Sale not found" });
 
-        // 2. Restore Stock (Only for Inventory items, skip Manual)
+        // Restore Stock
         for (const item of sale.items) {
             if (item.medicineId) {
                 await Medicine.findByIdAndUpdate(item.medicineId, { 
-                    $inc: { quantity: item.quantity } // Add qty back
+                    $inc: { quantity: item.quantity } 
                 });
             }
         }
 
-        // 3. Delete Record
         await Sale.findByIdAndDelete(id);
-
         res.json({ success: true, message: "Sale deleted and stock restored" });
 
     } catch (err) {
@@ -145,19 +145,16 @@ exports.deleteSale = async (req, res) => {
     }
 };
 
+// --- 5. UPDATE SALE (Edit Bill) ---
 exports.updateSale = async (req, res) => {
     try {
         const { id } = req.params;
-        const updatedSaleData = req.body; // The new data from frontend
+        const updatedSaleData = req.body;
 
-        // 1. Fetch Original Sale
         const originalSale = await Sale.findById(id);
-        if (!originalSale) {
-            return res.status(404).json({ message: "Sale not found" });
-        }
+        if (!originalSale) return res.status(404).json({ message: "Sale not found" });
 
-        // 2. REVERT OLD STOCK (Add quantities back to inventory)
-        // We only do this for items that have a linked medicineId
+        // 1. Revert Old Stock
         for (const item of originalSale.items) {
             if (item.medicineId) {
                 await Medicine.findByIdAndUpdate(item.medicineId, { 
@@ -166,8 +163,7 @@ exports.updateSale = async (req, res) => {
             }
         }
 
-        // 3. DEDUCT NEW STOCK (Subtract new quantities)
-        // This handles cases where you changed the quantity in the edit form
+        // 2. Deduct New Stock
         for (const item of updatedSaleData.items) {
             if (item.medicineId) {
                 await Medicine.findByIdAndUpdate(item.medicineId, { 
@@ -176,9 +172,8 @@ exports.updateSale = async (req, res) => {
             }
         }
 
-        // 4. Update the Sale Record
+        // 3. Save Changes
         const finalSale = await Sale.findByIdAndUpdate(id, updatedSaleData, { new: true });
-
         res.json({ success: true, sale: finalSale });
 
     } catch (err) {
@@ -186,4 +181,3 @@ exports.updateSale = async (req, res) => {
         res.status(500).json({ message: "Update failed", error: err.message });
     }
 };
-
