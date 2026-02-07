@@ -32,7 +32,6 @@ const numberToWords = (num) => {
 export const generateBillHTML = async (cartItems, invoiceData) => {
   let dateStr, timeStr;
 
-  // 🔥 HANDLE MANUAL DATE/TIME VS CURRENT
   if (invoiceData.customDate) {
     const d = new Date(invoiceData.customDate);
     dateStr = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
@@ -53,7 +52,6 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
   let totalTaxable = 0;
   let totalGST = 0;
 
-  // Use passed Grand Total or calculate
   const finalTotal = invoiceData.grandTotal || cartItems.reduce((acc, item) => acc + item.total, 0);
   const doseAmount = invoiceData.doseAmount || 0;
 
@@ -72,13 +70,13 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
   const paymentQR = await QRCode.toDataURL(upiString);
   const reviewQR = await QRCode.toDataURL(PHARMACY_DETAILS.googleReviewUrl);
 
-  // --- 🔥 DOSE ROW HTML ---
+  // --- DOSE ROW HTML ---
   let doseRow = "";
   if (doseAmount > 0) {
     doseRow = `
         <tr style="background-color: #f0fdfa;">
             <td colspan="2"></td>
-            <td colspan="5" style="text-align:right; font-weight:700; color:#0f766e; padding-right:10px;">Medical / Dose Charge</td>
+            <td colspan="7" style="text-align:right; font-weight:700; color:#0f766e; padding-right:10px;">Medical / Dose Charge</td>
             <td class="text-right" style="font-weight:700;">₹${parseFloat(doseAmount).toFixed(2)}</td>
         </tr>
       `;
@@ -92,7 +90,7 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
         <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Dancing+Script:wght@700&display=swap" rel="stylesheet">
         <style>
           :root { --primary: ${headerColor}; --text: #1f2937; --gray: #6b7280; }
-          body { font-family: 'Manrope', sans-serif; margin: 0; padding: 0; color: var(--text); background: #fff; font-size: 11px; line-height: 1.3; }
+          body { font-family: 'Manrope', sans-serif; margin: 0; padding: 0; color: var(--text); background: #fff; font-size: 10px; line-height: 1.3; }
           @page { size: A5; margin: 5; }
           .page { width: 148mm; height: 210mm; padding: 10mm; position: relative; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; margin: 0 auto; }
           .watermark::before { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-image: url('/Logo2.png'); background-repeat: no-repeat; background-position: center center; background-size: 50%; opacity: 0.05; z-index: -1; }
@@ -110,8 +108,8 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
           .info-box h4 { font-size: 9px; text-transform: uppercase; color: var(--gray); margin: 0 0 2px 0; }
           .info-box div { font-weight: 700; color: #000; font-size: 12px; }
           table { width: 100%; border-collapse: collapse; margin-bottom: 5px; }
-          th { text-align: left; padding: 6px 4px; background: var(--primary); color: white; font-size: 10px; text-transform: uppercase; font-weight: 700; }
-          td { padding: 5px 4px; border-bottom: 1px solid #f1f5f9; font-weight: 500; font-size: 10px; vertical-align: top; }
+          th { text-align: left; padding: 5px 3px; background: var(--primary); color: white; font-size: 9px; text-transform: uppercase; font-weight: 700; }
+          td { padding: 4px 3px; border-bottom: 1px solid #f1f5f9; font-weight: 500; font-size: 9px; vertical-align: top; }
           .text-right { text-align: right; } .text-center { text-align: center; }
           .footer-section { margin-top: auto; padding-top: 5px; border-top: 1px solid #eee; }
           .totals-wrapper { background: #f0fdfa; padding: 8px; border-radius: 6px; border: 1px solid #ccfbf1; }
@@ -148,13 +146,15 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
                 <table>
                     <thead>
                         <tr>
-                            <th style="width: 5%;">#</th>
-                            <th style="width: 35%;">Item Name</th>
+                            <th style="width: 4%;">#</th>
+                            <th style="width: 30%;">Item Name</th>
+                            <th style="width: 8%;">HSN</th>
                             <th style="width: 12%;">Batch</th>
-                            <th class="text-right" style="width: 10%;">MRP</th>
-                            <th class="text-right" style="width: 10%;">Rate</th>
-                            <th class="text-center" style="width: 8%;">Disc%</th>
-                            <th class="text-center" style="width: 8%;">Qty</th>
+                            <th class="text-right" style="width: 9%;">MRP</th>
+                            <th class="text-right" style="width: 9%;">Rate</th>
+                            <th class="text-center" style="width: 7%;">Disc%</th>
+                            <th class="text-center" style="width: 7%;">GST%</th>
+                            <th class="text-center" style="width: 6%;">Qty</th>
                             <th class="text-right" style="width: 12%;">Total</th>
                         </tr>
                     </thead>
@@ -162,11 +162,13 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
                         ${cartItems.map((item, i) => `
                             <tr>
                                 <td>${i + 1}</td>
-                                <td><div style="font-weight:700; color:#000;">${item.name}</div><div style="font-size:9px; color:#666">Exp: ${item.expiry ? new Date(item.expiry).toLocaleDateString("en-IN", { month: "short", year: "2-digit" }) : "-"}</div></td>
-                                <td>${item.batch}</td>
+                                <td><div style="font-weight:700; color:#000;">${item.name}</div><div style="font-size:8px; color:#666">Exp: ${item.expiry ? new Date(item.expiry).toLocaleDateString("en-IN", { month: "short", year: "2-digit" }) : "-"}</div></td>
+                                <td>${item.hsn || "-"}</td>
+                                <td>${item.batch || "-"}</td>
                                 <td class="text-right" style="color:#666; text-decoration: line-through;">₹${item.mrp}</td>
                                 <td class="text-right" style="font-weight:bold">₹${item.price}</td>
-                                <td class="text-center" style="color:red; font-size:9px">${item.discount > 0 ? item.discount + "%" : "-"}</td>
+                                <td class="text-center" style="color:red;">${item.discount > 0 ? item.discount + "%" : "-"}</td>
+                                <td class="text-center">${item.gst || 0}%</td>
                                 <td class="text-center">${item.quantity} ${item.unit === "loose" ? "L" : "P"}</td>
                                 <td class="text-right" style="font-weight:700;">₹${item.total.toFixed(2)}</td>
                             </tr>`).join("")}

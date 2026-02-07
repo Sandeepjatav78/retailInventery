@@ -34,7 +34,7 @@ const Sidebar = () => {
         <h2 className="text-xl font-extrabold text-teal-800 tracking-tight flex items-center gap-2">
             🌿 <span className="hidden md:inline">Radhe Pharmacy</span>
         </h2>
-        {/* 🔥 FIX: Role Badge only shows for Admin now */}
+        {/* Role Badge only shows for Admin */}
         {userRole === 'admin' && (
             <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase border tracking-wide bg-purple-50 text-purple-700 border-purple-100">
                 Admin
@@ -54,11 +54,19 @@ const Sidebar = () => {
             )}
 
             {/* Staff & Admin Links */}
-            <li>
-                <Link to="/sales" className={getLinkClass('/sales')}>💰 Sale</Link>
-            </li>
+            {userRole === 'admin' && (
+                <li>
+                    <Link to="/sales" className={getLinkClass('/sales')}>💰 Sale</Link>
+                </li>
+            )}
+            
             <li>
                 <Link to="/manual" className={getLinkClass('/manual')}>📝 Bill</Link>
+            </li>
+
+            {/* 🔥 NEW LINK: Price Check (Visible to ALL) */}
+            <li>
+                <Link to="/check-price" className={getLinkClass('/check-price')}>🔍 Check Price</Link>
             </li>
 
             {/* Admin Only Link: Dose */}

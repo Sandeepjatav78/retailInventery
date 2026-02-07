@@ -13,13 +13,19 @@ const SaleSchema = new mongoose.Schema({
     {
       medicineId: { type: String },
       name: { type: String },
-      batch: { type: String },
-      expiry: { type: Date },
+      
+      // 🔥 ADDED THESE FIELDS FOR GST REPORT
       hsn: { type: String },
       gst: { type: Number },
+      batch: { type: String },
+      expiry: { type: Date },
+      unit: { type: String }, 
+      packSize: { type: Number },
+      mrp: { type: Number },
+      discount: { type: Number },
+
       quantity: { type: Number },
       price: { type: Number },   // Selling Price
-      mrp: { type: Number },     // MRP
       purchasePrice: { type: Number }, 
       total: { type: Number }
     }
@@ -29,9 +35,7 @@ const SaleSchema = new mongoose.Schema({
   paymentMode: { type: String, enum: ['Cash', 'Online'], required: true },
   
   isBillRequired: { type: Boolean, default: true }, 
-  
-  // --- 🔥 NEW FIELD ADDED ---
-  createdBy: { type: String, default: 'admin' }, // Stores 'admin' or 'staff'
+  createdBy: { type: String, default: 'admin' }, 
 
   date: { type: Date, default: Date.now }
 });

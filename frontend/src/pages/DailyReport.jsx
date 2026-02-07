@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
 import { generateBillHTML } from '../utils/BillGenerator';
 import EditBillModal from '../components/EditBillModal';
+import * as XLSX from 'xlsx';
 
 const getLocalDateString = (date = new Date()) => {
   const offset = date.getTimezoneOffset() * 60000; 
@@ -18,12 +19,10 @@ const DailyReport = () => {
   });
   
   const userRole = localStorage.getItem('userRole'); 
-
   const [editingSale, setEditingSale] = useState(null);
 
   const fetchReport = () => {
     let url = '';
-    // ✅ LOGIC: If searching, ignore dates (Show "All Times")
     if (searchTerm.length > 1) { 
         url = `/sales/filter?search=${searchTerm}`; 
     } else { 
@@ -55,6 +54,74 @@ const DailyReport = () => {
         end: getLocalDateString(end) 
     }); 
     setSearchTerm('');
+  };
+
+  // --- 🔥 GST EXCEL EXPORT LOGIC ---
+  const handleExportGST = () => {
+    if (!report || !report.transactions || report.transactions.length === 0) {
+        return alert("No data found to export!");
+    }
+
+    const dataToExport = [];
+
+    report.transactions.forEach(sale => {
+        const saleDate = new Date(sale.date).toLocaleDateString('en-GB'); // DD/MM/YYYY
+
+        sale.items.forEach(item => {
+            // Skip dose items for pure GST reports (Optional)
+            if(item.name === "Medical/Dose Charge") return;
+
+            // Calculate GST breakdown
+            const gstPercent = item.gst || 0;
+            const totalItemAmount = item.total || 0;
+            
+            // Formula: Taxable = Total / (1 + GST/100)
+            const taxableValue = totalItemAmount / (1 + (gstPercent / 100));
+            const gstAmount = totalItemAmount - taxableValue;
+
+            let expiryStr = '-';
+            if (item.expiry) {
+                expiryStr = new Date(item.expiry).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+            }
+
+            dataToExport.push({
+                "Date": saleDate,
+                "Invoice": sale.invoiceNo,
+                "Customer": sale.customerDetails?.name || 'Cash',
+                "Payment": sale.paymentMode,
+                
+                "Medicine Name": item.name,
+                "HSN Code": item.hsn || '-',
+                "Batch": item.batch || '-',
+                "Expiry": expiryStr,
+                "Qty": item.quantity,
+                "Unit": item.unit || 'pack',
+                
+                "MRP": item.mrp || 0,
+                "Rate": item.price,
+                
+                "Taxable Value": parseFloat(taxableValue.toFixed(2)),
+                "GST %": gstPercent,
+                "GST Amt": parseFloat(gstAmount.toFixed(2)),
+                "Total Amount": parseFloat(totalItemAmount.toFixed(2))
+            });
+        });
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    
+    // Set Column Widths
+    const wscols = [
+        {wch: 12}, {wch: 15}, {wch: 20}, {wch: 10}, 
+        {wch: 25}, {wch: 10}, {wch: 12}, {wch: 10}, {wch: 8}, {wch: 8}, 
+        {wch: 10}, {wch: 10}, 
+        {wch: 12}, {wch: 8}, {wch: 10}, {wch: 12}
+    ];
+    worksheet['!cols'] = wscols;
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "GST Sales");
+    XLSX.writeFile(workbook, `GST_Report_${dates.start}_to_${dates.end}.xlsx`);
   };
 
   const handlePrintInvoice = async(t) => {
@@ -114,19 +181,14 @@ const DailyReport = () => {
       }
   };
 
-  // --- FILTER & SORT LOGIC ---
   let filteredTransactions = report ? [...report.transactions] : [];
 
-  // 1. Filter by Role (Staff sees only their own)
   if (userRole === 'staff') {
       filteredTransactions = filteredTransactions.filter(t => t.createdBy === 'staff');
   }
 
-  // 2. ✅ FORCE SORT: Newest First (Recent First)
   filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-
-  // --- CALCULATE TOTALS (Based on filtered list) ---
   const calcTransactions = filteredTransactions.filter(t => !t.invoiceNo.startsWith('MAN'));
   const adminTxns = calcTransactions.filter(t => t.createdBy !== 'staff');
   const adminTotal = adminTxns.reduce((acc, t) => acc + t.totalAmount, 0);
@@ -146,7 +208,25 @@ const DailyReport = () => {
         <h2 className="text-2xl font-bold text-gray-800">
             📊 Sales Report {userRole === 'staff' && <span className="text-sm font-medium text-gray-500">(My Sales Only)</span>}
         </h2>
-        <div className="flex items-center gap-2 bg-white px-2 py-1 rounded border shadow-sm"><button onClick={() => setRange('today')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Today</button><div className="h-4 w-px bg-gray-300"></div><button onClick={() => setRange('month')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Month</button><input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="text-xs border rounded p-1" /><span className="text-xs">-</span><input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="text-xs border rounded p-1" /></div>
+        
+        <div className="flex flex-wrap items-center gap-2 bg-white px-2 py-1 rounded border shadow-sm">
+            <button onClick={() => setRange('today')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Today</button>
+            <div className="h-4 w-px bg-gray-300"></div>
+            <button onClick={() => setRange('month')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Month</button>
+            
+            <input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="text-xs border rounded p-1" />
+            <span className="text-xs">-</span>
+            <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="text-xs border rounded p-1" />
+            
+            {userRole === 'admin' && (
+                <button 
+                    onClick={handleExportGST} 
+                    className="ml-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-3 py-1.5 rounded transition-colors flex items-center gap-1"
+                >
+                    📑 Export GST Excel
+                </button>
+            )}
+        </div>
       </div>
 
       {/* STATS CARDS */}
@@ -176,7 +256,6 @@ const DailyReport = () => {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        {/* ✅ UPDATED PLACEHOLDER */}
         <div className="p-3 border-b bg-gray-50"><input type="text" placeholder="🔍 Search Invoice / Name / Medicine..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-2 border rounded text-sm focus:outline-none focus:border-teal-500" /></div>
         <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse min-w-[700px]">
@@ -190,7 +269,6 @@ const DailyReport = () => {
                         const isManual = t.invoiceNo.startsWith('MAN');
                         const isStaffBill = t.createdBy === 'staff';
                         
-                        // Extract Medicine Names
                         const medicineNames = t.items
                             .filter(i => i.name !== "Medical/Dose Charge")
                             .map(i => i.name)

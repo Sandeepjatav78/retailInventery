@@ -15,9 +15,11 @@ const ManualBill = () => {
   const [billDate, setBillDate] = useState(getLocalDateString()); 
   const [billTime, setBillTime] = useState(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
 
+  // ✅ ADDED HSN & GST TO STATE
   const [currentItem, setCurrentItem] = useState({
     id: null, 
-    name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1
+    name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1,
+    hsn: '', gst: 0 
   });
 
   const [cart, setCart] = useState([]);
@@ -25,27 +27,21 @@ const ManualBill = () => {
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [focusedIndex, setFocusedIndex] = useState(-1); 
-  
   const [isSuggestionsEnabled, setIsSuggestionsEnabled] = useState(true);
 
   const searchRef = useRef(null);
-  const resultListRef = useRef(null); // Ref for suggestion scroll
+  const resultListRef = useRef(null);
   const currentUserRole = localStorage.getItem('userRole') || 'admin';
 
-  // --- 🔥 NEW: SCROLL INTO VIEW LOGIC ---
   useEffect(() => {
     if (focusedIndex >= 0 && resultListRef.current) {
       const listItems = resultListRef.current.children;
       if (listItems[focusedIndex]) {
-        listItems[focusedIndex].scrollIntoView({
-          behavior: "smooth",
-          block: "nearest",
-        });
+        listItems[focusedIndex].scrollIntoView({ behavior: "smooth", block: "nearest" });
       }
     }
   }, [focusedIndex]);
 
-  // Global Keyboard Listener
   useEffect(() => {
     const handleGlobalKeyDown = (e) => {
         if (e.key === "F2") {
@@ -58,7 +54,6 @@ const ManualBill = () => {
     return () => window.removeEventListener("keydown", handleGlobalKeyDown);
   }, []);
 
-  // SEARCH EFFECT
   useEffect(() => {
     const fetchMedicines = async () => {
         if (isSuggestionsEnabled && query.length > 1) {
@@ -86,21 +81,10 @@ const ManualBill = () => {
 
   const handleKeyDown = (e) => {
     if (!showSuggestions || suggestions.length === 0) return;
-
-    if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setFocusedIndex(prev => (prev < suggestions.length - 1 ? prev + 1 : prev));
-    } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setFocusedIndex(prev => (prev > 0 ? prev - 1 : 0));
-    } else if (e.key === "Enter") {
-        e.preventDefault();
-        if (focusedIndex >= 0 && suggestions[focusedIndex]) {
-            handleSelectMedicine(suggestions[focusedIndex]);
-        }
-    } else if (e.key === "Escape") {
-        setShowSuggestions(false);
-    }
+    if (e.key === "ArrowDown") { e.preventDefault(); setFocusedIndex(prev => (prev < suggestions.length - 1 ? prev + 1 : prev)); } 
+    else if (e.key === "ArrowUp") { e.preventDefault(); setFocusedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
+    else if (e.key === "Enter") { e.preventDefault(); if (focusedIndex >= 0 && suggestions[focusedIndex]) handleSelectMedicine(suggestions[focusedIndex]); } 
+    else if (e.key === "Escape") { setShowSuggestions(false); }
   };
 
   const handleSelectMedicine = (med) => {
@@ -113,7 +97,9 @@ const ManualBill = () => {
           price: med.sellingPrice || '',
           quantity: 1,
           unit: 'pack', 
-          packSize: med.packSize || 10 
+          packSize: med.packSize || 10,
+          hsn: med.hsnCode || '', // <--- 🔥 CAPTURE HSN
+          gst: med.gst || 0       // <--- 🔥 CAPTURE GST
       });
       setQuery(med.productName);
       setShowSuggestions(false);
@@ -132,12 +118,13 @@ const ManualBill = () => {
     const newItem = {
       ...currentItem,
       total: rowTotal,
-      hsn: '-', gst: 0, 
+      hsn: currentItem.hsn || '-', // Default if missing
+      gst: currentItem.gst || 0,
       medicineId: currentItem.id || null, 
     };
     setCart([...cart, newItem]);
     
-    setCurrentItem({ id: null, name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1 });
+    setCurrentItem({ id: null, name: '', batch: '', expiry: '', mrp: '', price: '', quantity: 1, unit: 'pack', packSize: 1, hsn: '', gst: 0 });
     setQuery(""); 
   };
 
@@ -151,11 +138,9 @@ const ManualBill = () => {
     const newCart = [...cart];
     const item = newCart[index];
     item.unit = item.unit === 'pack' ? 'loose' : 'pack';
-    
     let pricePerUnit = item.price;
     if(item.unit === 'loose') pricePerUnit = item.price / (item.packSize || 1);
     item.total = pricePerUnit * item.quantity;
-    
     setCart(newCart);
   };
 
@@ -165,11 +150,9 @@ const ManualBill = () => {
       const newCart = [...cart];
       const item = newCart[index];
       item.quantity = newQty;
-      
       let pricePerUnit = item.price;
       if(item.unit === 'loose') pricePerUnit = item.price / (item.packSize || 1);
       item.total = pricePerUnit * item.quantity;
-
       setCart(newCart);
   };
 
@@ -225,20 +208,14 @@ const ManualBill = () => {
 
   return (
     <div className="max-w-7xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-[85vh]">
-      
       {/* LEFT: FORM */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col gap-6">
         <h3 className="text-xl font-bold text-gray-800 border-b pb-3">📝 Create Custom Bill</h3>
-        
-        {/* CUSTOMER SECTION */}
         <div className="bg-slate-50 p-5 rounded-lg border border-slate-200">
-            <h4 className="text-sm font-bold text-teal-700 mb-3 flex items-center gap-2">
-                1. Bill Details
-            </h4>
+            <h4 className="text-sm font-bold text-teal-700 mb-3 flex items-center gap-2">1. Bill Details</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input type="date" className={inputClass} value={billDate} onChange={e => setBillDate(e.target.value)} />
                 <input type="time" className={inputClass} value={billTime} onChange={e => setBillTime(e.target.value)} />
-                
                 <input className={inputClass} placeholder="Patient Name *" value={customer.name} onChange={e=>setCustomer({...customer, name:e.target.value})} />
                 <input className={inputClass} placeholder="Phone No" value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value})} />
                 <input className={inputClass} placeholder="Doctor Name" value={customer.doctor} onChange={e=>setCustomer({...customer, doctor:e.target.value})} />
@@ -249,13 +226,11 @@ const ManualBill = () => {
             </div>
         </div>
 
-        {/* ITEM SECTION */}
         <div className="bg-teal-50 p-5 rounded-lg border border-teal-100 flex-grow">
             <div className="flex justify-between items-center mb-3">
                 <h4 className="text-sm font-bold text-teal-800">2. Add Medicine / Item</h4>
-                
                 <div className={`text-xs px-2 py-1 rounded-full font-bold transition-colors ${isSuggestionsEnabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                    {isSuggestionsEnabled ? '' : ''}
+                    {isSuggestionsEnabled ? 'Suggestions ON (F2)' : 'Suggestions OFF (F2)'}
                 </div>
             </div>
 
@@ -272,7 +247,6 @@ const ManualBill = () => {
                         onKeyDown={handleKeyDown} 
                         onFocus={() => isSuggestionsEnabled && query.length > 1 && setShowSuggestions(true)}
                     />
-                    {/* ✅ ATTACHED REF HERE */}
                     {showSuggestions && suggestions.length > 0 && (
                         <div 
                             ref={resultListRef} 
@@ -282,13 +256,11 @@ const ManualBill = () => {
                                 <div 
                                     key={med._id} 
                                     onClick={() => handleSelectMedicine(med)} 
-                                    className={`p-3 cursor-pointer border-b border-gray-100 flex justify-between items-center
-                                        ${idx === focusedIndex ? 'bg-teal-100 border-l-4 border-teal-600' : 'hover:bg-teal-50'}
-                                    `}
+                                    className={`p-3 cursor-pointer border-b border-gray-100 flex justify-between items-center ${idx === focusedIndex ? 'bg-teal-100 border-l-4 border-teal-600' : 'hover:bg-teal-50'}`}
                                 >
                                     <div>
                                         <div className="font-bold text-gray-800">{med.productName}</div>
-                                        <div className="text-xs text-gray-500">Batch: {med.batchNumber}</div>
+                                        <div className="text-xs text-gray-500">Batch: {med.batchNumber} | GST: {med.gst}%</div>
                                     </div>
                                     <div className="text-right text-teal-600 font-bold text-sm">₹{med.sellingPrice}</div>
                                 </div>
@@ -305,11 +277,7 @@ const ManualBill = () => {
                 <div className="grid grid-cols-3 gap-3">
                     <input type="number" className={inputClass} placeholder="MRP" value={currentItem.mrp} onChange={e=>setCurrentItem({...currentItem, mrp:e.target.value})} />
                     <input type="number" className={`${inputClass} font-bold text-teal-700`} placeholder="Price *" value={currentItem.price} onChange={e=>setCurrentItem({...currentItem, price:e.target.value})} />
-                    <select 
-                        className={inputClass} 
-                        value={currentItem.unit} 
-                        onChange={e=>setCurrentItem({...currentItem, unit:e.target.value})}
-                    >
+                    <select className={inputClass} value={currentItem.unit} onChange={e=>setCurrentItem({...currentItem, unit:e.target.value})}>
                         <option value="pack">Pack</option>
                         <option value="loose">Loose</option>
                     </select>
@@ -318,7 +286,6 @@ const ManualBill = () => {
                 <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-gray-500">Qty:</span>
                       <input type="number" className={`${inputClass} font-bold`} placeholder="Qty *" value={currentItem.quantity} onChange={e=>setCurrentItem({...currentItem, quantity:e.target.value})} />
-                      
                       <span className="text-xs font-bold text-gray-500 ml-2">Pack Size:</span>
                       <input type="number" className={inputClass} placeholder="10" value={currentItem.packSize} onChange={e=>setCurrentItem({...currentItem, packSize:e.target.value})} />
                 </div>
@@ -330,9 +297,8 @@ const ManualBill = () => {
         </div>
       </div>
 
-      {/* RIGHT: PREVIEW & PRINT (Same as before) */}
+      {/* RIGHT: PREVIEW & PRINT */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col justify-between h-full">
-        {/* ...Preview & Print logic... */}
         <div className="flex-grow flex flex-col">
             <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-4">
                 <h3 className="text-lg font-bold text-gray-800">Bill Preview</h3>
@@ -359,27 +325,15 @@ const ManualBill = () => {
                                 <tr key={i} className="hover:bg-gray-50 transition-colors">
                                     <td className="p-3 text-gray-800 font-medium">
                                         {item.name} 
-                                        <div className="text-[10px] text-gray-400">Pk: {item.packSize}</div>
+                                        <div className="text-[10px] text-gray-400">Pk: {item.packSize} | GST: {item.gst}%</div>
                                     </td>
                                     <td className="p-3 text-gray-500 text-xs">{item.batch}</td>
-                                    
                                     <td className="p-3 text-center">
                                         <div className="flex flex-col items-center gap-1">
-                                            <input 
-                                                type="number" 
-                                                value={item.quantity} 
-                                                onChange={(e) => updateCartQty(i, e.target.value)} 
-                                                className="w-10 text-center font-bold border rounded outline-none text-gray-700" 
-                                            />
-                                            <span 
-                                                onClick={() => toggleUnit(i)}
-                                                className={`text-[9px] font-bold px-2 py-0.5 rounded cursor-pointer uppercase border ${item.unit === 'loose' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-teal-50 text-teal-700 border-teal-200'}`}
-                                            >
-                                                {item.unit === 'loose' ? '✂️ LOOSE' : '📦 PACK'}
-                                            </span>
+                                            <input type="number" value={item.quantity} onChange={(e) => updateCartQty(i, e.target.value)} className="w-10 text-center font-bold border rounded outline-none text-gray-700" />
+                                            <span onClick={() => toggleUnit(i)} className={`text-[9px] font-bold px-2 py-0.5 rounded cursor-pointer uppercase border ${item.unit === 'loose' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-teal-50 text-teal-700 border-teal-200'}`}>{item.unit === 'loose' ? '✂️ LOOSE' : '📦 PACK'}</span>
                                         </div>
                                     </td>
-
                                     <td className="p-3 text-right text-gray-600">₹{item.price}</td>
                                     <td className="p-3 text-right font-bold text-teal-600">₹{item.total.toFixed(2)}</td>
                                     <td className="p-3 text-center">
@@ -403,7 +357,6 @@ const ManualBill = () => {
             </button>
         </div>
       </div>
-
     </div>
   );
 };
