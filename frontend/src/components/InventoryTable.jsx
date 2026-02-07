@@ -19,7 +19,6 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   // --- EXPORT TO EXCEL ---
   const handleExport = () => {
     const dataToExport = filteredMeds.map(m => {
-        // Calculate loose for export too
         const packSize = m.packSize || 10;
         const totalStock = m.quantity || 0;
         const strips = Math.floor(totalStock);
@@ -83,7 +82,6 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
       setEditFormData({ 
           ...med, 
           packSize: med.packSize || '', 
-          // We don't need to edit loose separately now, it's part of quantity
           quantity: med.quantity || 0,
           gst: med.gst || 0
       }); 
@@ -177,20 +175,16 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <th className={thClass}>MRP</th>
                     <th className={`${thClass} text-green-700`}>S.Price</th>
                     <th className={thClass}>GST%</th>
-                    {showCP && <th className={`${thClass} text-red-600`}>CP</th>}
+                    {/* ✅ UPDATED: CP Header Color */}
+                    {showCP && <th className={`${thClass} text-[#59677d]`}>CP</th>}
                     <th className={thClass}>Bill Upload</th>
                     <th className={`${thClass} text-center`}>Action</th>
                 </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
             {filteredMeds.map((m) => {
-                // --- 🔥 DYNAMIC LOGIC FOR LOOSE CALCULATION ---
-                // Total Quantity (e.g., 55.8)
                 const totalQty = m.quantity || 0;
-                // Full Strips (e.g., 55)
                 const fullStrips = Math.floor(totalQty);
-                // Decimal Part (e.g., 0.8) * Pack Size (10) = 8 Loose Tablets
-                // Use Math.round to fix floating point errors (like 7.99999)
                 const looseTablets = Math.round((totalQty - fullStrips) * (m.packSize || 10));
 
                 return (
@@ -204,7 +198,6 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <td className={tdClass}><input name="packSize" type="number" value={editFormData.packSize || ''} onChange={handleEditFormChange} className={`${inputEditClass} text-center w-16`} /></td>
                     <td className={tdClass}><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} className={`${inputEditClass} w-16`} /></td>
                     
-                    {/* Loose is read-only in edit mode because it's derived from quantity */}
                     <td className={`${tdClass} bg-orange-50 text-center text-gray-400 font-bold`}>
                         -
                     </td>
@@ -219,8 +212,9 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                             <option value="18">18%</option>
                         </select>
                     </td>
+                    {/* ✅ UPDATED: CP Edit Input Color */}
                     {showCP && (
-                        <td className={tdClass}><input name="costPrice" type="number" value={editFormData.costPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 border-red-300 text-red-600`} /></td>
+                        <td className={tdClass}><input name="costPrice" type="number" value={editFormData.costPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 text-[#59677d] border-gray-300`} /></td>
                     )}
                     <td className={tdClass}>
                         <input type="file" onChange={handleEditFileChange} className="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100" />
@@ -247,7 +241,6 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                         </div>
                     </td>
                     
-                    {/* 🔥 DYNAMIC LOOSE COLUMN */}
                     <td className={`${tdClass} text-center font-bold text-orange-600 bg-orange-50`}>
                         {looseTablets}
                     </td>
@@ -257,7 +250,8 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <td className={tdClass}>
                         <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-semibold border border-indigo-100">{m.gst}%</span>
                     </td>
-                    {showCP && <td className={`${tdClass} font-bold text-red-600`}>₹{m.costPrice}</td>}
+                    {/* ✅ UPDATED: CP View Color */}
+                    {showCP && <td className={`${tdClass} font-bold text-[#59677d]`}>₹{m.costPrice}</td>}
                     <td className={tdClass}>
                         {m.billImage ? (
                             <a href={m.billImage} target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:text-teal-800 text-xs underline font-medium">View Bill</a>
@@ -276,7 +270,6 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
             </tbody>
         </table>
         
-        {/* Empty State */}
         {filteredMeds.length === 0 && (
             <div className="p-8 text-center text-gray-400 italic bg-gray-50 border-t border-gray-100">
                 No medicines found matching "{searchTerm}"
