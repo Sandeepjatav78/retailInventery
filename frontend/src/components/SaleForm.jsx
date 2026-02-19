@@ -313,7 +313,6 @@ const SaleForm = () => {
                     className={`absolute right-3 top-1/2 transform -translate-y-1/2 text-xs font-bold px-2 py-1 rounded cursor-pointer transition-colors border ${suggestionsEnabled ? 'bg-green-50 text-green-700 border-green-200' : 'bg-red-50 text-red-600 border-red-200'}`}
                     title="Press F2 to Toggle"
                 >
-                    {/* {suggestionsEnabled ? '💡 ON (F2)' : '🚫 OFF (F2)'} */}
                 </span>
             </div>
 

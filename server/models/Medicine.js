@@ -25,4 +25,9 @@ const MedicineSchema = new mongoose.Schema({
   billImage: { type: String }
 }, { timestamps: true });
 
+// Helpful indexes for search & alerts
+MedicineSchema.index({ productName: 1 });
+MedicineSchema.index({ batchNumber: 1 });
+MedicineSchema.index({ expiryDate: 1 });
+
 module.exports = mongoose.model('Medicine', MedicineSchema);

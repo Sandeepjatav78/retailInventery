@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
 import { generateBillHTML } from '../utils/BillGenerator';
 import EditBillModal from '../components/EditBillModal';
+import ReturnBillModal from '../components/ReturnBillModal';
 import * as XLSX from 'xlsx';
 
 const getLocalDateString = (date = new Date()) => {
@@ -20,6 +21,7 @@ const DailyReport = () => {
   
   const userRole = localStorage.getItem('userRole'); 
   const [editingSale, setEditingSale] = useState(null);
+    const [returningSale, setReturningSale] = useState(null);
 
   const fetchReport = () => {
     let url = '';
@@ -163,6 +165,7 @@ const DailyReport = () => {
     }
   };
 
+  // Full delete (old behaviour) – keep for rare full cancellations
   const handleDeleteSale = async (id) => {
       if(!window.confirm("⚠️ Are you sure you want to DELETE this bill?\nStock will be restored automatically.")) return;
       
@@ -267,22 +270,38 @@ const DailyReport = () => {
                     filteredTransactions.map((t) => {
                         const isDose = t.invoiceNo.startsWith('DOSE');
                         const isManual = t.invoiceNo.startsWith('MAN');
+                        const isReturn = t.invoiceNo.startsWith('RET');
                         const isStaffBill = t.createdBy === 'staff';
                         
                         const medicineNames = t.items
                             .filter(i => i.name !== "Medical/Dose Charge")
                             .map(i => i.name)
                             .join(', ');
-
-                        return (
-                        <tr key={t._id} className={`hover:bg-gray-50 ${isDose ? 'bg-yellow-50/50' : isManual ? 'bg-blue-50/30' : 'bg-white'}`}>
+                                                return (
+                                                <tr
+                                                    key={t._id}
+                                                    className={`hover:bg-gray-50 ${
+                                                        isReturn
+                                                            ? 'bg-rose-50/60'
+                                                            : isDose
+                                                            ? 'bg-yellow-50/50'
+                                                            : isManual
+                                                            ? 'bg-blue-50/30'
+                                                            : 'bg-white'
+                                                    }`}
+                                                >
                             <td className="px-4 py-3"><div className="font-bold text-gray-800 text-sm">{new Date(t.date).toLocaleDateString()}</div><div className="text-gray-400 text-xs">{new Date(t.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div></td>
                             <td className="px-4 py-3">
                                 <div className="text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
-                                    {t.invoiceNo}
+                                                                        {t.invoiceNo}
                                     {userRole === 'admin' && isStaffBill && <span className="text-[9px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200 uppercase font-bold tracking-wider">STAFF</span>}
+                                                                        {isReturn && (
+                                                                            <span className="text-[9px] bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded border border-rose-200 uppercase font-bold tracking-wider">
+                                                                                RETURN
+                                                                            </span>
+                                                                        )}
                                 </div>
-                                {isManual && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded mr-2">MANUAL</span>}
+                                                                {isManual && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded mr-2">MANUAL</span>}
                             </td>
                             <td className="px-4 py-3">
                                 <div className="font-semibold text-gray-800 text-sm">{t.customerDetails?.name || 'Walk-in'}</div>
@@ -295,9 +314,10 @@ const DailyReport = () => {
                             <td className="px-4 py-3 text-right"><div className="font-bold text-gray-800">₹{t.totalAmount.toFixed(2)}</div></td>
                             <td className="px-4 py-3 text-center flex justify-center gap-2">
                                 <button onClick={() => handlePrintInvoice(t)} className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded hover:bg-blue-100 border border-blue-100">🖨️</button>
-                                {userRole === 'admin' && (
+                                {userRole === 'admin' && !isReturn && (
                                     <>
                                         <button onClick={() => setEditingSale(t)} className="text-xs text-purple-600 bg-purple-50 px-2 py-1 rounded hover:bg-purple-100 border border-purple-100">✏️</button>
+                                        <button onClick={() => setReturningSale(t)} className="text-xs text-emerald-700 bg-emerald-50 px-2 py-1 rounded hover:bg-emerald-100 border border-emerald-200">↩️</button>
                                         <button onClick={() => handleDeleteSale(t._id)} className="text-xs text-red-600 bg-red-50 px-2 py-1 rounded hover:bg-red-100 border border-red-100">🗑️</button>
                                     </>
                                 )}
@@ -313,6 +333,14 @@ const DailyReport = () => {
       {editingSale && (
           <EditBillModal sale={editingSale} onClose={() => setEditingSale(null)} onUpdateSuccess={() => { setEditingSale(null); fetchReport(); }} />
       )}
+
+            {returningSale && (
+                    <ReturnBillModal
+                        sale={returningSale}
+                        onClose={() => setReturningSale(null)}
+                        onReturnSuccess={() => { setReturningSale(null); fetchReport(); }}
+                    />
+            )}
     </div>
   );
 };

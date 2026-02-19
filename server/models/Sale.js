@@ -40,4 +40,10 @@ const SaleSchema = new mongoose.Schema({
   date: { type: Date, default: Date.now }
 });
 
+// Helpful indexes for fast search & reports
+SaleSchema.index({ invoiceNo: 1 });
+SaleSchema.index({ date: -1 });
+SaleSchema.index({ 'customerDetails.name': 1 });
+SaleSchema.index({ 'items.name': 1 });
+
 module.exports = mongoose.model('Sale', SaleSchema);

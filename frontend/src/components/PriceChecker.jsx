@@ -6,6 +6,8 @@ const PriceChecker = () => {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const searchRef = useRef(null);
+  const userRole = typeof window !== 'undefined' ? localStorage.getItem('userRole') : null;
+  const isAdmin = userRole === 'admin';
 
   // --- SEARCH LOGIC ---
   useEffect(() => {
@@ -114,27 +116,43 @@ const PriceChecker = () => {
                     </span>
                 </div>
 
-                {/* 🔥 UPDATED PRICE BOX WITH COST PRICE */}
-                <div className="grid grid-cols-3 gap-2 bg-teal-50/50 p-4 rounded-xl border border-teal-100 mb-4">
-                  
-                  {/* 1. MRP */}
-                  <div className="flex flex-col border-r border-teal-200/50 pr-2">
-                    <span className="text-[10px] text-gray-400 uppercase font-bold">MRP</span>
-                    <span className="text-gray-500 line-through font-semibold">₹{med.mrp}</span>
-                  </div>
+                {isAdmin ? (
+                  // Admin view: show MRP, CP and Selling
+                  <div className="grid grid-cols-3 gap-2 bg-teal-50/50 p-4 rounded-xl border border-teal-100 mb-4">
+                    {/* 1. MRP */}
+                    <div className="flex flex-col border-r border-teal-200/50 pr-2">
+                      <span className="text-[10px] text-gray-400 uppercase font-bold">MRP</span>
+                      <span className="text-gray-500 line-through font-semibold">₹{med.mrp}</span>
+                    </div>
 
-                  {/* 2. COST PRICE (Added Here) */}
-                  <div className="flex flex-col text-center border-r border-teal-200/50 px-2">
-                    <span className="text-[10px] text-red-400 uppercase font-bold">Cost (CP)</span>
-                    <span className="text-lg font-bold text-red-600">₹{med.costPrice}</span>
-                  </div>
+                    {/* 2. COST PRICE (only visible for admin) */}
+                    <div className="flex flex-col text-center border-r border-teal-200/50 px-2">
+                      <span className="text-[10px] text-red-400 uppercase font-bold">Cost (CP)</span>
+                      <span className="text-lg font-bold text-red-600">₹{med.costPrice}</span>
+                    </div>
 
-                  {/* 3. SELLING PRICE */}
-                  <div className="flex flex-col text-right pl-2">
-                    <span className="text-[10px] text-teal-600 uppercase font-bold">Selling</span>
-                    <span className="text-2xl font-extrabold text-teal-700">₹{med.sellingPrice}</span>
+                    {/* 3. SELLING PRICE */}
+                    <div className="flex flex-col text-right pl-2">
+                      <span className="text-[10px] text-teal-600 uppercase font-bold">Selling</span>
+                      <span className="text-2xl font-extrabold text-teal-700">₹{med.sellingPrice}</span>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  // Staff / general view: only show MRP and Selling
+                  <div className="grid grid-cols-2 gap-2 bg-teal-50/50 p-4 rounded-xl border border-teal-100 mb-4">
+                    {/* 1. MRP */}
+                    <div className="flex flex-col border-r border-teal-200/50 pr-2">
+                      <span className="text-[10px] text-gray-400 uppercase font-bold">MRP</span>
+                      <span className="text-gray-500 line-through font-semibold">₹{med.mrp}</span>
+                    </div>
+
+                    {/* 2. SELLING PRICE */}
+                    <div className="flex flex-col text-right pl-2">
+                      <span className="text-[10px] text-teal-600 uppercase font-bold">Selling</span>
+                      <span className="text-2xl font-extrabold text-teal-700">₹{med.sellingPrice}</span>
+                    </div>
+                  </div>
+                )}
 
                 {/* PURCHASE HISTORY / STOCK DETAILS */}
                 <div className="pt-3 border-t border-gray-100 grid grid-cols-2 gap-y-2 text-sm text-gray-600">

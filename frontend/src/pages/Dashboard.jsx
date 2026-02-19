@@ -31,7 +31,15 @@ const Dashboard = () => {
   });
 
   const fetchMeds = () => {
-    api.get("/medicines").then((res) => setMeds(res.data));
+    api.get("/medicines").then((res) => {
+      setMeds(res.data);
+      try {
+        const payload = { items: res.data, ts: Date.now() };
+        localStorage.setItem("inventory_cache_v1", JSON.stringify(payload));
+      } catch {
+        // ignore cache write errors
+      }
+    });
   };
 
   useEffect(() => {
@@ -39,6 +47,21 @@ const Dashboard = () => {
     if (role !== "admin") {
       navigate("/sales");
     } else {
+      // 1) Try to load fast from localStorage cache
+      try {
+        const raw = localStorage.getItem("inventory_cache_v1");
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const maxAgeMs = 5 * 60 * 1000; // 5 minutes
+          if (parsed.ts && Date.now() - parsed.ts < maxAgeMs && Array.isArray(parsed.items)) {
+            setMeds(parsed.items);
+          }
+        }
+      } catch {
+        // ignore cache read errors
+      }
+
+      // 2) Always refresh from server in background
       fetchMeds();
     }
   }, []);

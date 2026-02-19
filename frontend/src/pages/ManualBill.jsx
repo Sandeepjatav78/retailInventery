@@ -230,7 +230,7 @@ const ManualBill = () => {
             <div className="flex justify-between items-center mb-3">
                 <h4 className="text-sm font-bold text-teal-800">2. Add Medicine / Item</h4>
                 <div className={`text-xs px-2 py-1 rounded-full font-bold transition-colors ${isSuggestionsEnabled ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                    {isSuggestionsEnabled ? 'Suggestions ON (F2)' : 'Suggestions OFF (F2)'}
+                    {isSuggestionsEnabled ? '' : ''}
                 </div>
             </div>
 

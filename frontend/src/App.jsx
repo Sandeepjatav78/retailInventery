@@ -18,22 +18,18 @@ function App() {
 
         <Route path="*" element={
           <PrivateRoute>
-            <div className="app-container">
-              <Sidebar /> 
-              {/* <Navbar />  */}
-              <div className="main-content">
+            <div className="min-h-screen bg-slate-100 flex flex-col">
+              <Sidebar />
+              <main className="flex-1 w-full px-3 sm:px-4 lg:px-6 py-3 sm:py-4 lg:py-6">
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/sales" element={<SaleForm />} />
                   <Route path="/dose" element={<DosePage />} />
                   <Route path="/manual" element={<ManualBill />} />
-                  
-                  {/* <--- 2. ADD THIS ROUTE */}
                   <Route path="/check-price" element={<PriceChecker />} />
-                  
                   <Route path="/reports" element={<DailyReport />} />
                 </Routes>
-              </div>
+              </main>
             </div>
           </PrivateRoute>
         } />

@@ -1,6 +1,7 @@
 const Medicine = require('../models/Medicine');
 const Sale = require('../models/Sale'); // <--- IMPORT SALE MODEL ZARURI HAI
 const PendingDose = require('../models/PendingDose');
+const AuditLog = require('../models/AuditLog');
 
 // 1. GET ALL MEDICINES
 const getMedicines = async (req, res) => {
@@ -48,6 +49,16 @@ const addMedicine = async (req, res) => {
     };
     const newMed = new Medicine(medData);
     const savedMed = await newMed.save();
+
+    AuditLog.create({
+      action: 'CREATE_MEDICINE',
+      entityType: 'Medicine',
+      entityId: savedMed._id.toString(),
+      message: `New stock added for ${savedMed.productName}`,
+      details: { productName: savedMed.productName, batchNumber: savedMed.batchNumber },
+      userRole: 'admin'
+    }).catch(err => console.error('Audit log error (CREATE_MEDICINE):', err.message));
+
     res.status(201).json(savedMed);
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -87,6 +98,15 @@ const updateMedicine = async (req, res) => {
       { new: true }
     );
 
+    AuditLog.create({
+      action: 'UPDATE_MEDICINE',
+      entityType: 'Medicine',
+      entityId: req.params.id,
+      message: `Medicine updated (${updatedMed?.productName || ''})`,
+      details: { productName: updatedMed?.productName, batchNumber: updatedMed?.batchNumber },
+      userRole: 'admin'
+    }).catch(err => console.error('Audit log error (UPDATE_MEDICINE):', err.message));
+
     res.json(updatedMed);
   } catch (err) {
     console.error("Update Error:", err);
@@ -98,6 +118,16 @@ const updateMedicine = async (req, res) => {
 const deleteMedicine = async (req, res) => {
   try {
     await Medicine.findByIdAndDelete(req.params.id);
+
+    AuditLog.create({
+      action: 'DELETE_MEDICINE',
+      entityType: 'Medicine',
+      entityId: req.params.id,
+      message: `Medicine deleted`,
+      details: {},
+      userRole: 'admin'
+    }).catch(err => console.error('Audit log error (DELETE_MEDICINE):', err.message));
+
     res.json({ message: 'Medicine Deleted Successfully' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -146,23 +176,22 @@ const sellLooseMedicine = async (req, res) => {
       if (!med) continue;
 
       const needed = parseInt(item.count);
+      const packSize = med.packSize || 1;
 
-      // --- STOCK LOGIC (Loose vs Strip) ---
-      if (med.looseQty >= needed) {
-        med.looseQty -= needed;
-      } else {
-        const remainingNeed = needed - med.looseQty;
-        const stripsToOpen = Math.ceil(remainingNeed / med.packSize);
+      // --- SAFE STOCK LOGIC (No negative stock) ---
+      // Convert all stock to tablets for accurate comparison
+      const totalTabsBefore = Math.round((med.quantity || 0) * packSize) + (med.looseQty || 0);
 
-        if (med.quantity >= stripsToOpen) {
-          med.quantity -= stripsToOpen; // Sealed strip kam karo
-          med.looseQty += (stripsToOpen * med.packSize); // Loose me add karo
-          med.looseQty -= needed; // Ab customer ko de do
-        } else {
-          // Agar sealed bhi nahi hai, to force minus kar do (negative loose allow kar rahe hai temporary)
-          med.looseQty -= needed;
-        }
+      if (needed > totalTabsBefore) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient stock for ${med.productName}. Available: ${totalTabsBefore} tabs, Requested: ${needed} tabs`
+        });
       }
+
+      const totalTabsAfter = totalTabsBefore - needed;
+      med.quantity = Math.floor(totalTabsAfter / packSize);
+      med.looseQty = totalTabsAfter % packSize;
 
       // Fix for old data missing CP
       if (med.costPrice === undefined) med.costPrice = 0;
@@ -195,6 +224,15 @@ const sellLooseMedicine = async (req, res) => {
     });
 
     await newSale.save();
+
+    AuditLog.create({
+      action: 'SELL_DOSE',
+      entityType: 'Sale',
+      entityId: newSale._id.toString(),
+      message: `Dose sale created`,
+      details: { totalItems: saleItems.length, totalAmount: amountCollected },
+      userRole: 'admin'
+    }).catch(err => console.error('Audit log error (SELL_DOSE):', err.message));
 
     res.json({ success: true, message: "Dose Sold & Recorded!" });
 
@@ -240,18 +278,21 @@ const resolvePendingEntry = async (req, res) => {
       const med = await Medicine.findById(item.id);
       if (med) {
         const needed = parseInt(item.count);
-        // Same Logic as Sell Loose
-        if (med.looseQty >= needed) {
-          med.looseQty -= needed;
-        } else {
-          const remainingNeed = needed - med.looseQty;
-          const stripsToOpen = Math.ceil(remainingNeed / med.packSize);
-          if (med.quantity >= stripsToOpen) {
-            med.quantity -= stripsToOpen;
-            med.looseQty += (stripsToOpen * med.packSize);
-            med.looseQty -= needed;
-          } else { med.looseQty -= needed; }
+        const packSize = med.packSize || 1;
+
+        const totalTabsBefore = Math.round((med.quantity || 0) * packSize) + (med.looseQty || 0);
+
+        if (needed > totalTabsBefore) {
+          return res.status(400).json({
+            success: false,
+            message: `Insufficient stock for ${med.productName}. Available: ${totalTabsBefore} tabs, Requested: ${needed} tabs`
+          });
         }
+
+        const totalTabsAfter = totalTabsBefore - needed;
+        med.quantity = Math.floor(totalTabsAfter / packSize);
+        med.looseQty = totalTabsAfter % packSize;
+
         if (med.costPrice === undefined) med.costPrice = 0;
         await med.save();
 
@@ -277,6 +318,15 @@ const resolvePendingEntry = async (req, res) => {
       paymentMode: 'Cash'
     });
     await newSale.save();
+
+    AuditLog.create({
+      action: 'RESOLVE_PENDING_DOSE',
+      entityType: 'PendingDose',
+      entityId: id,
+      message: `Pending dose resolved`,
+      details: { saleId: newSale._id.toString(), amount: pending.amountCollected },
+      userRole: 'admin'
+    }).catch(err => console.error('Audit log error (RESOLVE_PENDING_DOSE):', err.message));
 
     // Delete form Pending
     await PendingDose.findByIdAndDelete(id);

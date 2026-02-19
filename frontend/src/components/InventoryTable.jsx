@@ -9,12 +9,18 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   const [showCP, setShowCP] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // --- FILTER LOGIC ---
-  const filteredMeds = meds.filter(m => 
-    m.productName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    (m.partyName && m.partyName.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    m.batchNumber.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+    // --- FILTER LOGIC (Hide zero stock from inventory view) ---
+    const filteredMeds = meds
+        .filter(m => {
+            const baseQty = m.quantity || 0; // may be decimal (packs + loose)
+            const loose = m.looseQty || 0;
+            return baseQty > 0 || loose > 0; // hide fully out-of-stock items
+        })
+        .filter(m => 
+            m.productName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+            (m.partyName && m.partyName.toLowerCase().includes(searchTerm.toLowerCase())) ||
+            m.batchNumber.toLowerCase().includes(searchTerm.toLowerCase())
+        );
 
   // --- EXPORT TO EXCEL ---
   const handleExport = () => {
@@ -46,33 +52,36 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
   };
 
   // --- SIMPLE PASSWORD FOR CP VIEW ---
-  const handleToggleCP = () => {
-    if (showCP) { 
-        setShowCP(false); 
-        return; 
-    }
-    const password = prompt("🔒 Enter :");
-    if (!password) return;
+    const handleToggleCP = async () => {
+        if (showCP) { 
+                setShowCP(false); 
+                return; 
+        }
+        const code = prompt("🔒 Enter Admin Secret:");
+        if (!code) return;
 
-    const SECRET_CODE = "1234"; 
-
-    if (password === SECRET_CODE) {
-        setShowCP(true);
-    } else {
-        alert("❌ Wrong Code!");
-    }
-  };
+        try {
+            const res = await api.post('/admin/secret', { code });
+            if (res.data.success) {
+                setShowCP(true);
+            } else {
+                alert("❌ Wrong Code!");
+            }
+        } catch (err) {
+            alert("Server Error");
+        }
+    };
 
   // --- DELETE ITEM ---
   const handleDeleteClick = async (id) => {
     if(!window.confirm("⚠️ Are you sure you want to delete this medicine permanently?")) return;
     
-    const password = prompt("🧨 Enter Admin Password to DELETE:");
-    if (!password) return;
+        const code = prompt("🧨 Enter Admin Secret to DELETE:");
+        if (!code) return;
     try {
-        const res = await api.post('/admin/verify', { password });
-        if (res.data.success) { onDelete(id); } 
-        else { alert("❌ Wrong Password! Delete Cancelled."); }
+                const res = await api.post('/admin/secret', { code });
+                if (res.data.success) { onDelete(id); } 
+                else { alert("❌ Wrong Secret! Delete Cancelled."); }
     } catch (err) { alert("Server Error"); }
   };
 
@@ -96,7 +105,21 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
       setNewBillFile(e.target.files[0]);
   };
 
-  const handleSaveClick = async () => {
+    const handleSaveClick = async () => {
+            const code = prompt("🛡 Enter Admin Secret to EDIT:");
+            if (!code) return;
+
+            try {
+                const verify = await api.post('/admin/secret', { code });
+                if (!verify.data.success) {
+                    alert('❌ Wrong Secret! Edit cancelled.');
+                    return;
+                }
+            } catch (err) {
+                alert('Verification failed. Please try again.');
+                return;
+            }
+
       const formData = new FormData();
       Object.keys(editFormData).forEach(key => {
           if (key !== 'billImage' && key !== '_id' && key !== '__v' && key !== 'createdAt' && key !== 'updatedAt') {
