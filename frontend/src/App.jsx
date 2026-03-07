@@ -7,6 +7,7 @@ import DosePage from './pages/DosePage';
 import DailyReport from './pages/DailyReport';
 import ManualBill from './pages/ManualBill'; 
 import PriceChecker from './components/PriceChecker'; // <--- 1. IMPORT THIS
+import DoctorPriceChecker from './components/DoctorPriceChecker';
 import Login from './pages/Login'; 
 import PrivateRoute from './components/PrivateRoute'; 
 
@@ -27,6 +28,7 @@ function App() {
                   <Route path="/dose" element={<DosePage />} />
                   <Route path="/manual" element={<ManualBill />} />
                   <Route path="/check-price" element={<PriceChecker />} />
+                  <Route path="/doctor-price" element={<DoctorPriceChecker />} />
                   <Route path="/reports" element={<DailyReport />} />
                 </Routes>
               </main>

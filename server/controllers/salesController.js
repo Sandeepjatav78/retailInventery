@@ -19,6 +19,35 @@ exports.createSale = async (req, res) => {
   try {
     const { items, customerDetails, totalAmount, paymentMode, isBillRequired, userRole, invoiceNo, customDate } = req.body;
 
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "No sale items provided" });
+    }
+
+    const safeNumber = (value, fallback = 0) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+
+    const safeDateOrNull = (value) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    };
+
+    const sanitizedItems = items.map((item) => ({
+      ...item,
+      medicineId: item?.medicineId || null,
+      expiry: safeDateOrNull(item?.expiry),
+      quantity: safeNumber(item?.quantity),
+      price: safeNumber(item?.price),
+      mrp: safeNumber(item?.mrp),
+      gst: safeNumber(item?.gst),
+      discount: safeNumber(item?.discount),
+      packSize: safeNumber(item?.packSize, 1),
+      purchasePrice: safeNumber(item?.purchasePrice),
+      total: safeNumber(item?.total)
+    }));
+
     let finalInvoiceNo = invoiceNo; // Gets value if Manual Bill sends it
 
     // --- 🔥 INVOICE GENERATION LOGIC (Restored) ---
@@ -45,7 +74,7 @@ exports.createSale = async (req, res) => {
     }
 
     // --- 🔍 STOCK VALIDATION (Pre-check to avoid negative stock) ---
-    for (const item of items) {
+    for (const item of sanitizedItems) {
       if (!item.medicineId) continue; // Manual items not linked to stock
 
       const med = await Medicine.findById(item.medicineId);
@@ -65,12 +94,12 @@ exports.createSale = async (req, res) => {
     const newSale = new Sale({
       invoiceNo: finalInvoiceNo,
       customerDetails,
-      items,
-      totalAmount,
+      items: sanitizedItems,
+      totalAmount: safeNumber(totalAmount),
       paymentMode,
       isBillRequired: isBillRequired,
       createdBy: userRole || 'admin',
-      date: customDate ? new Date(customDate) : new Date()
+      date: safeDateOrNull(customDate) || new Date()
     });
 
     await newSale.save();
@@ -88,7 +117,7 @@ exports.createSale = async (req, res) => {
     // --- 🔥 STOCK REDUCTION LOGIC ---
     // Runs for EVERYONE (Admin & Staff)
     // Runs for Manual Bill items ONLY if they are linked to a medicine ID
-    for (const item of items) {
+    for (const item of sanitizedItems) {
         if (item.medicineId) {
             await Medicine.findByIdAndUpdate(item.medicineId, {
                 $inc: { quantity: -item.quantity }

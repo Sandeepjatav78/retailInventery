@@ -245,7 +245,8 @@ const SaleForm = () => {
 
     } catch (err) { 
       if (billWindow) billWindow.close(); 
-      alert("Failed: " + err.message); 
+      const backendMessage = err.response?.data?.message || err.response?.data?.error || err.message;
+      alert("Failed: " + backendMessage); 
     }
   };
 

@@ -66,7 +66,11 @@ const Sidebar = () => {
 
             {/* 🔥 NEW LINK: Price Check (Visible to ALL) */}
             <li>
-                <Link to="/check-price" className={getLinkClass('/check-price')}>🔍 Check Price</Link>
+                <Link to="/check-price" className={getLinkClass('/check-price')}>🔍 CP</Link>
+            </li>
+
+            <li>
+                <Link to="/doctor-price" className={getLinkClass('/doctor-price')}>🩺 DP</Link>
             </li>
 
             {/* Admin Only Link: Dose */}

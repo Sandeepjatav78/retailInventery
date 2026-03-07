@@ -162,12 +162,31 @@ const ManualBill = () => {
 
     const combinedDateTime = new Date(`${billDate}T${billTime}`);
 
+        const itemsForSale = cart.map((item) => {
+            const rawQty = parseFloat(item.quantity) || 0;
+            const parsedPackSize = parseFloat(item.packSize) || 1;
+            const quantityForStock = item.medicineId && item.unit === 'loose'
+                ? rawQty / parsedPackSize
+                : rawQty;
+
+            return {
+                ...item,
+                quantity: parseFloat(quantityForStock.toFixed(4)),
+                packSize: parsedPackSize,
+                price: parseFloat(item.price) || 0,
+                mrp: parseFloat(item.mrp) || 0,
+                gst: parseFloat(item.gst) || 0,
+                total: parseFloat(item.total) || 0,
+                expiry: item.expiry || null,
+            };
+        });
+
     const saleData = {
         invoiceNo: invoiceNo, 
         customerDetails: customer,
         totalAmount: cart.reduce((a,b)=>a+b.total,0),
         paymentMode: customer.mode,
-        items: cart, 
+                items: itemsForSale,
         isBillRequired: true,
         userRole: currentUserRole, 
         customDate: combinedDateTime
@@ -200,7 +219,8 @@ const ManualBill = () => {
         setBillTime(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
 
     } catch (err) {
-        alert("Error saving bill: " + err.message);
+        const backendMessage = err.response?.data?.message || err.response?.data?.error || err.message;
+        alert("Error saving bill: " + backendMessage);
     }
   };
 
