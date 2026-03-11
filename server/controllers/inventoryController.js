@@ -9,6 +9,7 @@ const getMedicines = async (req, res) => {
     const meds = await Medicine.find().sort({ productName: 1 });
     res.json(meds);
   } catch (err) {
+    console.error('[Error] getMedicines:', err.message);
     res.status(500).json({ message: err.message });
   }
 };
@@ -37,16 +38,44 @@ const searchMedicines = async (req, res) => {
 // 3. ADD NEW STOCK
 const addMedicine = async (req, res) => {
   try {
-    const safeNumber = (val) => (val === '' || val === null || val === undefined) ? 0 : Number(val);
+    // Validation helper
+    const validateRequired = (val, fieldName) => {
+      if (val === '' || val === null || val === undefined) {
+        throw new Error(`${fieldName} is required`);
+      }
+      return val;
+    };
+
+    const safeNumber = (val, fieldName) => {
+      if (val === '' || val === null || val === undefined) {
+        throw new Error(`${fieldName} is required and must be a number`);
+      }
+      const num = Number(val);
+      if (isNaN(num)) {
+        throw new Error(`${fieldName} must be a valid number, got: ${val}`);
+      }
+      return num;
+    };
+
+    // Validate all required fields BEFORE creating the medicine
+    validateRequired(req.body.productName, 'Product Name');
+    validateRequired(req.body.batchNumber, 'Batch Number');
+    validateRequired(req.body.expiryDate, 'Expiry Date');
+    
+    const mrp = safeNumber(req.body.mrp, 'MRP');
+    const sellingPrice = safeNumber(req.body.sellingPrice, 'Selling Price');
+    const costPrice = safeNumber(req.body.costPrice, 'Cost Price');
+
     const medData = {
       ...req.body,
-      mrp: safeNumber(req.body.mrp),
-      sellingPrice: safeNumber(req.body.sellingPrice),
-      costPrice: safeNumber(req.body.costPrice),
-      quantity: safeNumber(req.body.quantity),
-      packSize: safeNumber(req.body.packSize) || 10,
+      mrp,
+      sellingPrice,
+      costPrice,
+      quantity: safeNumber(req.body.quantity || 0, 'Quantity'),
+      packSize: Number(req.body.packSize) || 10,
       billImage: req.file ? req.file.path : null
     };
+
     const newMed = new Medicine(medData);
     const savedMed = await newMed.save();
 
@@ -61,7 +90,11 @@ const addMedicine = async (req, res) => {
 
     res.status(201).json(savedMed);
   } catch (err) {
-    res.status(400).json({ message: err.message });
+    console.error('[Error] addMedicine:', err.message);
+    if (err.message && err.message.includes('is required')) {
+      return res.status(400).json({ message: `Validation Error: ${err.message}` });
+    }
+    res.status(500).json({ message: `Server Error: ${err.message}` });
   }
 };
 // 4. UPDATE MEDICINE (Fixed Logic)
@@ -156,6 +189,7 @@ const getExpiringMedicines = async (req, res) => {
 
     res.json(expiring);
   } catch (err) {
+    console.error('[Error] getExpiringMedicines:', err.message);
     res.status(500).json({ message: err.message });
   }
 };

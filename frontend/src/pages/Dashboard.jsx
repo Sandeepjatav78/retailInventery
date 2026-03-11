@@ -162,8 +162,26 @@ const Dashboard = () => {
 
   // --- ADD STOCK ---
   const handleAdd = async () => {
-    if (!form.productName || !form.batchNumber)
-      return alert("Please fill details");
+    // Enhanced validation - check ALL required fields
+    const requiredFields = [
+      { field: 'productName', label: 'Product Name' },
+      { field: 'batchNumber', label: 'Batch Number' },
+      { field: 'mrp', label: 'MRP (Price)' },
+      { field: 'sellingPrice', label: 'Selling Price' },
+      { field: 'costPrice', label: 'Cost Price' },
+      { field: 'expiryDate', label: 'Expiry Date' }
+    ];
+
+    let missingFields = [];
+    requiredFields.forEach(({ field, label }) => {
+      if (!form[field] || form[field] === '') {
+        missingFields.push(label);
+      }
+    });
+
+    if (missingFields.length > 0) {
+      return alert(`❌ Please fill these required fields:\n• ${missingFields.join('\n• ')}`);
+    }
 
     const formData = new FormData();
     Object.keys(form).forEach((key) => {

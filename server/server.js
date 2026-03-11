@@ -16,9 +16,25 @@ app.use(cors()); // Allow all origins (Good for testing, restrict later if neede
 app.use(express.json());
 
 // Database Connection
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('MongoDB Connected'))
-  .catch(err => console.log('DB Error:', err));
+console.log('[INFO] Attempting to connect to MongoDB...');
+console.log('[INFO] MongoDB URI:', process.env.MONGODB_URI ? process.env.MONGODB_URI.replace(/password=([^&]+)|:([^:/@]+)@/, '***') : 'NOT SET');
+
+mongoose.connect(process.env.MONGODB_URI, {
+  serverSelectionTimeoutMS: 15000,
+  connectTimeoutMS: 15000,
+  socketTimeoutMS: 45000,
+})
+  .then(() => {
+    console.log('✅ MongoDB Connected Successfully');
+  })
+  .catch(err => {
+    console.error('❌ MongoDB Connection Error:', err.message);
+    console.error('   Please ensure:');
+    console.error('   1. MongoDB Atlas cluster is running');
+    console.error('   2. Connection string is correct');
+    console.error('   3. Network access is allowed (IP whitelist)');
+    console.error('   4. Database username/password is correct');
+  });
 
 // Routes
 app.use('/api/medicines', inventoryRoutes);
