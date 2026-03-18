@@ -8,12 +8,34 @@ const getLocalDateString = () => {
     return new Date(date.getTime() - offset).toISOString().split('T')[0];
 };
 
+const formatTime12Hour = (date = new Date()) =>
+    date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+const to24HourTime = (time12h) => {
+    const match = String(time12h || '').trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!match) return null;
+
+    let hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const meridiem = match[3].toUpperCase();
+
+    if (hours < 1 || hours > 12 || minutes < 0 || minutes > 59) return null;
+
+    if (meridiem === 'AM') {
+        if (hours === 12) hours = 0;
+    } else if (hours !== 12) {
+        hours += 12;
+    }
+
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
 const ManualBill = () => {
   const [customer, setCustomer] = useState({ name: '', phone: '', doctor: '', mode: 'Cash' });
   const [invoiceNo, setInvoiceNo] = useState(`MAN-${Math.floor(Date.now() / 1000)}`);
   
   const [billDate, setBillDate] = useState(getLocalDateString()); 
-  const [billTime, setBillTime] = useState(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+    const [billTime, setBillTime] = useState(formatTime12Hour(new Date()));
 
   // ✅ ADDED HSN & GST TO STATE
   const [currentItem, setCurrentItem] = useState({
@@ -83,7 +105,11 @@ const ManualBill = () => {
     if (!showSuggestions || suggestions.length === 0) return;
     if (e.key === "ArrowDown") { e.preventDefault(); setFocusedIndex(prev => (prev < suggestions.length - 1 ? prev + 1 : prev)); } 
     else if (e.key === "ArrowUp") { e.preventDefault(); setFocusedIndex(prev => (prev > 0 ? prev - 1 : 0)); } 
-    else if (e.key === "Enter") { e.preventDefault(); if (focusedIndex >= 0 && suggestions[focusedIndex]) handleSelectMedicine(suggestions[focusedIndex]); } 
+        else if (e.key === "Enter") {
+            e.preventDefault();
+            const selectedIdx = focusedIndex >= 0 ? focusedIndex : 0;
+            if (suggestions[selectedIdx]) handleSelectMedicine(suggestions[selectedIdx]);
+        } 
     else if (e.key === "Escape") { setShowSuggestions(false); }
   };
 
@@ -160,7 +186,12 @@ const ManualBill = () => {
     if (cart.length === 0) return alert("Add items first!");
     if (!customer.name) return alert("Customer Name is required!");
 
-    const combinedDateTime = new Date(`${billDate}T${billTime}`);
+        const billTime24 = to24HourTime(billTime);
+        if (!billTime24) {
+            return alert("Please enter time in 12-hour format (e.g. 02:30 PM)");
+        }
+
+        const combinedDateTime = new Date(`${billDate}T${billTime24}:00`);
 
         const itemsForSale = cart.map((item) => {
             const rawQty = parseFloat(item.quantity) || 0;
@@ -216,7 +247,7 @@ const ManualBill = () => {
         setCart([]);
         setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
         setBillDate(getLocalDateString());
-        setBillTime(new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+        setBillTime(formatTime12Hour(new Date()));
 
     } catch (err) {
         const backendMessage = err.response?.data?.message || err.response?.data?.error || err.message;
@@ -235,7 +266,13 @@ const ManualBill = () => {
             <h4 className="text-sm font-bold text-teal-700 mb-3 flex items-center gap-2">1. Bill Details</h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input type="date" className={inputClass} value={billDate} onChange={e => setBillDate(e.target.value)} />
-                <input type="time" className={inputClass} value={billTime} onChange={e => setBillTime(e.target.value)} />
+                <input
+                    type="text"
+                    className={inputClass}
+                    placeholder="hh:mm AM/PM"
+                    value={billTime}
+                    onChange={e => setBillTime(e.target.value)}
+                />
                 <input className={inputClass} placeholder="Patient Name *" value={customer.name} onChange={e=>setCustomer({...customer, name:e.target.value})} />
                 <input className={inputClass} placeholder="Phone No" value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value})} />
                 <input className={inputClass} placeholder="Doctor Name" value={customer.doctor} onChange={e=>setCustomer({...customer, doctor:e.target.value})} />
@@ -275,12 +312,22 @@ const ManualBill = () => {
                             {suggestions.map((med, idx) => (
                                 <div 
                                     key={med._id} 
-                                    onClick={() => handleSelectMedicine(med)} 
+                                                                        onMouseDown={(e) => {
+                                                                            e.preventDefault();
+                                                                            handleSelectMedicine(med);
+                                                                        }} 
                                     className={`p-3 cursor-pointer border-b border-gray-100 flex justify-between items-center ${idx === focusedIndex ? 'bg-teal-100 border-l-4 border-teal-600' : 'hover:bg-teal-50'}`}
                                 >
                                     <div>
                                         <div className="font-bold text-gray-800">{med.productName}</div>
-                                        <div className="text-xs text-gray-500">Batch: {med.batchNumber} | GST: {med.gst}%</div>
+                                                                                <div className="text-xs text-gray-500">
+                                                                                    {med.quantity <= 0 ? (
+                                                                                        <span className="text-red-600 font-bold">Stock is not available</span>
+                                                                                    ) : (
+                                                                                        <span>Stock: {med.quantity}</span>
+                                                                                    )}
+                                                                                    <span> | Batch: {med.batchNumber} | GST: {med.gst}%</span>
+                                                                                </div>
                                     </div>
                                     <div className="text-right text-teal-600 font-bold text-sm">₹{med.sellingPrice}</div>
                                 </div>

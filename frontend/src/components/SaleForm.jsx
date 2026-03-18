@@ -270,7 +270,11 @@ const SaleForm = () => {
 
       if (e.key === "ArrowDown") { e.preventDefault(); setFocusedIndex((prev) => (prev < results.length - 1 ? prev + 1 : prev)); } 
       else if (e.key === "ArrowUp") { e.preventDefault(); setFocusedIndex((prev) => (prev > 0 ? prev - 1 : 0)); } 
-      else if (e.key === "Enter" && focusedIndex >= 0) { e.preventDefault(); addToCart(results[focusedIndex]); } 
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        const selectedIdx = focusedIndex >= 0 ? focusedIndex : 0;
+        if (results[selectedIdx]) addToCart(results[selectedIdx]);
+      } 
   };
   
   const isLoss = (rate, cp) => rate < cp;
@@ -342,9 +346,13 @@ const SaleForm = () => {
                       
                       {!isStaff && (
                           <div className="text-xs text-gray-500 mt-1 flex gap-3">
-                            <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600"}`}>
-                              Stock: {med.quantity}
-                            </span>
+                            {med.quantity <= 0 ? (
+                              <span className="text-red-600 font-bold">Stock is not available</span>
+                            ) : (
+                              <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600"}`}>
+                                Stock: {med.quantity}
+                              </span>
+                            )}
                             <span>Batch: {med.batchNumber}</span>
                             <span className={`${new Date(med.expiryDate) < new Date() ? "text-red-600 font-bold" : "text-gray-500"}`}>
                               Exp: {new Date(med.expiryDate).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}

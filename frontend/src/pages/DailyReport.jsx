@@ -69,44 +69,71 @@ const DailyReport = () => {
     report.transactions.forEach(sale => {
         const saleDate = new Date(sale.date).toLocaleDateString('en-GB'); // DD/MM/YYYY
 
-        sale.items.forEach(item => {
-            // Skip dose items for pure GST reports (Optional)
-            if(item.name === "Medical/Dose Charge") return;
+        const validItems = sale.items.filter(item => item.name !== "Medical/Dose Charge");
+        if (validItems.length === 0) return;
 
-            // Calculate GST breakdown
-            const gstPercent = item.gst || 0;
-            const totalItemAmount = item.total || 0;
-            
-            // Formula: Taxable = Total / (1 + GST/100)
-            const taxableValue = totalItemAmount / (1 + (gstPercent / 100));
-            const gstAmount = totalItemAmount - taxableValue;
+        const groupedItems = new Map();
 
+        validItems.forEach(item => {
             let expiryStr = '-';
             if (item.expiry) {
                 expiryStr = new Date(item.expiry).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
             }
 
-            dataToExport.push({
-                "Date": saleDate,
-                "Invoice": sale.invoiceNo,
-                "Customer": sale.customerDetails?.name || 'Cash',
-                "Payment": sale.paymentMode,
-                
-                "Medicine Name": item.name,
-                "HSN Code": item.hsn || '-',
-                "Batch": item.batch || '-',
-                "Expiry": expiryStr,
-                "Qty": item.quantity,
-                "Unit": item.unit || 'pack',
-                
-                "MRP": item.mrp || 0,
-                "Rate": item.price,
-                
-                "Taxable Value": parseFloat(taxableValue.toFixed(2)),
-                "GST %": gstPercent,
-                "GST Amt": parseFloat(gstAmount.toFixed(2)),
-                "Total Amount": parseFloat(totalItemAmount.toFixed(2))
-            });
+            const groupedKey = [
+                item.name || '-',
+                item.hsn || '-',
+                item.batch || '-',
+                expiryStr,
+                item.unit || 'pack',
+                Number(item.mrp || 0).toFixed(2),
+                Number(item.price || 0).toFixed(2),
+                Number(item.gst) || 0
+            ].join('||');
+
+            if (!groupedItems.has(groupedKey)) {
+                groupedItems.set(groupedKey, {
+                    name: item.name || '-',
+                    hsn: item.hsn || '-',
+                    batch: item.batch || '-',
+                    expiryStr,
+                    unit: item.unit || 'pack',
+                    mrp: Number(item.mrp || 0),
+                    rate: Number(item.price || 0),
+                    gst: Number(item.gst) || 0,
+                    quantity: Number(item.quantity) || 0,
+                    total: Number(item.total) || 0,
+                });
+            } else {
+                const current = groupedItems.get(groupedKey);
+                current.quantity += Number(item.quantity) || 0;
+                current.total += Number(item.total) || 0;
+            }
+        });
+
+        let totalTaxable = 0;
+        let totalGST = 0;
+
+        const formatQty = (qty) => Number.isInteger(qty) ? qty : Number(qty.toFixed(3));
+
+        const medicineDetails = Array.from(groupedItems.values()).map(item => {
+            const taxableValue = item.total / (1 + (item.gst / 100));
+            const gstAmount = item.total - taxableValue;
+            totalTaxable += taxableValue;
+            totalGST += gstAmount;
+
+            return `${item.name} (HSN:${item.hsn}, Batch:${item.batch}, Exp:${item.expiryStr}, Qty:${formatQty(item.quantity)} ${item.unit}, MRP:${item.mrp.toFixed(2)}, Rate:${item.rate.toFixed(2)}, GST:${item.gst}%)`;
+        }).join(' | ');
+
+        dataToExport.push({
+            "Date": saleDate,
+            "Invoice": sale.invoiceNo,
+            "Customer": sale.customerDetails?.name || 'Cash',
+            "Payment": sale.paymentMode,
+            "Medicine Details": medicineDetails,
+            "Taxable Value": parseFloat(totalTaxable.toFixed(2)),
+            "GST Amt": parseFloat(totalGST.toFixed(2)),
+            "Total Amount": parseFloat(Array.from(groupedItems.values()).reduce((sum, item) => sum + item.total, 0).toFixed(2))
         });
     });
 
@@ -114,10 +141,14 @@ const DailyReport = () => {
     
     // Set Column Widths
     const wscols = [
-        {wch: 12}, {wch: 15}, {wch: 20}, {wch: 10}, 
-        {wch: 25}, {wch: 10}, {wch: 12}, {wch: 10}, {wch: 8}, {wch: 8}, 
-        {wch: 10}, {wch: 10}, 
-        {wch: 12}, {wch: 8}, {wch: 10}, {wch: 12}
+        {wch: 12}, // Date
+        {wch: 15}, // Invoice
+        {wch: 20}, // Customer
+        {wch: 10}, // Payment
+        {wch: 90}, // Medicine Details
+        {wch: 14}, // Taxable Value
+        {wch: 10}, // GST Amt
+        {wch: 12}  // Total Amount
     ];
     worksheet['!cols'] = wscols;
 
@@ -152,7 +183,7 @@ const DailyReport = () => {
         grandTotal: t.totalAmount, 
         doseAmount: doseAmount, 
         customDate: saleDate.toISOString().split('T')[0], 
-        customTime: saleDate.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}) 
+        customTime: saleDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) 
     };
 
     const billHTML = await generateBillHTML(itemsToPrint, invData);
@@ -290,7 +321,7 @@ const DailyReport = () => {
                                                             : 'bg-white'
                                                     }`}
                                                 >
-                            <td className="px-4 py-3"><div className="font-bold text-gray-800 text-sm">{new Date(t.date).toLocaleDateString()}</div><div className="text-gray-400 text-xs">{new Date(t.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div></td>
+                            <td className="px-4 py-3"><div className="font-bold text-gray-800 text-sm">{new Date(t.date).toLocaleDateString()}</div><div className="text-gray-400 text-xs">{new Date(t.date).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}</div></td>
                             <td className="px-4 py-3">
                                 <div className="text-sm font-bold text-gray-700 mb-1 flex items-center gap-2">
                                                                         {t.invoiceNo}

@@ -1,10 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
 
+const formatTime12Hour = (date = new Date()) =>
+    date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+const to24HourTime = (time12h) => {
+    const match = String(time12h || '').trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+    if (!match) return null;
+
+    let hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const meridiem = match[3].toUpperCase();
+
+    if (hours < 1 || hours > 12 || minutes < 0 || minutes > 59) return null;
+
+    if (meridiem === 'AM') {
+        if (hours === 12) hours = 0;
+    } else if (hours !== 12) {
+        hours += 12;
+    }
+
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
 const EditBillModal = ({ sale, onClose, onUpdateSuccess }) => {
     // Split ISO Date into Date and Time for inputs
     const initialDate = new Date(sale.date).toISOString().split('T')[0];
-    const initialTime = new Date(sale.date).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const initialTime = formatTime12Hour(new Date(sale.date));
 
     const [formData, setFormData] = useState({
         customerName: sale.customerDetails?.name || '',
@@ -54,7 +76,12 @@ const EditBillModal = ({ sale, onClose, onUpdateSuccess }) => {
 
     const handleSave = async () => {
         const grandTotal = calculateTotal(items);
-        const combinedDateTime = new Date(`${formData.billDate}T${formData.billTime}`);
+        const billTime24 = to24HourTime(formData.billTime);
+        if (!billTime24) {
+            return alert("Please enter time in 12-hour format (e.g. 02:30 PM)");
+        }
+
+        const combinedDateTime = new Date(`${formData.billDate}T${billTime24}:00`);
 
         const payload = {
             customerDetails: {
@@ -100,7 +127,13 @@ const EditBillModal = ({ sale, onClose, onUpdateSuccess }) => {
                         </div>
                         <div>
                             <label className="text-xs font-bold text-gray-500 uppercase">Time</label>
-                            <input type="time" className={inputClass} value={formData.billTime} onChange={e => setFormData({...formData, billTime: e.target.value})} />
+                            <input
+                                type="text"
+                                className={inputClass}
+                                placeholder="hh:mm AM/PM"
+                                value={formData.billTime}
+                                onChange={e => setFormData({...formData, billTime: e.target.value})}
+                            />
                         </div>
                         <div>
                             <label className="text-xs font-bold text-gray-500 uppercase">Payment Mode</label>

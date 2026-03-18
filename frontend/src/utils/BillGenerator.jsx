@@ -28,6 +28,32 @@ const numberToWords = (num) => {
   return str;
 };
 
+const formatTime12Hour = (value) => {
+  if (!value) return "";
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  }
+
+  const parsedDate = new Date(value);
+  if (!Number.isNaN(parsedDate.getTime())) {
+    return parsedDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+  }
+
+  const timeMatch = String(value).trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (timeMatch) {
+    const hours = Number(timeMatch[1]);
+    const minutes = Number(timeMatch[2]);
+    if (hours >= 0 && hours <= 23 && minutes >= 0 && minutes <= 59) {
+      const tempDate = new Date();
+      tempDate.setHours(hours, minutes, 0, 0);
+      return tempDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+    }
+  }
+
+  return String(value);
+};
+
 // --- MAIN GENERATOR FUNCTION ---
 export const generateBillHTML = async (cartItems, invoiceData) => {
   let dateStr, timeStr;
@@ -40,9 +66,9 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
   }
 
   if (invoiceData.customTime) {
-    timeStr = invoiceData.customTime;
+    timeStr = formatTime12Hour(invoiceData.customTime);
   } else {
-    timeStr = new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+    timeStr = formatTime12Hour(new Date());
   }
 
   const isDuplicate = invoiceData.isDuplicate || false;

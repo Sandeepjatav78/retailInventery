@@ -199,7 +199,14 @@ const DosePage = () => {
                             {results.length > 0 && (
                                 <div className="absolute w-full bg-white z-10 border border-gray-200 rounded-lg mt-1 shadow-xl max-h-60 overflow-y-auto divide-y divide-gray-100">
                                     {results.map(m => (
-                                        <div key={m._id} onClick={() => handleSelect(m)} className="p-3 hover:bg-green-50 cursor-pointer flex justify-between items-center">
+                                        <div
+                                            key={m._id}
+                                            onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                handleSelect(m);
+                                            }}
+                                            className="p-3 hover:bg-green-50 cursor-pointer flex justify-between items-center"
+                                        >
                                             <span className="font-bold text-gray-800">{m.productName}</span>
                                             <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded font-bold">Loose: {m.looseQty}</span>
                                         </div>
@@ -313,7 +320,7 @@ const DosePage = () => {
                             <div className="font-bold text-gray-800 text-lg group-hover:text-red-600 transition-colors">{item.reason}</div>
                             <div className="flex justify-between items-center mt-2">
                                 <span className="bg-green-100 text-green-800 font-bold px-2 py-1 rounded text-sm">₹{item.amountCollected}</span>
-                                <span className="text-xs text-gray-400">{new Date(item.date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                                <span className="text-xs text-gray-400">{new Date(item.date).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })}</span>
                             </div>
                         </div>
                     ))}

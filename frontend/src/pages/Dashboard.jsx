@@ -271,7 +271,10 @@ const Dashboard = () => {
                     {suggestions.map((suggestion, index) => (
                         <li 
                             key={suggestion._id}
-                            onClick={() => selectSuggestion(suggestion)}
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selectSuggestion(suggestion);
+                            }}
                             className={`px-3 py-2 text-sm cursor-pointer border-b border-gray-100 flex justify-between items-center
                                 ${index === activeSuggestionIndex ? "bg-teal-100 text-teal-800" : "hover:bg-gray-50 text-gray-700"}`}
                         >
