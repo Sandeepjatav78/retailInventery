@@ -8,6 +8,7 @@ const cors = require('cors');
 const inventoryRoutes = require('./routes/inventoryRoutes');
 const salesRoutes = require('./routes/salesRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const creditRoutes = require('./routes/creditRoutes');
 
 const app = express();
 
@@ -40,6 +41,7 @@ mongoose.connect(process.env.MONGODB_URI, {
 app.use('/api/medicines', inventoryRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/credits', creditRoutes);
 
 // Root Route (Good for checking if server is live)
 app.get('/', (req, res) => {

@@ -15,7 +15,7 @@ const PriceChecker = () => {
       if (query.length > 1) {
         setLoading(true);
         try {
-          const res = await api.get(`/medicines/search?q=${query}`);
+          const res = await api.get(`/medicines/search?q=${encodeURIComponent(query)}&includeOutOfStock=true`);
           setResults(res.data);
         } catch (err) {
           console.error(err);
@@ -175,6 +175,23 @@ const PriceChecker = () => {
                     <span className="font-semibold text-gray-800">{med.packSize} / Strip</span>
                   </div>
                 </div>
+
+                {med.billImage ? (
+                  <div className="mt-4 pt-3 border-t border-gray-100">
+                    <a
+                      href={med.billImage}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-bold text-teal-700 hover:bg-teal-100"
+                    >
+                      🧾 View Purchase Bill
+                    </a>
+                  </div>
+                ) : (
+                  <div className="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400 italic">
+                    Purchase bill not uploaded
+                  </div>
+                )}
 
               </div>
             ))}

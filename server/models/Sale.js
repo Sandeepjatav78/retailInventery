@@ -32,7 +32,12 @@ const SaleSchema = new mongoose.Schema({
   ],
   
   totalAmount: { type: Number, required: true },
-  paymentMode: { type: String, enum: ['Cash', 'Online'], required: true },
+  paymentMode: { type: String, enum: ['Cash', 'Online', 'Credit'], required: true },
+  
+  // 🔥 ADDED CREDIT FIELDS
+  isCredit: { type: Boolean, default: false },
+  creditId: { type: mongoose.Schema.Types.ObjectId, ref: 'Credit' },
+  creditNotes: { type: String },
   
   isBillRequired: { type: Boolean, default: true }, 
   createdBy: { type: String, default: 'admin' }, 

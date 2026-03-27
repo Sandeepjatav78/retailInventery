@@ -217,10 +217,11 @@ const ManualBill = () => {
         customerDetails: customer,
         totalAmount: cart.reduce((a,b)=>a+b.total,0),
         paymentMode: customer.mode,
-                items: itemsForSale,
+        items: itemsForSale,
         isBillRequired: true,
         userRole: currentUserRole, 
-        customDate: combinedDateTime
+        customDate: combinedDateTime,
+        isCredit: customer.mode === 'Credit'
     };
 
     try {
@@ -277,8 +278,9 @@ const ManualBill = () => {
                 <input className={inputClass} placeholder="Phone No" value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value})} />
                 <input className={inputClass} placeholder="Doctor Name" value={customer.doctor} onChange={e=>setCustomer({...customer, doctor:e.target.value})} />
                 <select className={inputClass} value={customer.mode} onChange={e=>setCustomer({...customer, mode:e.target.value})}>
-                    <option value="Cash">Cash</option>
-                    <option value="Online">Online</option>
+                    <option value="Cash">💵 Cash</option>
+                    <option value="Online">📱 Online</option>
+                    <option value="Credit">💳 उधारी (Credit)</option>
                 </select>
             </div>
         </div>

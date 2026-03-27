@@ -17,15 +17,32 @@ const getMedicines = async (req, res) => {
 
 // 2. SEARCH MEDICINES
 const searchMedicines = async (req, res) => {
-  const { q } = req.query;
+  const { q, includeOutOfStock } = req.query;
   if (!q) return res.json([]);
   try {
-    const meds = await Medicine.find({
-      $or: [
-        { productName: { $regex: q, $options: 'i' } },
-        { batchNumber: { $regex: q, $options: 'i' } }
-      ]
-    })
+    const hideZeroStockOnly = String(includeOutOfStock || '').toLowerCase() === 'false' || includeOutOfStock === '0';
+
+    const filters = [
+      {
+        $or: [
+          { productName: { $regex: q, $options: 'i' } },
+          { batchNumber: { $regex: q, $options: 'i' } }
+        ]
+      }
+    ];
+
+    if (hideZeroStockOnly) {
+      filters.push({
+        $or: [
+          { quantity: { $gt: 0 } },
+          { looseQty: { $gt: 0 } }
+        ]
+      });
+    }
+
+    const query = filters.length > 1 ? { $and: filters } : filters[0];
+
+    const meds = await Medicine.find(query)
       .sort({ expiryDate: 1 }) // <--- 🔥 THIS LINE DOES THE MAGIC (1 = Ascending/Oldest First)
       .limit(20); // Optional: Limit results to keep it fast
 

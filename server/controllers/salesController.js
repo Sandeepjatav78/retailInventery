@@ -2,6 +2,7 @@ const Sale = require('../models/Sale');
 const Medicine = require('../models/Medicine');
 const Counter = require('../models/Counter');
 const AuditLog = require('../models/AuditLog');
+const Credit = require('../models/Credit');
 
 // --- 1. GET NEXT INVOICE ID ---
 exports.getNextInvoiceNumber = async (req, res) => {
@@ -17,7 +18,7 @@ exports.getNextInvoiceNumber = async (req, res) => {
 // --- 2. CREATE SALE (Fixes Invoice ID & Stock Reduction) ---
 exports.createSale = async (req, res) => {
   try {
-    const { items, customerDetails, totalAmount, paymentMode, isBillRequired, userRole, invoiceNo, customDate } = req.body;
+    const { items, customerDetails, totalAmount, paymentMode, isBillRequired, userRole, invoiceNo, customDate, isCredit, creditNotes } = req.body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "No sale items provided" });
@@ -98,11 +99,61 @@ exports.createSale = async (req, res) => {
       totalAmount: safeNumber(totalAmount),
       paymentMode,
       isBillRequired: isBillRequired,
+      isCredit: isCredit || false,
+      creditNotes: creditNotes || '',
       createdBy: userRole || 'admin',
       date: safeDateOrNull(customDate) || new Date()
     });
 
     await newSale.save();
+
+    // 🔥 HANDLE CREDIT SALES
+    let creditRecord = null;
+    if (isCredit && customerDetails && customerDetails.phone) {
+      try {
+        // Find or create credit record
+        let credit = await Credit.findOne({ customerPhone: customerDetails.phone });
+
+        if (credit) {
+          // Update existing credit
+          credit.totalAmount += safeNumber(totalAmount);
+          credit.remainingAmount += safeNumber(totalAmount);
+          credit.bills.push({
+            billId: newSale._id,
+            invoiceNo: finalInvoiceNo,
+            billAmount: safeNumber(totalAmount),
+            billDate: new Date(),
+            billStatus: 'Pending'
+          });
+        } else {
+          // Create new credit record
+          credit = new Credit({
+            customerName: customerDetails.name || 'Unknown',
+            customerPhone: customerDetails.phone,
+            customerDoctor: customerDetails.doctor || '',
+            totalAmount: safeNumber(totalAmount),
+            remainingAmount: safeNumber(totalAmount),
+            bills: [{
+              billId: newSale._id,
+              invoiceNo: finalInvoiceNo,
+              billAmount: safeNumber(totalAmount),
+              billDate: new Date(),
+              billStatus: 'Pending'
+            }]
+          });
+        }
+
+        await credit.save();
+        creditRecord = credit;
+
+        // Link credit to sale
+        newSale.creditId = credit._id;
+        await newSale.save();
+      } catch (creditError) {
+        console.error('Credit creation error:', creditError);
+        // Don't fail the sale if credit creation fails
+      }
+    }
 
     // Fire-and-forget audit log (does not affect response)
     AuditLog.create({
@@ -125,7 +176,7 @@ exports.createSale = async (req, res) => {
         }
     }
 
-    res.status(201).json({ success: true, invoiceNo: finalInvoiceNo, sale: newSale });
+    res.status(201).json({ success: true, invoiceNo: finalInvoiceNo, sale: newSale, credit: creditRecord });
 
   } catch (err) {
     console.error("Sale Error:", err);

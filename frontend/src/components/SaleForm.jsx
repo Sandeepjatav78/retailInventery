@@ -18,6 +18,8 @@ const SaleForm = () => {
   const [results, setResults] = useState([]);
   const [cart, setCart] = useState(() => getSavedState("cart", []));
   const [paymentMode, setPaymentMode] = useState(() => getSavedState("paymentMode", "Cash"));
+  const [isCredit, setIsCredit] = useState(() => getSavedState("isCredit", false));
+  const [creditNotes, setCreditNotes] = useState(() => getSavedState("creditNotes", ""));
   const [amountGiven, setAmountGiven] = useState(() => getSavedState("amountGiven", ""));
   const [changeToReturn, setChangeToReturn] = useState(0);
   const [isBillNeeded, setIsBillNeeded] = useState(() => getSavedState("isBillNeeded", true));
@@ -94,9 +96,9 @@ const SaleForm = () => {
 
   useEffect(() => {
     const given = parseFloat(amountGiven) || 0;
-    setChangeToReturn(paymentMode === "Cash" ? given - grandTotal : 0);
-    localStorage.setItem("draft_sale_v3", JSON.stringify({ cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount }));
-  }, [cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, grandTotal]);
+    setChangeToReturn(paymentMode === "Cash" && !isCredit ? given - grandTotal : 0);
+    localStorage.setItem("draft_sale_v3", JSON.stringify({ cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, isCredit, creditNotes }));
+  }, [cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, grandTotal, isCredit, creditNotes]);
 
   useEffect(() => {
     if (query.length > 1 && suggestionsEnabled) {
@@ -196,8 +198,9 @@ const SaleForm = () => {
   const handleCheckout = async () => {
     if (cart.length === 0 && doseVal <= 0) return alert("Cart is empty");
     const given = parseFloat(amountGiven) || 0;
-    if (paymentMode === "Cash" && given < grandTotal) return alert("Insufficient Cash!");
+    if (!isCredit && paymentMode === "Cash" && given < grandTotal) return alert("Insufficient Cash!");
     if (isBillNeeded && !customer.name.trim()) return alert("Customer Name is required");
+    if (isCredit && !customer.phone.trim()) return alert("Customer Phone is required for Credit");
 
     const finalCustomer = { name: customer.name.trim() || "Cash Sale", phone: isBillNeeded ? customer.phone : "", doctor: isBillNeeded ? customer.doctor : "" };
 
@@ -217,7 +220,16 @@ const SaleForm = () => {
       itemsForPrint.push({ name: "Medical/Dose Charge", batch: "-", expiry: null, mrp: doseVal, price: doseVal, quantity: 1, total: doseVal, discount: 0, unit: 'pack', packSize: 1 });
     }
 
-    const saleData = { customerDetails: finalCustomer, totalAmount: grandTotal, paymentMode, items: finalItems, isBillRequired: isBillNeeded, userRole: userRole };
+    const saleData = { 
+      customerDetails: finalCustomer, 
+      totalAmount: grandTotal, 
+      paymentMode: isCredit ? 'Credit' : paymentMode, 
+      items: finalItems, 
+      isBillRequired: isBillNeeded, 
+      userRole: userRole,
+      isCredit: isCredit,
+      creditNotes: creditNotes
+    };
 
     let billWindow = null;
 
@@ -250,7 +262,7 @@ const SaleForm = () => {
     }
   };
 
-  const clearDraft = () => { localStorage.removeItem("draft_sale_v3"); setCart([]); setAmountGiven(""); setDoseAmount(""); setChangeToReturn(0); setPaymentMode("Cash"); setCustomer({ name: "", phone: "", doctor: "" }); setResults([]); setQuery(""); };
+  const clearDraft = () => { localStorage.removeItem("draft_sale_v3"); setCart([]); setAmountGiven(""); setDoseAmount(""); setChangeToReturn(0); setPaymentMode("Cash"); setIsCredit(false); setCreditNotes(""); setCustomer({ name: "", phone: "", doctor: "" }); setResults([]); setQuery(""); };
   
   const handleReprint = async () => { 
       if (!lastSale) return; 
@@ -586,26 +598,36 @@ const SaleForm = () => {
           <div className="flex gap-3 mt-2">
             <button
               className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${
-                paymentMode === "Cash"
+                paymentMode === "Cash" && !isCredit
                   ? "bg-teal-700 text-white border-teal-700 shadow-md"
                   : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
               }`}
-              onClick={() => setPaymentMode("Cash")}
+              onClick={() => { setPaymentMode("Cash"); setIsCredit(false); }}
             >
               💵 Cash
             </button>
             <button
               className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${
-                paymentMode === "Online"
+                paymentMode === "Online" && !isCredit
                   ? "bg-teal-700 text-white border-teal-700 shadow-md"
                   : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
               }`}
-              onClick={() => setPaymentMode("Online")}
+              onClick={() => { setPaymentMode("Online"); setIsCredit(false); }}
             >
               📱 UPI / Online
             </button>
+            <button
+              className={`flex-1 py-3 rounded-lg font-bold text-sm border transition-all ${
+                isCredit
+                  ? "bg-pink-700 text-white border-pink-700 shadow-md"
+                  : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
+              }`}
+              onClick={() => { setIsCredit(true); setPaymentMode("Credit"); }}
+            >
+              💳 उधारी (Credit)
+            </button>
           </div>
-          {paymentMode === "Cash" && (
+          {!isCredit && paymentMode === "Cash" && (
             <div className="mt-4 bg-orange-50 border border-orange-100 rounded-lg p-3 flex justify-between items-center">
               <input
                 type="number"
@@ -626,6 +648,20 @@ const SaleForm = () => {
                   ₹{changeToReturn.toFixed(0)}
                 </div>
               </div>
+            </div>
+          )}
+          {isCredit && (
+            <div className="mt-4 bg-pink-50 border border-pink-200 rounded-lg p-3">
+              <label className="block text-xs font-bold text-pink-700 uppercase mb-2">
+                📝 Credit Notes (Optional)
+              </label>
+              <textarea
+                value={creditNotes}
+                onChange={(e) => setCreditNotes(e.target.value)}
+                placeholder="Add any notes or terms..."
+                className="w-full p-2 text-sm border border-pink-200 rounded focus:outline-none focus:border-pink-400"
+                rows="3"
+              ></textarea>
             </div>
           )}
         </div>

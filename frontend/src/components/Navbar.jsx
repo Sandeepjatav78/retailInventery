@@ -49,6 +49,13 @@ const Navbar = () => {
                📊 Reports
             </Link>
         </li>
+
+        {/* CREDIT LEDGER BUTTON */}
+        <li>
+            <Link to="/credits" className={`nav-link ${isActive('/credits')}`} style={{color: '#ec4899', borderBottom: isActive('/credits') ? '3px solid #ec4899' : 'none'}}>
+               💳 Credit (उधारी)
+            </Link>
+        </li>
       </ul>
 
       {/* --- RIGHT SIDE (USER & LOGOUT) --- */}

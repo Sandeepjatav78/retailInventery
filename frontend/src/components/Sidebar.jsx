@@ -83,8 +83,16 @@ const Sidebar = () => {
             <li>
                 <Link to="/reports" className={getLinkClass('/reports')}>📊 Reports</Link>
             </li>
-        </ul>
-      </div>
+
+            {/* Admin Only Link: Credit Ledger */}
+            {userRole === 'admin' && (
+                <li>
+                    <Link to="/credits" className={getLinkClass('/credits')}>💳 Credit</Link>
+                </li>
+            )}
+
+                </ul>
+            </div>
 
       {/* --- RIGHT: LOGOUT --- */}
       <div>

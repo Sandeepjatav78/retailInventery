@@ -6,6 +6,7 @@ import SaleForm from './components/SaleForm';
 import DosePage from './pages/DosePage';
 import DailyReport from './pages/DailyReport';
 import ManualBill from './pages/ManualBill'; 
+import CreditLedger from './pages/CreditLedger';
 import PriceChecker from './components/PriceChecker'; // <--- 1. IMPORT THIS
 import DoctorPriceChecker from './components/DoctorPriceChecker';
 import Login from './pages/Login'; 
@@ -30,6 +31,7 @@ function App() {
                   <Route path="/check-price" element={<PriceChecker />} />
                   <Route path="/doctor-price" element={<DoctorPriceChecker />} />
                   <Route path="/reports" element={<DailyReport />} />
+                  <Route path="/credits" element={<CreditLedger />} />
                 </Routes>
               </main>
             </div>
