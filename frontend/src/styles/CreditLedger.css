@@ -272,6 +272,30 @@
   font-weight: 700;
 }
 
+.btn-whatsapp {
+  margin-top: 10px;
+  width: 100%;
+  border: none;
+  border-radius: 6px;
+  padding: 10px;
+  background: #22c55e;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.btn-whatsapp:hover:not(:disabled) {
+  background: #16a34a;
+  transform: translateY(-1px);
+}
+
+.btn-whatsapp:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
 .payment-section {
   background: #f0f4ff;
   border: 2px solid #667eea;

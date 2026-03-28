@@ -127,6 +127,33 @@ const CreditLedger = () => {
     }
   };
 
+  const formatPhoneForWhatsApp = (phone = '') => {
+    const digits = String(phone).replace(/\D/g, '');
+    if (!digits) return '';
+
+    // Default to India country code when a 10-digit number is provided.
+    if (digits.length === 10) return `91${digits}`;
+    return digits;
+  };
+
+  const buildWhatsAppReminder = (credit) => {
+    const remaining = Number(credit?.remainingAmount || 0).toFixed(2);
+    const customerName = credit?.customerName || 'Customer';
+    return `Namaste ${customerName}, aapke udhari khate me abhi ₹${remaining} baki hai. Kripya payment jaldi kar dein. Dhanyavaad. - Radhe Pharmacy`;
+  };
+
+  const handleSendWhatsApp = (credit) => {
+    const phone = formatPhoneForWhatsApp(credit?.customerPhone);
+    if (!phone) {
+      alert('Valid customer phone number not found');
+      return;
+    }
+
+    const message = buildWhatsAppReminder(credit);
+    const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+  };
+
   const filteredCredits = credits.filter(credit =>
     credit.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     credit.customerPhone?.includes(searchTerm)
@@ -230,6 +257,14 @@ const CreditLedger = () => {
                 <div className="detail-item">
                   <label>Phone</label>
                   <p>{selectedCredit.customerPhone || '-'}</p>
+                  <button
+                    type="button"
+                    className="btn-whatsapp"
+                    onClick={() => handleSendWhatsApp(selectedCredit)}
+                    disabled={!selectedCredit.customerPhone}
+                  >
+                    Send WhatsApp Reminder
+                  </button>
                 </div>
                 <div className="detail-item">
                   <label>Doctor</label>
