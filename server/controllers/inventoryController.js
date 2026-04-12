@@ -21,7 +21,9 @@ const searchMedicines = async (req, res) => {
   const userRole = req.user?.role || 'staff';
   if (!q) return res.json([]);
   try {
-    const hideZeroStockOnly = String(includeOutOfStock || '').toLowerCase() === 'false' || includeOutOfStock === '0';
+    // By default, keep suggestions sale-safe by hiding out-of-stock medicines.
+    const includeStockZero = String(includeOutOfStock || '').toLowerCase() === 'true' || includeOutOfStock === '1';
+    const hideZeroStockOnly = !includeStockZero;
 
     const filters = [
       {
