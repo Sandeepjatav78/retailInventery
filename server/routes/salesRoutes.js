@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const salesController = require('../controllers/salesController');
+const { authenticateToken } = require('../middleware/auth');
+
+router.use(authenticateToken);
 
 // 1. Get Next ID (Frontend calls this on load)
 router.get('/next-id', salesController.getNextInvoiceNumber);

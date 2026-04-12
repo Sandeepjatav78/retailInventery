@@ -18,6 +18,7 @@ const getMedicines = async (req, res) => {
 // 2. SEARCH MEDICINES
 const searchMedicines = async (req, res) => {
   const { q, includeOutOfStock } = req.query;
+  const userRole = req.user?.role || 'staff';
   if (!q) return res.json([]);
   try {
     const hideZeroStockOnly = String(includeOutOfStock || '').toLowerCase() === 'false' || includeOutOfStock === '0';
@@ -37,6 +38,12 @@ const searchMedicines = async (req, res) => {
           { quantity: { $gt: 0 } },
           { looseQty: { $gt: 0 } }
         ]
+      });
+    }
+
+    if (userRole === 'staff') {
+      filters.push({
+        hsnCode: { $exists: true, $nin: [null, ''] }
       });
     }
 

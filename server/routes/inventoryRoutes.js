@@ -4,6 +4,7 @@ const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
 const inventoryController = require('../controllers/inventoryController');
+const { authenticateToken } = require('../middleware/auth');
 
 // --- CLOUDINARY CONFIG ---
 cloudinary.config({
@@ -27,7 +28,7 @@ const upload = multer({ storage: storage });
 
 // 1. GET Methods
 router.get('/', inventoryController.getMedicines); 
-router.get('/search', inventoryController.searchMedicines);
+router.get('/search', authenticateToken, inventoryController.searchMedicines);
 router.get('/expiring', inventoryController.getExpiringMedicines);
 router.get('/dose/pending', inventoryController.getPendingEntries);
 

@@ -18,7 +18,8 @@ exports.getNextInvoiceNumber = async (req, res) => {
 // --- 2. CREATE SALE (Fixes Invoice ID & Stock Reduction) ---
 exports.createSale = async (req, res) => {
   try {
-    const { items, customerDetails, totalAmount, paymentMode, isBillRequired, userRole, invoiceNo, customDate, isCredit, creditNotes } = req.body;
+    const { items, customerDetails, totalAmount, paymentMode, isBillRequired, invoiceNo, customDate, isCredit, creditNotes } = req.body;
+    const userRole = req.user?.role || 'staff';
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "No sale items provided" });
@@ -35,9 +36,12 @@ exports.createSale = async (req, res) => {
       return Number.isNaN(parsed.getTime()) ? null : parsed;
     };
 
+    const normalizeHsn = (value) => String(value ?? '').trim();
+
     const sanitizedItems = items.map((item) => ({
       ...item,
       medicineId: item?.medicineId || null,
+      hsn: normalizeHsn(item?.hsn),
       expiry: safeDateOrNull(item?.expiry),
       quantity: safeNumber(item?.quantity),
       price: safeNumber(item?.price),
@@ -48,6 +52,19 @@ exports.createSale = async (req, res) => {
       purchasePrice: safeNumber(item?.purchasePrice),
       total: safeNumber(item?.total)
     }));
+
+    if (userRole === 'staff') {
+      const itemWithoutHsn = sanitizedItems.find((item) => {
+        const isDoseLine = String(item?.name || '').trim() === 'Medical/Dose Charge';
+        return !isDoseLine && !item.hsn;
+      });
+
+      if (itemWithoutHsn) {
+        return res.status(400).json({
+          message: `HSN is required for item: ${itemWithoutHsn.name || 'Unknown Item'}`
+        });
+      }
+    }
 
     let finalInvoiceNo = invoiceNo; // Gets value if Manual Bill sends it
 
@@ -189,6 +206,11 @@ exports.getAllSales = async (req, res) => {
   try {
     const { start, end, search } = req.query; 
     let query = {};
+    const userRole = req.user?.role || 'staff';
+
+    if (userRole === 'staff') {
+      query.createdBy = 'staff';
+    }
 
     // --- 🔥 GLOBAL SEARCH LOGIC ---
     if (search) {
@@ -314,7 +336,8 @@ exports.updateSale = async (req, res) => {
 exports.returnSaleItems = async (req, res) => {
   try {
     const { id } = req.params;
-    const { items, userRole } = req.body;
+    const { items } = req.body;
+    const userRole = req.user?.role || 'staff';
 
     const originalSale = await Sale.findById(id);
     if (!originalSale) {

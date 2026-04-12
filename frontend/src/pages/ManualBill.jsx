@@ -81,7 +81,10 @@ const ManualBill = () => {
         if (isSuggestionsEnabled && query.length > 1) {
             try {
                 const res = await api.get(`/medicines/search?q=${query}`);
-                setSuggestions(res.data);
+                const filtered = currentUserRole === 'staff'
+                    ? res.data.filter((med) => String(med.hsnCode || '').trim())
+                    : res.data;
+                setSuggestions(filtered);
                 setShowSuggestions(true);
                 setFocusedIndex(-1); 
             } catch (err) { setSuggestions([]); }
@@ -114,6 +117,10 @@ const ManualBill = () => {
   };
 
   const handleSelectMedicine = (med) => {
+      if (currentUserRole === 'staff' && !String(med.hsnCode || '').trim()) {
+          return alert("❌ This product has no HSN. Staff cannot bill it.");
+      }
+
       setCurrentItem({
           id: med._id, 
           name: med.productName,
@@ -136,6 +143,10 @@ const ManualBill = () => {
       return alert("Please fill Name, Price and Quantity");
     }
 
+        if (currentUserRole === 'staff' && !String(currentItem.hsn || '').trim()) {
+            return alert("HSN is required for staff billing.");
+        }
+
     let rowTotal = parseFloat(currentItem.price) * parseFloat(currentItem.quantity);
     if(currentItem.unit === 'loose') {
         rowTotal = (parseFloat(currentItem.price) / (currentItem.packSize || 1)) * parseFloat(currentItem.quantity);
@@ -144,7 +155,7 @@ const ManualBill = () => {
     const newItem = {
       ...currentItem,
       total: rowTotal,
-      hsn: currentItem.hsn || '-', // Default if missing
+            hsn: String(currentItem.hsn || '').trim(),
       gst: currentItem.gst || 0,
       medicineId: currentItem.id || null, 
     };
@@ -185,6 +196,11 @@ const ManualBill = () => {
   const handleGenerateBill = async () => {
     if (cart.length === 0) return alert("Add items first!");
     if (!customer.name) return alert("Customer Name is required!");
+
+        if (currentUserRole === 'staff') {
+                const invalidItem = cart.find((item) => !String(item.hsn || '').trim());
+                if (invalidItem) return alert(`❌ HSN missing for item: ${invalidItem.name}`);
+        }
 
         const billTime24 = to24HourTime(billTime);
         if (!billTime24) {
@@ -343,6 +359,11 @@ const ManualBill = () => {
                     <input type="date" className={inputClass} placeholder="Expiry" value={currentItem.expiry} onChange={e=>setCurrentItem({...currentItem, expiry:e.target.value})} />
                 </div>
 
+                <div className="grid grid-cols-2 gap-3">
+                    <input className={inputClass} placeholder="HSN" value={currentItem.hsn} onChange={e=>setCurrentItem({...currentItem, hsn:e.target.value})} />
+                    <input type="number" className={inputClass} placeholder="GST %" value={currentItem.gst} onChange={e=>setCurrentItem({...currentItem, gst:e.target.value})} />
+                </div>
+
                 <div className="grid grid-cols-3 gap-3">
                     <input type="number" className={inputClass} placeholder="MRP" value={currentItem.mrp} onChange={e=>setCurrentItem({...currentItem, mrp:e.target.value})} />
                     <input type="number" className={`${inputClass} font-bold text-teal-700`} placeholder="Price *" value={currentItem.price} onChange={e=>setCurrentItem({...currentItem, price:e.target.value})} />
@@ -394,7 +415,7 @@ const ManualBill = () => {
                                 <tr key={i} className="hover:bg-gray-50 transition-colors">
                                     <td className="p-3 text-gray-800 font-medium">
                                         {item.name} 
-                                        <div className="text-[10px] text-gray-400">Pk: {item.packSize} | GST: {item.gst}%</div>
+                                        <div className="text-[10px] text-gray-400">HSN: {item.hsn || '-'} | Pk: {item.packSize} | GST: {item.gst}%</div>
                                     </td>
                                     <td className="p-3 text-gray-500 text-xs">{item.batch}</td>
                                     <td className="p-3 text-center">

@@ -1,3 +1,7 @@
+const jwt = require('jsonwebtoken');
+
+const JWT_SECRET = process.env.JWT_SECRET || process.env.ADMIN_SECRET || 'change-me-in-env';
+
 const verifyAdmin = async (req, res) => {
   const { password } = req.body;
 
@@ -5,9 +9,11 @@ const verifyAdmin = async (req, res) => {
   const ENV_STAFF_PASS = process.env.STAFF_PASSWORD;
 
   if (password == ENV_ADMIN_PASS) {
-    return res.json({ success: true, role: 'admin', message: 'Access Granted: Admin' });
+    const token = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '12h' });
+    return res.json({ success: true, role: 'admin', token, message: 'Access Granted: Admin' });
   } else if (password == ENV_STAFF_PASS) {
-    return res.json({ success: true, role: 'staff', message: 'Access Granted: Staff' });
+    const token = jwt.sign({ role: 'staff' }, JWT_SECRET, { expiresIn: '12h' });
+    return res.json({ success: true, role: 'staff', token, message: 'Access Granted: Staff' });
   } else {
     return res.json({ success: false, message: 'Wrong Password' });
   }

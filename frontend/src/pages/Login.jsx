@@ -17,7 +17,7 @@ const Login = () => {
       console.log("Backend Response:", res.data);
 
       if (res.data.success) {
-        localStorage.setItem("token", "logged-in");
+        localStorage.setItem("token", res.data.token);
         localStorage.setItem("userRole", res.data.role);
 
         if (res.data.role === "admin") {

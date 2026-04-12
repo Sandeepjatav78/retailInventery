@@ -103,13 +103,16 @@ const SaleForm = () => {
   useEffect(() => {
     if (query.length > 1 && suggestionsEnabled) {
       api.get(`/medicines/search?q=${query}`).then((res) => {
-        setResults(res.data);
+        const filtered = isStaff
+          ? res.data.filter((med) => String(med.hsnCode || '').trim())
+          : res.data;
+        setResults(filtered);
         setFocusedIndex(-1);
       });
     } else { 
         setResults([]); 
     }
-  }, [query, suggestionsEnabled]);
+  }, [query, suggestionsEnabled, isStaff]);
 
   // --- LOGIC ---
   const calculateRowTotal = (price, qty, unit, packSize) => {
@@ -169,6 +172,9 @@ const SaleForm = () => {
 
   const addToCart = (med) => {
     if (med.quantity <= 0) return alert("❌ This item is OUT OF STOCK!");
+    if (isStaff && !String(med.hsnCode || '').trim()) {
+      return alert("❌ This product has no HSN. Staff cannot bill it.");
+    }
     setLastSale(null);
     const idx = cart.findIndex((item) => item.medicineId === med._id);
     const discount = med.mrp > 0 ? ((med.mrp - med.sellingPrice) / med.mrp) * 100 : 0;
@@ -187,7 +193,7 @@ const SaleForm = () => {
       setCart([...cart, {
           medicineId: med._id, name: med.productName, mrp: med.mrp, price: med.sellingPrice,
           costPrice: med.costPrice || 0, maxDiscount: med.maxDiscount || 0, discount: discount.toFixed(2),
-          gst: med.gst || 0, hsn: med.hsnCode || "N/A", batch: med.batchNumber || "N/A", expiry: med.expiryDate,
+          gst: med.gst || 0, hsn: String(med.hsnCode || '').trim(), batch: med.batchNumber || "N/A", expiry: med.expiryDate,
           quantity: 1, maxStock: med.quantity, packSize: med.packSize || 1, unit: 'pack', total: med.sellingPrice 
       }]);
     }
@@ -203,6 +209,11 @@ const SaleForm = () => {
     if (isCredit && !customer.phone.trim()) return alert("Customer Phone is required for Credit");
 
     const finalCustomer = { name: customer.name.trim() || "Cash Sale", phone: isBillNeeded ? customer.phone : "", doctor: isBillNeeded ? customer.doctor : "" };
+
+    if (isStaff) {
+      const invalidItem = cart.find((i) => !String(i.hsn || '').trim());
+      if (invalidItem) return alert(`❌ HSN missing for item: ${invalidItem.name}`);
+    }
 
     const finalItems = cart.map((i) => {
         let quantityToSend = i.unit === 'loose' ? (i.quantity / i.packSize) : i.quantity;
