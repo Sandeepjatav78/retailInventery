@@ -8,26 +8,17 @@ const getLocalDateString = () => {
     return new Date(date.getTime() - offset).toISOString().split('T')[0];
 };
 
-const formatTime12Hour = (date = new Date()) =>
-    date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+const formatTime24Hour = (date = new Date()) => {
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${hours}:${minutes}`;
+};
 
-const to24HourTime = (time12h) => {
-    const match = String(time12h || '').trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-    if (!match) return null;
-
-    let hours = Number(match[1]);
-    const minutes = Number(match[2]);
-    const meridiem = match[3].toUpperCase();
-
-    if (hours < 1 || hours > 12 || minutes < 0 || minutes > 59) return null;
-
-    if (meridiem === 'AM') {
-        if (hours === 12) hours = 0;
-    } else if (hours !== 12) {
-        hours += 12;
-    }
-
-    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+const to12HourTimeFrom24 = (time24, dateStr) => {
+    const safeTime = /^\d{2}:\d{2}$/.test(String(time24 || '')) ? time24 : formatTime24Hour(new Date());
+    const baseDate = dateStr || getLocalDateString();
+    const parsed = new Date(`${baseDate}T${safeTime}:00`);
+    return parsed.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
 const ManualBill = () => {
@@ -35,7 +26,7 @@ const ManualBill = () => {
   const [invoiceNo, setInvoiceNo] = useState(`MAN-${Math.floor(Date.now() / 1000)}`);
   
   const [billDate, setBillDate] = useState(getLocalDateString()); 
-    const [billTime, setBillTime] = useState(formatTime12Hour(new Date()));
+        const [billTime, setBillTime] = useState(formatTime24Hour(new Date()));
 
   // ✅ ADDED HSN & GST TO STATE
   const [currentItem, setCurrentItem] = useState({
@@ -210,9 +201,9 @@ const ManualBill = () => {
                 if (invalidItem) return alert(`❌ HSN missing for item: ${invalidItem.name}`);
         }
 
-        const billTime24 = to24HourTime(billTime);
-        if (!billTime24) {
-            return alert("Please enter time in 12-hour format (e.g. 02:30 PM)");
+        const billTime24 = /^\d{2}:\d{2}$/.test(String(billTime || '')) ? billTime : formatTime24Hour(new Date());
+        if (billTime24 !== billTime) {
+            setBillTime(billTime24);
         }
 
         const combinedDateTime = new Date(`${billDate}T${billTime24}:00`);
@@ -258,7 +249,7 @@ const ManualBill = () => {
             doctor: customer.doctor,
             mode: customer.mode,
             customDate: billDate, 
-            customTime: billTime  
+            customTime: to12HourTimeFrom24(billTime24, billDate)
         };
 
         const billHTML = await generateBillHTML(cart, invData);
@@ -272,7 +263,7 @@ const ManualBill = () => {
         setCart([]);
         setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
         setBillDate(getLocalDateString());
-        setBillTime(formatTime12Hour(new Date()));
+        setBillTime(formatTime24Hour(new Date()));
 
     } catch (err) {
         const backendMessage = err.response?.data?.message || err.response?.data?.error || err.message;
@@ -292,12 +283,23 @@ const ManualBill = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input type="date" className={inputClass} value={billDate} onChange={e => setBillDate(e.target.value)} />
                 <input
-                    type="text"
+                    type="time"
                     className={inputClass}
-                    placeholder="hh:mm AM/PM"
                     value={billTime}
                     onChange={e => setBillTime(e.target.value)}
+                    onBlur={(e) => {
+                        if (!e.target.value) {
+                            setBillTime(formatTime24Hour(new Date()));
+                        }
+                    }}
                 />
+                <button
+                    type="button"
+                    className="w-full px-3 py-2 text-sm font-bold bg-teal-50 text-teal-700 border border-teal-200 rounded-lg hover:bg-teal-100"
+                    onClick={() => setBillTime(formatTime24Hour(new Date()))}
+                >
+                    Use Current Time
+                </button>
                 <input className={inputClass} placeholder="Patient Name *" value={customer.name} onChange={e=>setCustomer({...customer, name:e.target.value})} />
                 <input className={inputClass} placeholder="Phone No" value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value})} />
                 <input className={inputClass} placeholder="Doctor Name" value={customer.doctor} onChange={e=>setCustomer({...customer, doctor:e.target.value})} />

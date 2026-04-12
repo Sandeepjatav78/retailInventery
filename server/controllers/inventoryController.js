@@ -106,7 +106,52 @@ const addMedicine = async (req, res) => {
       billImage: req.file ? req.file.path : null
     };
 
-    const newMed = new Medicine(medData);
+    const normalizedName = String(medData.productName || '').trim();
+    const normalizedBatch = String(medData.batchNumber || '').trim();
+
+    const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    const existingMed = await Medicine.findOne({
+      productName: { $regex: `^${escapeRegex(normalizedName)}$`, $options: 'i' },
+      batchNumber: { $regex: `^${escapeRegex(normalizedBatch)}$`, $options: 'i' }
+    });
+
+    if (existingMed) {
+      existingMed.quantity = Number(existingMed.quantity || 0) + Number(medData.quantity || 0);
+      existingMed.mrp = medData.mrp;
+      existingMed.sellingPrice = medData.sellingPrice;
+      existingMed.doctorPrice = medData.doctorPrice;
+      existingMed.costPrice = medData.costPrice;
+      existingMed.packSize = medData.packSize;
+      existingMed.gst = medData.gst !== undefined ? Number(medData.gst) : existingMed.gst;
+      existingMed.maxDiscount = medData.maxDiscount !== undefined ? Number(medData.maxDiscount) : existingMed.maxDiscount;
+      existingMed.hsnCode = medData.hsnCode || existingMed.hsnCode;
+      existingMed.expiryDate = medData.expiryDate || existingMed.expiryDate;
+      existingMed.partyName = medData.partyName || existingMed.partyName;
+      existingMed.purchaseDate = medData.purchaseDate || existingMed.purchaseDate;
+      if (medData.billImage) {
+        existingMed.billImage = medData.billImage;
+      }
+
+      const mergedMed = await existingMed.save();
+
+      AuditLog.create({
+        action: 'UPDATE_MEDICINE',
+        entityType: 'Medicine',
+        entityId: mergedMed._id.toString(),
+        message: `Stock merged for ${mergedMed.productName} (${mergedMed.batchNumber})`,
+        details: { productName: mergedMed.productName, batchNumber: mergedMed.batchNumber, mergedQuantity: medData.quantity },
+        userRole: 'admin'
+      }).catch(err => console.error('Audit log error (MERGE_MEDICINE_STOCK):', err.message));
+
+      return res.status(200).json({ ...mergedMed.toObject(), merged: true });
+    }
+
+    const newMed = new Medicine({
+      ...medData,
+      productName: normalizedName,
+      batchNumber: normalizedBatch
+    });
     const savedMed = await newMed.save();
 
     AuditLog.create({
