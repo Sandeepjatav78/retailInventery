@@ -53,6 +53,7 @@ const ManualBill = () => {
 
   const searchRef = useRef(null);
   const resultListRef = useRef(null);
+    const suggestionSelectionLockRef = useRef(false);
   const currentUserRole = localStorage.getItem('userRole') || 'admin';
 
   useEffect(() => {
@@ -78,6 +79,11 @@ const ManualBill = () => {
 
   useEffect(() => {
     const fetchMedicines = async () => {
+        if (suggestionSelectionLockRef.current) {
+            suggestionSelectionLockRef.current = false;
+            return;
+        }
+
         if (isSuggestionsEnabled && query.length > 1) {
             try {
                 const res = await api.get(`/medicines/search?q=${query}`);
@@ -120,6 +126,8 @@ const ManualBill = () => {
       if (currentUserRole === 'staff' && !String(med.hsnCode || '').trim()) {
           return alert("❌ This product has no HSN. Staff cannot bill it.");
       }
+
+      suggestionSelectionLockRef.current = true;
 
       setCurrentItem({
           id: med._id, 

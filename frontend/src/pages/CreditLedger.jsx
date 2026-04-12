@@ -11,6 +11,15 @@ const CreditLedger = () => {
   const [paymentNote, setPaymentNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [openingForm, setOpeningForm] = useState({
+    customerName: '',
+    customerPhone: '',
+    customerDoctor: '',
+    amount: '',
+    note: ''
+  });
+  const [showOpeningForm, setShowOpeningForm] = useState(false);
 
   useEffect(() => {
     fetchCredits();
@@ -90,12 +99,15 @@ const CreditLedger = () => {
   };
 
   const handleAddPayment = async () => {
-    if (!selectedCredit || !paymentAmount || paymentAmount <= 0) {
+    if (!selectedCredit || !paymentAmount || Number(paymentAmount) <= 0) {
       alert('Please select a credit and enter valid payment amount');
       return;
     }
 
-    if (parseFloat(paymentAmount) > selectedCredit.remainingAmount) {
+    const remainingRounded = Number((selectedCredit.remainingAmount || 0).toFixed(2));
+    const paymentRounded = Number(Number(paymentAmount).toFixed(2));
+
+    if (paymentRounded > remainingRounded) {
       alert('Payment amount cannot exceed remaining amount');
       return;
     }
@@ -113,6 +125,7 @@ const CreditLedger = () => {
         setPaymentAmount('');
         setPaymentNote('');
         setPaymentMode('Cash');
+        setShowPaymentForm(false);
         
         // Update selected credit and refresh list
         setSelectedCredit(res.data.data);
@@ -124,6 +137,40 @@ const CreditLedger = () => {
     } catch (err) {
       console.error('Error adding payment:', err);
       alert('Failed to add payment');
+    }
+  };
+
+  const handleAddOpeningMoney = async () => {
+    const amount = Number(openingForm.amount);
+    if (!openingForm.customerName.trim() || !openingForm.customerPhone.trim() || !Number.isFinite(amount) || amount <= 0) {
+      alert('Please enter name, phone and valid amount');
+      return;
+    }
+
+    try {
+      const res = await api.post('/credits/add-opening', {
+        customerName: openingForm.customerName.trim(),
+        customerPhone: openingForm.customerPhone.trim(),
+        customerDoctor: openingForm.customerDoctor.trim(),
+        amount,
+        note: openingForm.note.trim(),
+        recordedBy: localStorage.getItem('userName') || localStorage.getItem('userRole') || 'admin'
+      });
+
+      if (res.data.success) {
+        const newOrUpdated = res.data.data;
+        setCredits((prev) => {
+          const found = prev.some((c) => c._id === newOrUpdated._id);
+          if (found) return prev.map((c) => (c._id === newOrUpdated._id ? newOrUpdated : c));
+          return [newOrUpdated, ...prev];
+        });
+        setSelectedCredit(newOrUpdated);
+        setOpeningForm({ customerName: '', customerPhone: '', customerDoctor: '', amount: '', note: '' });
+        alert('Opening amount added successfully');
+      }
+    } catch (err) {
+      console.error('Error adding opening money:', err);
+      alert(err.response?.data?.error || 'Failed to add opening amount');
     }
   };
 
@@ -159,8 +206,8 @@ const CreditLedger = () => {
     credit.customerPhone?.includes(searchTerm)
   );
 
-  const accountsWithBalance = filteredCredits.filter(c => c.remainingAmount > 0);
-  const closedAccounts = filteredCredits.filter(c => c.status === 'Closed');
+  const accountsWithBalance = filteredCredits.filter(c => Number(c.remainingAmount || 0) > 0);
+  const closedAccounts = filteredCredits.filter(c => Number(c.remainingAmount || 0) <= 0);
 
   return (
     <div className="credit-ledger-container">
@@ -178,6 +225,63 @@ const CreditLedger = () => {
       <div className="credit-content">
         {/* Left Panel - Credit List */}
         <div className="credit-list-panel">
+          <div className="opening-money-box">
+            <div className="opening-money-toggle-row">
+              <h3>➕ Add Old Pending Amount</h3>
+              <button
+                type="button"
+                className="btn-toggle-opening"
+                onClick={() => setShowOpeningForm((prev) => !prev)}
+              >
+                {showOpeningForm ? 'No' : 'Yes'}
+              </button>
+            </div>
+
+            {showOpeningForm && (
+              <>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Customer Name"
+                  value={openingForm.customerName}
+                  onChange={(e) => setOpeningForm((prev) => ({ ...prev, customerName: e.target.value }))}
+                />
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Phone Number"
+                  value={openingForm.customerPhone}
+                  onChange={(e) => setOpeningForm((prev) => ({ ...prev, customerPhone: e.target.value }))}
+                />
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Doctor (optional)"
+                  value={openingForm.customerDoctor}
+                  onChange={(e) => setOpeningForm((prev) => ({ ...prev, customerDoctor: e.target.value }))}
+                />
+                <input
+                  type="number"
+                  min="0"
+                  className="form-input"
+                  placeholder="Old due amount"
+                  value={openingForm.amount}
+                  onChange={(e) => setOpeningForm((prev) => ({ ...prev, amount: e.target.value }))}
+                />
+                <textarea
+                  className="form-input"
+                  rows="2"
+                  placeholder="Note (optional)"
+                  value={openingForm.note}
+                  onChange={(e) => setOpeningForm((prev) => ({ ...prev, note: e.target.value }))}
+                ></textarea>
+                <button type="button" className="btn-primary" onClick={handleAddOpeningMoney}>
+                  Add Money
+                </button>
+              </>
+            )}
+          </div>
+
           <div className="list-header">
             <h3>Active Accounts ({accountsWithBalance.length})</h3>
           </div>
@@ -271,8 +375,8 @@ const CreditLedger = () => {
                   <p>{selectedCredit.customerDoctor || '-'}</p>
                 </div>
                 <div className="detail-item">
-                  <label>Total Amount Due</label>
-                  <p className="amount">₹{selectedCredit.totalAmount.toFixed(2)}</p>
+                  <label>Current Due</label>
+                  <p className="amount">₹{selectedCredit.remainingAmount.toFixed(2)}</p>
                 </div>
                 <div className="detail-item">
                   <label>Amount Paid</label>
@@ -287,46 +391,64 @@ const CreditLedger = () => {
                     Remaining Amount: <strong>₹{selectedCredit.remainingAmount.toFixed(2)}</strong>
                   </div>
 
-                  <div className="form-group">
-                    <label>Payment Amount</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max={selectedCredit.remainingAmount}
-                      value={paymentAmount}
-                      onChange={(e) => setPaymentAmount(e.target.value)}
-                      placeholder="Enter amount"
-                      className="form-input"
-                    />
-                  </div>
+                  {!showPaymentForm ? (
+                    <button onClick={() => setShowPaymentForm(true)} className="btn-primary">
+                      Accept Payment
+                    </button>
+                  ) : (
+                    <>
+                      <div className="form-group">
+                        <label>Payment Amount</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          max={Number((selectedCredit.remainingAmount || 0).toFixed(2))}
+                          value={paymentAmount}
+                          onChange={(e) => setPaymentAmount(e.target.value)}
+                          placeholder="Enter amount"
+                          className="form-input"
+                        />
+                      </div>
 
-                  <div className="form-group">
-                    <label>Payment Mode</label>
-                    <select
-                      value={paymentMode}
-                      onChange={(e) => setPaymentMode(e.target.value)}
-                      className="form-input"
-                    >
-                      <option value="Cash">Cash (नकद)</option>
-                      <option value="Online">Online (ऑनलाइन)</option>
-                      <option value="Check">Check (चेक)</option>
-                    </select>
-                  </div>
+                      <div className="form-group">
+                        <label>Payment Mode</label>
+                        <select
+                          value={paymentMode}
+                          onChange={(e) => setPaymentMode(e.target.value)}
+                          className="form-input"
+                        >
+                          <option value="Cash">Cash (नकद)</option>
+                          <option value="Online">Online (ऑनलाइन)</option>
+                          <option value="Check">Check (चेक)</option>
+                        </select>
+                      </div>
 
-                  <div className="form-group">
-                    <label>Notes</label>
-                    <textarea
-                      value={paymentNote}
-                      onChange={(e) => setPaymentNote(e.target.value)}
-                      placeholder="Add any notes..."
-                      className="form-input"
-                      rows="3"
-                    ></textarea>
-                  </div>
+                      <div className="form-group">
+                        <label>Notes</label>
+                        <textarea
+                          value={paymentNote}
+                          onChange={(e) => setPaymentNote(e.target.value)}
+                          placeholder="Add any notes..."
+                          className="form-input"
+                          rows="3"
+                        ></textarea>
+                      </div>
 
-                  <button onClick={handleAddPayment} className="btn-primary">
-                    Confirm Payment
-                  </button>
+                      <div className="payment-actions-row">
+                        <button onClick={handleAddPayment} className="btn-primary">
+                          Confirm Payment
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowPaymentForm(false)}
+                          className="btn-secondary"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

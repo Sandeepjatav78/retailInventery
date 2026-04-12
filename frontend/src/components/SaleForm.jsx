@@ -13,6 +13,7 @@ const SaleForm = () => {
   // --- REFS ---
   const searchInputRef = useRef(null);
   const resultListRef = useRef(null); // Ref for the suggestion container
+  const customerSuggestionLockRef = useRef(false);
 
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
@@ -32,6 +33,10 @@ const SaleForm = () => {
 
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const [lastSale, setLastSale] = useState(null);
+  const [customerSuggestions, setCustomerSuggestions] = useState([]);
+  const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
+  const [focusedCustomerIndex, setFocusedCustomerIndex] = useState(-1);
+  const [customerFocusField, setCustomerFocusField] = useState("name");
 
   // --- SUGGESTION TOGGLE STATE ---
   const [suggestionsEnabled, setSuggestionsEnabled] = useState(true);
@@ -113,6 +118,43 @@ const SaleForm = () => {
         setResults([]); 
     }
   }, [query, suggestionsEnabled, isStaff]);
+
+  useEffect(() => {
+    if (customerSuggestionLockRef.current) {
+      customerSuggestionLockRef.current = false;
+      return;
+    }
+
+    if (!isBillNeeded) {
+      setCustomerSuggestions([]);
+      setShowCustomerSuggestions(false);
+      setFocusedCustomerIndex(-1);
+      return;
+    }
+
+    const term = customerFocusField === "phone" ? customer.phone : customer.name;
+    if (String(term || "").trim().length < 2) {
+      setCustomerSuggestions([]);
+      setShowCustomerSuggestions(false);
+      setFocusedCustomerIndex(-1);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.get(`/credits/customers/search?q=${encodeURIComponent(term)}`);
+        const list = res.data?.data || [];
+        setCustomerSuggestions(list);
+        setShowCustomerSuggestions(list.length > 0);
+        setFocusedCustomerIndex(-1);
+      } catch {
+        setCustomerSuggestions([]);
+        setShowCustomerSuggestions(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [customer.name, customer.phone, customerFocusField, isBillNeeded]);
 
   // --- LOGIC ---
   const calculateRowTotal = (price, qty, unit, packSize) => {
@@ -298,6 +340,35 @@ const SaleForm = () => {
         const selectedIdx = focusedIndex >= 0 ? focusedIndex : 0;
         if (results[selectedIdx]) addToCart(results[selectedIdx]);
       } 
+  };
+
+  const applyCustomerSuggestion = (item) => {
+    customerSuggestionLockRef.current = true;
+    setCustomer({
+      ...customer,
+      name: item.customerName || customer.name,
+      phone: item.customerPhone || customer.phone,
+      doctor: item.customerDoctor || customer.doctor,
+    });
+    setShowCustomerSuggestions(false);
+    setFocusedCustomerIndex(-1);
+  };
+
+  const handleCustomerKeyDown = (e) => {
+    if (!showCustomerSuggestions || customerSuggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setFocusedCustomerIndex((prev) => (prev < customerSuggestions.length - 1 ? prev + 1 : prev));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setFocusedCustomerIndex((prev) => (prev > 0 ? prev - 1 : 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const idx = focusedCustomerIndex >= 0 ? focusedCustomerIndex : 0;
+      if (customerSuggestions[idx]) applyCustomerSuggestion(customerSuggestions[idx]);
+    } else if (e.key === "Escape") {
+      setShowCustomerSuggestions(false);
+    }
   };
   
   const isLoss = (rate, cp) => rate < cp;
@@ -569,28 +640,78 @@ const SaleForm = () => {
           </div>
 
           <div className="space-y-3">
-            <input
-              className={`${inputClass} ${
-                isBillNeeded && !customer.name ? "border-red-400 bg-red-50" : ""
-              }`}
-              placeholder={
-                isBillNeeded ? "Customer Name *" : "Customer Name (Optional)"
-              }
-              value={customer.name}
-              onChange={(e) =>
-                setCustomer({ ...customer, name: e.target.value })
-              }
-            />
+            <div className="relative">
+              <input
+                className={`${inputClass} ${
+                  isBillNeeded && !customer.name ? "border-red-400 bg-red-50" : ""
+                }`}
+                placeholder={
+                  isBillNeeded ? "Customer Name *" : "Customer Name (Optional)"
+                }
+                value={customer.name}
+                onFocus={() => setCustomerFocusField("name")}
+                onKeyDown={handleCustomerKeyDown}
+                onChange={(e) => {
+                  setCustomerFocusField("name");
+                  setCustomer({ ...customer, name: e.target.value });
+                }}
+                onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 80)}
+              />
+
+              {isBillNeeded && showCustomerSuggestions && customerSuggestions.length > 0 && customerFocusField === "name" && (
+                <div className="absolute z-30 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                  {customerSuggestions.map((item, idx) => (
+                    <button
+                      key={`${item._id}-${idx}`}
+                      type="button"
+                      className={`w-full px-3 py-2 text-left text-sm ${idx === focusedCustomerIndex ? "bg-teal-50" : "hover:bg-gray-50"}`}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        applyCustomerSuggestion(item);
+                      }}
+                    >
+                      <div className="font-semibold text-gray-800">{item.customerName}</div>
+                      <div className="text-xs text-gray-500">{item.customerPhone || "No Phone"}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             {isBillNeeded && (
               <div className="flex gap-3">
-                <input
-                  className={inputClass}
-                  placeholder="Phone"
-                  value={customer.phone}
-                  onChange={(e) =>
-                    setCustomer({ ...customer, phone: e.target.value })
-                  }
-                />
+                <div className="relative w-full">
+                  <input
+                    className={inputClass}
+                    placeholder="Phone"
+                    value={customer.phone}
+                    onFocus={() => setCustomerFocusField("phone")}
+                    onKeyDown={handleCustomerKeyDown}
+                    onChange={(e) => {
+                      setCustomerFocusField("phone");
+                      setCustomer({ ...customer, phone: e.target.value });
+                    }}
+                      onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 80)}
+                  />
+
+                  {showCustomerSuggestions && customerSuggestions.length > 0 && customerFocusField === "phone" && (
+                    <div className="absolute z-30 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                      {customerSuggestions.map((item, idx) => (
+                        <button
+                          key={`${item._id}-phone-${idx}`}
+                          type="button"
+                          className={`w-full px-3 py-2 text-left text-sm ${idx === focusedCustomerIndex ? "bg-teal-50" : "hover:bg-gray-50"}`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            applyCustomerSuggestion(item);
+                          }}
+                        >
+                          <div className="font-semibold text-gray-800">{item.customerPhone || "No Phone"}</div>
+                          <div className="text-xs text-gray-500">{item.customerName}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <input
                   className={inputClass}
                   placeholder="Dr. Ref"

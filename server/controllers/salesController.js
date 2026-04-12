@@ -4,6 +4,13 @@ const Counter = require('../models/Counter');
 const AuditLog = require('../models/AuditLog');
 const Credit = require('../models/Credit');
 
+const normalizePhone = (phone = '') => {
+  const digits = String(phone).replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length === 10) return `91${digits}`;
+  return digits;
+};
+
 // --- 1. GET NEXT INVOICE ID ---
 exports.getNextInvoiceNumber = async (req, res) => {
   try {
@@ -128,13 +135,21 @@ exports.createSale = async (req, res) => {
     let creditRecord = null;
     if (isCredit && customerDetails && customerDetails.phone) {
       try {
+        const normalizedPhone = normalizePhone(customerDetails.phone);
+
         // Find or create credit record
-        let credit = await Credit.findOne({ customerPhone: customerDetails.phone });
+        let credit = await Credit.findOne({
+          $or: [
+            { customerPhone: normalizedPhone },
+            { customerPhone: customerDetails.phone }
+          ]
+        });
 
         if (credit) {
           // Update existing credit
           credit.totalAmount += safeNumber(totalAmount);
           credit.remainingAmount += safeNumber(totalAmount);
+          if (normalizedPhone) credit.customerPhone = normalizedPhone;
           credit.bills.push({
             billId: newSale._id,
             invoiceNo: finalInvoiceNo,
@@ -146,7 +161,7 @@ exports.createSale = async (req, res) => {
           // Create new credit record
           credit = new Credit({
             customerName: customerDetails.name || 'Unknown',
-            customerPhone: customerDetails.phone,
+            customerPhone: normalizedPhone || customerDetails.phone,
             customerDoctor: customerDetails.doctor || '',
             totalAmount: safeNumber(totalAmount),
             remainingAmount: safeNumber(totalAmount),

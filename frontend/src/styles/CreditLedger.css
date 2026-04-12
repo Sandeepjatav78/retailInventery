@@ -52,6 +52,48 @@
   background: #f9fafb;
 }
 
+.opening-money-box {
+  padding: 14px;
+  border-bottom: 2px solid #f0f1f3;
+  background: #f6f9ff;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.opening-money-box h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #3f4d7a;
+}
+
+.opening-money-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.btn-toggle-opening {
+  border: 1px solid #4f46e5;
+  background: #eef2ff;
+  color: #4338ca;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-toggle-opening:hover {
+  background: #e0e7ff;
+}
+
+.opening-money-box .btn-primary {
+  margin-top: 2px;
+}
+
 .list-header h3 {
   margin: 0;
   font-size: 16px;
@@ -368,6 +410,28 @@
 .btn-primary:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.btn-secondary {
+  width: 100%;
+  padding: 12px;
+  background: #ffffff;
+  color: #4b5563;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: #f9fafb;
+}
+
+.payment-actions-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
 }
 
 .bills-section,
