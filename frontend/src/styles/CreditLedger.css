@@ -48,8 +48,8 @@
 
 .list-header {
   padding: 16px;
-  border-bottom: 2px solid #f0f1f3;
-  background: #f9fafb;
+  border-bottom: 2px solid #e0e6ed;
+  background: linear-gradient(135deg, #f0f4ff 0%, #f5f8ff 100%);
 }
 
 .opening-money-box {
@@ -96,9 +96,19 @@
 
 .list-header h3 {
   margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #2d3748;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.list-header h3::before {
+  content: '✓';
+  color: #22c55e;
+  font-weight: 800;
   font-size: 16px;
-  font-weight: 600;
-  color: #333;
 }
 
 .credits-list {
@@ -182,21 +192,54 @@
 .closed-accounts {
   border-top: 2px solid #f0f1f3;
   padding: 12px;
-  background: #fafbfc;
+  background: #f5f5f5;
   flex: 0 0 auto;
+  transition: all 0.3s ease;
+}
+
+.closed-accounts-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
 }
 
 .closed-accounts h3 {
-  margin: 0 0 8px 0;
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #999;
+  color: #888;
+}
+
+.btn-toggle-closed {
+  border: 1px solid #ddd;
+  background: #fff;
+  color: #666;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.btn-toggle-closed:hover {
+  background: #f0f0f0;
+  border-color: #999;
+  color: #333;
 }
 
 .closed-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  margin-top: 8px;
 }
 
 .closed-card {

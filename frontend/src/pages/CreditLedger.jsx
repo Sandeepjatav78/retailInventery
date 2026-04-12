@@ -20,6 +20,7 @@ const CreditLedger = () => {
     note: ''
   });
   const [showOpeningForm, setShowOpeningForm] = useState(false);
+  const [showClosedAccounts, setShowClosedAccounts] = useState(false);
 
   useEffect(() => {
     fetchCredits();
@@ -329,19 +330,30 @@ const CreditLedger = () => {
 
           {closedAccounts.length > 0 && (
             <div className="closed-accounts">
-              <h3>Closed Accounts ({closedAccounts.length})</h3>
-              <div className="closed-list">
-                {closedAccounts.map((credit) => (
-                  <div
-                    key={credit._id}
-                    className="closed-card"
-                    onClick={() => setSelectedCredit(credit)}
-                  >
-                    <h4>{credit.customerName}</h4>
-                    <p className="phone">📱 {credit.customerPhone}</p>
-                  </div>
-                ))}
+              <div className="closed-accounts-header">
+                <h3>✓ Closed Accounts ({closedAccounts.length})</h3>
+                <button
+                  type="button"
+                  className="btn-toggle-closed"
+                  onClick={() => setShowClosedAccounts((prev) => !prev)}
+                >
+                  {showClosedAccounts ? '−' : '+'}
+                </button>
               </div>
+              {showClosedAccounts && (
+                <div className="closed-list">
+                  {closedAccounts.map((credit) => (
+                    <div
+                      key={credit._id}
+                      className="closed-card"
+                      onClick={() => setSelectedCredit(credit)}
+                    >
+                      <h4>{credit.customerName}</h4>
+                      <p className="phone">📱 {credit.customerPhone}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
