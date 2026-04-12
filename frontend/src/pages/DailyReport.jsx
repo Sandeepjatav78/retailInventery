@@ -64,78 +64,58 @@ const DailyReport = () => {
         return alert("No data found to export!");
     }
 
+    const transactionsForExport = report.transactions.filter((sale) => {
+        if (userRole === 'staff') return sale.createdBy === 'staff';
+        return true;
+    });
+
+    if (transactionsForExport.length === 0) {
+        return alert("No data found to export!");
+    }
+
     const dataToExport = [];
 
-    report.transactions.forEach(sale => {
-        const saleDate = new Date(sale.date).toLocaleDateString('en-GB'); // DD/MM/YYYY
+    transactionsForExport.forEach(sale => {
+        const saleDate = new Date(sale.date).toLocaleDateString('en-GB');
 
-        const validItems = sale.items.filter(item => item.name !== "Medical/Dose Charge");
-        if (validItems.length === 0) return;
+        sale.items
+            .filter(item => item.name !== "Medical/Dose Charge")
+            .forEach(item => {
+                const total = Number(item.total) || 0;
+                const gstPercent = Number(item.gst) || 0;
+                const taxableValue = total / (1 + (gstPercent / 100));
+                const gstAmount = total - taxableValue;
+                const quantity = Number(item.quantity) || 0;
 
-        const groupedItems = new Map();
+                let expiryStr = '-';
+                if (item.expiry) {
+                    expiryStr = new Date(item.expiry).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+                }
 
-        validItems.forEach(item => {
-            let expiryStr = '-';
-            if (item.expiry) {
-                expiryStr = new Date(item.expiry).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
-            }
-
-            const groupedKey = [
-                item.name || '-',
-                item.hsn || '-',
-                item.batch || '-',
-                expiryStr,
-                item.unit || 'pack',
-                Number(item.mrp || 0).toFixed(2),
-                Number(item.price || 0).toFixed(2),
-                Number(item.gst) || 0
-            ].join('||');
-
-            if (!groupedItems.has(groupedKey)) {
-                groupedItems.set(groupedKey, {
-                    name: item.name || '-',
-                    hsn: item.hsn || '-',
-                    batch: item.batch || '-',
-                    expiryStr,
-                    unit: item.unit || 'pack',
-                    mrp: Number(item.mrp || 0),
-                    rate: Number(item.price || 0),
-                    gst: Number(item.gst) || 0,
-                    quantity: Number(item.quantity) || 0,
-                    total: Number(item.total) || 0,
+                dataToExport.push({
+                    "Date": saleDate,
+                    "Invoice": sale.invoiceNo,
+                    "Customer": sale.customerDetails?.name || 'Cash',
+                    "Payment": sale.paymentMode,
+                    "Product": item.name || '-',
+                    "HSN": item.hsn || '-',
+                    "Batch": item.batch || '-',
+                    "Expiry": expiryStr,
+                    "Unit": item.unit || 'pack',
+                    "Qty": Number.isInteger(quantity) ? quantity : Number(quantity.toFixed(3)),
+                    "MRP": Number(item.mrp || 0).toFixed(2),
+                    "Rate": Number(item.price || 0).toFixed(2),
+                    "GST %": gstPercent,
+                    "Taxable Value": parseFloat(taxableValue.toFixed(2)),
+                    "GST Amt": parseFloat(gstAmount.toFixed(2)),
+                    "Total Amount": parseFloat(total.toFixed(2))
                 });
-            } else {
-                const current = groupedItems.get(groupedKey);
-                current.quantity += Number(item.quantity) || 0;
-                current.total += Number(item.total) || 0;
-            }
-        });
-
-        let totalTaxable = 0;
-        let totalGST = 0;
-
-        const formatQty = (qty) => Number.isInteger(qty) ? qty : Number(qty.toFixed(3));
-
-        const medicineDetails = Array.from(groupedItems.values()).map(item => {
-            const taxableValue = item.total / (1 + (item.gst / 100));
-            const gstAmount = item.total - taxableValue;
-            totalTaxable += taxableValue;
-            totalGST += gstAmount;
-
-            return `${item.name} (HSN:${item.hsn}, Batch:${item.batch}, Exp:${item.expiryStr}, Qty:${formatQty(item.quantity)} ${item.unit}, MRP:${item.mrp.toFixed(2)}, Rate:${item.rate.toFixed(2)}, GST:${item.gst}%)`;
-        }).join(' | ');
-
-        dataToExport.push({
-            "Date": saleDate,
-            "Invoice": sale.invoiceNo,
-            "Customer": sale.customerDetails?.name || 'Cash',
-            "Payment": sale.paymentMode,
-            "Medicine Details": medicineDetails,
-            "Taxable Value": parseFloat(totalTaxable.toFixed(2)),
-            "GST Amt": parseFloat(totalGST.toFixed(2)),
-            "Total Amount": parseFloat(Array.from(groupedItems.values()).reduce((sum, item) => sum + item.total, 0).toFixed(2))
-        });
+            });
     });
+
+    if (dataToExport.length === 0) {
+        return alert("No medicine items found to export!");
+    }
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
     
@@ -145,7 +125,15 @@ const DailyReport = () => {
         {wch: 15}, // Invoice
         {wch: 20}, // Customer
         {wch: 10}, // Payment
-        {wch: 90}, // Medicine Details
+        {wch: 30}, // Product
+        {wch: 14}, // HSN
+        {wch: 14}, // Batch
+        {wch: 12}, // Expiry
+        {wch: 8},  // Unit
+        {wch: 8},  // Qty
+        {wch: 10}, // MRP
+        {wch: 10}, // Rate
+        {wch: 8},  // GST %
         {wch: 14}, // Taxable Value
         {wch: 10}, // GST Amt
         {wch: 12}  // Total Amount
@@ -252,12 +240,12 @@ const DailyReport = () => {
             <span className="text-xs">-</span>
             <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="text-xs border rounded p-1" />
             
-            {userRole === 'admin' && (
+            {(userRole === 'admin' || userRole === 'staff') && (
                 <button 
                     onClick={handleExportGST} 
                     className="ml-2 bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-3 py-1.5 rounded transition-colors flex items-center gap-1"
                 >
-                    📑 Export GST Excel
+                    📑 {userRole === 'staff' ? 'Export My GST Excel' : 'Export GST Excel'}
                 </button>
             )}
         </div>
