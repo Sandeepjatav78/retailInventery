@@ -12,6 +12,7 @@ const getLocalDateString = (date = new Date()) => {
 
 const DailyReport = () => {
   const [report, setReport] = useState(null);
+    const [reportError, setReportError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   
   const [dates, setDates] = useState({ 
@@ -32,8 +33,13 @@ const DailyReport = () => {
     }
 
     api.get(url).then(res => {
-          setReport(res.data); 
-      }).catch(err => console.error("Failed to fetch report"));
+          setReport(res.data);
+          setReportError('');
+      }).catch(err => {
+          console.error("Failed to fetch report", err);
+          setReport({ transactions: [], totalRevenue: 0, cashRevenue: 0, onlineRevenue: 0, totalSalesCount: 0 });
+          setReportError('Unable to load report right now. Please refresh or login again.');
+      });
   };
 
   useEffect(() => { 
@@ -222,7 +228,7 @@ const DailyReport = () => {
   const staffCash = staffTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + t.totalAmount, 0);
   const staffOnline = staffTxns.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + t.totalAmount, 0);
 
-  if (!report) return <div className="text-center p-10 text-gray-500 font-medium">Loading...</div>;
+    if (!report) return <div className="text-center p-10 text-gray-500 font-medium">Loading...</div>;
 
   return (
     <div className="p-4 md:p-6 bg-gray-50 min-h-screen">
@@ -250,6 +256,12 @@ const DailyReport = () => {
             )}
         </div>
       </div>
+
+            {reportError && (
+                <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+                    {reportError}
+                </div>
+            )}
 
       {/* STATS CARDS */}
       <div className="grid gap-4 mb-6 grid-cols-1 md:grid-cols-3">
