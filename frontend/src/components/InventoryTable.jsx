@@ -39,6 +39,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
             "Loose (Open Tabs)": loose, 
             "MRP": m.mrp,
             "Selling Price": m.sellingPrice,
+            "Doctor Price": m.doctorPrice ?? '-',
             "Cost Price": m.costPrice,
             "GST %": m.gst,
             "Expiry Date": new Date(m.expiryDate).toLocaleDateString(),
@@ -92,6 +93,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
           ...med, 
           packSize: med.packSize || '', 
           quantity: med.quantity || 0,
+          doctorPrice: med.doctorPrice ?? '',
           gst: med.gst || 0
       }); 
       setNewBillFile(null);
@@ -197,6 +199,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <th className={`${thClass} bg-orange-50 text-orange-800 text-center`}>Loose</th> 
                     <th className={thClass}>MRP</th>
                     <th className={`${thClass} text-green-700`}>S.Price</th>
+                    <th className={`${thClass} text-indigo-700`}>D.Price</th>
                     <th className={thClass}>GST%</th>
                     {/* ✅ UPDATED: CP Header Color */}
                     {showCP && <th className={`${thClass} text-[#59677d]`}>CP</th>}
@@ -227,6 +230,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
 
                     <td className={tdClass}><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
                     <td className={tdClass}><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 font-bold text-green-700`} /></td>
+                    <td className={tdClass}><input name="doctorPrice" type="number" value={editFormData.doctorPrice ?? ''} onChange={handleEditFormChange} className={`${inputEditClass} w-20 font-bold text-indigo-700`} /></td>
                     <td className={tdClass}>
                         <select name="gst" value={editFormData.gst} onChange={handleEditFormChange} className={inputEditClass}>
                             <option value="0">0%</option>
@@ -270,6 +274,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
 
                     <td className={tdClass}>{m.mrp}</td>
                     <td className={`${tdClass} font-bold text-green-700`}>₹{m.sellingPrice}</td>
+                    <td className={`${tdClass} font-bold text-indigo-700`}>₹{m.doctorPrice ?? '-'}</td>
                     <td className={tdClass}>
                         <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-semibold border border-indigo-100">{m.gst}%</span>
                     </td>

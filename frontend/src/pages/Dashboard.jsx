@@ -19,6 +19,7 @@ const Dashboard = () => {
     quantity: "",
     mrp: "",
     sellingPrice: "",
+    doctorPrice: "",
     costPrice: "",
     expiryDate: "",
     maxDiscount: "",
@@ -110,6 +111,7 @@ const Dashboard = () => {
       partyName: selectedMed.partyName || "",
       mrp: selectedMed.mrp,
       sellingPrice: selectedMed.sellingPrice,
+      doctorPrice: selectedMed.doctorPrice ?? "",
       costPrice: selectedMed.costPrice,
       maxDiscount: selectedMed.maxDiscount || "",
       gst: selectedMed.gst || "0",
@@ -202,6 +204,7 @@ const Dashboard = () => {
         quantity: "",
         mrp: "",
         sellingPrice: "",
+        doctorPrice: "",
         costPrice: "",
         expiryDate: "",
         maxDiscount: "",
@@ -313,8 +316,6 @@ const Dashboard = () => {
             <input type="file" onChange={handleFileChange} className="w-full text-xs text-gray-500 file:mr-2 file:py-2 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100 border border-gray-300 rounded-lg" />
           </div>
           
-          <div className="hidden lg:block"></div> 
-
           {/* Row 3 - Pricing & Config */}
           <div className="p-2 rounded-lg">
             <label className={labelClass}>Packing (Tabs/Strip)</label>
@@ -335,6 +336,11 @@ const Dashboard = () => {
             <label className={labelClass}>Selling Price</label>
             <input name="sellingPrice" type="number" value={form.sellingPrice} onChange={handleInputChange} placeholder="₹" className={`${inputClass} font-bold text-teal-700`} />
             {getPriceWarning()}
+          </div>
+
+          <div>
+            <label className={labelClass}>Doctor Price</label>
+            <input name="doctorPrice" type="number" value={form.doctorPrice} onChange={handleInputChange} placeholder="₹" className={`${inputClass} font-bold text-indigo-700`} />
           </div>
 
           <div>

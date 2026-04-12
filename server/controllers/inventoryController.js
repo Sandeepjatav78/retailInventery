@@ -89,11 +89,15 @@ const addMedicine = async (req, res) => {
     const mrp = safeNumber(req.body.mrp, 'MRP');
     const sellingPrice = safeNumber(req.body.sellingPrice, 'Selling Price');
     const costPrice = safeNumber(req.body.costPrice, 'Cost Price');
+    const doctorPrice = (req.body.doctorPrice !== undefined && req.body.doctorPrice !== '')
+      ? safeNumber(req.body.doctorPrice, 'Doctor Price')
+      : sellingPrice;
 
     const medData = {
       ...req.body,
       mrp,
       sellingPrice,
+      doctorPrice,
       costPrice,
       quantity: safeNumber(req.body.quantity || 0, 'Quantity'),
       packSize: Number(req.body.packSize) || 10,
@@ -134,6 +138,7 @@ const updateMedicine = async (req, res) => {
       // If a field is not sent, it remains undefined and won't delete the DB value
       mrp: safeNumber(req.body.mrp),
       sellingPrice: safeNumber(req.body.sellingPrice),
+      doctorPrice: safeNumber(req.body.doctorPrice),
       costPrice: safeNumber(req.body.costPrice),
       quantity: safeNumber(req.body.quantity),
       looseQty: safeNumber(req.body.looseQty),

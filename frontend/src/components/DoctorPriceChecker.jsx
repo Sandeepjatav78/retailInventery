@@ -18,18 +18,16 @@ const DoctorPriceChecker = () => {
   const getDraft = (med) => {
     const existing = priceDrafts[med._id];
     if (existing) return existing;
-    const baseCost = normalizeNumber(med.costPrice);
     return {
       sellingPrice: String(med.sellingPrice ?? ''),
-      doctorPrice: String((baseCost * 1.25).toFixed(2)),
+      doctorPrice: String(med.doctorPrice ?? ''),
     };
   };
 
   const isPriceChanged = (med, target) => {
     const draft = getDraft(med);
     if (target === 'doctor') {
-      const currentDoctor = normalizeNumber(med.costPrice) * 1.25;
-      return normalizeNumber(draft.doctorPrice) !== Number(currentDoctor.toFixed(2));
+      return normalizeNumber(draft.doctorPrice) !== normalizeNumber(med.doctorPrice);
     }
     const sellingChanged = normalizeNumber(draft.sellingPrice) !== normalizeNumber(med.sellingPrice);
     return sellingChanged;
@@ -63,29 +61,31 @@ const DoctorPriceChecker = () => {
       }
     }
 
-    const localUpdate = target === 'doctor'
-      ? { costPrice: Number((doctorPrice / 1.25).toFixed(2)) }
-      : { sellingPrice };
+    const payload = target === 'doctor' ? { doctorPrice } : { sellingPrice };
 
     setSavingId(med._id);
+    try {
+      const res = await api.put(`/medicines/${med._id}`, payload);
+      const updated = res.data;
 
-    setResults((prev) =>
-      prev.map((item) => (item._id === med._id ? { ...item, ...localUpdate } : item))
-    );
+      setResults((prev) =>
+        prev.map((item) => (item._id === med._id ? updated : item))
+      );
 
-    const nextCostPrice = target === 'doctor' ? localUpdate.costPrice : normalizeNumber(med.costPrice);
-    const nextSellingPrice = target === 'selling' ? localUpdate.sellingPrice : normalizeNumber(med.sellingPrice);
+      setPriceDrafts((prev) => ({
+        ...prev,
+        [med._id]: {
+          sellingPrice: String(updated.sellingPrice ?? ''),
+          doctorPrice: String(updated.doctorPrice ?? ''),
+        },
+      }));
 
-    setPriceDrafts((prev) => ({
-      ...prev,
-      [med._id]: {
-        sellingPrice: String(nextSellingPrice),
-        doctorPrice: String((nextCostPrice * 1.25).toFixed(2)),
-      },
-    }));
-
-    setEditingState({ id: null, target: null });
-    setSavingId(null);
+      setEditingState({ id: null, target: null });
+    } catch (err) {
+      alert('Failed to save price. Please try again.');
+    } finally {
+      setSavingId(null);
+    }
   };
 
   const startEditingPrices = (med, target) => {
@@ -93,7 +93,7 @@ const DoctorPriceChecker = () => {
       ...prev,
       [med._id]: {
         sellingPrice: String(med.sellingPrice ?? ''),
-        doctorPrice: String((normalizeNumber(med.costPrice) * 1.25).toFixed(2)),
+        doctorPrice: String(med.doctorPrice ?? ''),
       },
     }));
     setEditingState({ id: med._id, target });
@@ -104,7 +104,7 @@ const DoctorPriceChecker = () => {
       ...prev,
       [med._id]: {
         sellingPrice: String(med.sellingPrice ?? ''),
-        doctorPrice: String((normalizeNumber(med.costPrice) * 1.25).toFixed(2)),
+        doctorPrice: String(med.doctorPrice ?? ''),
       },
     }));
     setEditingState({ id: null, target: null });

@@ -7,6 +7,7 @@ const MedicineSchema = new mongoose.Schema({
   
   mrp: { type: Number, required: true },
   sellingPrice: { type: Number, required: true }, // Price PER STRIP
+  doctorPrice: { type: Number, default: 0 },
   costPrice: { type: Number, required: true },
   
   gst: { type: Number, default: 0 },
