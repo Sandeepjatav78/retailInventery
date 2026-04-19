@@ -20,8 +20,37 @@ const toMoney = (value) => {
 // Get all credit customers
 router.get('/', async (req, res) => {
   try {
-    const credits = await Credit.find().sort({ createdDate: -1 });
-    res.json({ success: true, data: credits });
+    const q = String(req.query.q || '').trim();
+    const status = String(req.query.status || '').trim();
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 500, 1), 2000);
+    const summary = String(req.query.summary || '1') !== '0';
+
+    const query = {};
+    if (q.length >= 2) {
+      query.$or = [
+        { customerName: { $regex: q, $options: 'i' } },
+        { customerPhone: { $regex: q, $options: 'i' } }
+      ];
+    }
+
+    if (status === 'active') {
+      query.status = 'Active';
+    } else if (status === 'closed') {
+      query.status = 'Closed';
+    }
+
+    const baseQuery = Credit.find(query)
+      .sort({ lastUpdated: -1, createdDate: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean();
+
+    const credits = summary
+      ? await baseQuery.select('customerName customerPhone customerDoctor totalAmount paidAmount remainingAmount status createdDate lastUpdated')
+      : await baseQuery;
+
+    res.json({ success: true, data: credits, page, limit, summary });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -70,7 +99,28 @@ router.get('/phone/:phone', async (req, res) => {
 // Get credit customer by ID
 router.get('/:id', async (req, res) => {
   try {
-    const credit = await Credit.findById(req.params.id).populate('bills.billId');
+    const includeAll = String(req.query.full || '0') === '1';
+    const sliceSize = Math.min(Math.max(parseInt(req.query.slice, 10) || 200, 50), 1000);
+
+    const query = Credit.findById(req.params.id)
+      .lean();
+
+    const credit = includeAll
+      ? await query
+      : await query.select({
+          customerName: 1,
+          customerPhone: 1,
+          customerDoctor: 1,
+          totalAmount: 1,
+          paidAmount: 1,
+          remainingAmount: 1,
+          status: 1,
+          createdDate: 1,
+          lastUpdated: 1,
+          bills: { $slice: -sliceSize },
+          payments: { $slice: -sliceSize }
+        });
+
     if (!credit) return res.status(404).json({ success: false, error: 'Credit not found' });
     res.json({ success: true, data: credit });
   } catch (err) {

@@ -4,8 +4,10 @@ import { generateBillHTML } from '../utils/BillGenerator';
 import '../styles/CreditLedger.css';
 
 const CreditLedger = () => {
+  const CACHE_KEY = 'credit_summary_cache_v1';
   const [credits, setCredits] = useState([]);
   const [selectedCredit, setSelectedCredit] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMode, setPaymentMode] = useState('Cash');
   const [paymentNote, setPaymentNote] = useState('');
@@ -20,22 +22,59 @@ const CreditLedger = () => {
     note: ''
   });
   const [showOpeningForm, setShowOpeningForm] = useState(false);
-  const [showClosedAccounts, setShowClosedAccounts] = useState(false);
+  const [accountView, setAccountView] = useState('active');
+  const [sortBy, setSortBy] = useState('due-desc');
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.items)) {
+          setCredits(parsed.items);
+        }
+      }
+    } catch {
+      // Ignore cache failures
+    }
+
     fetchCredits();
   }, []);
 
   const fetchCredits = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/credits');
-      setCredits(res.data.data || []);
+      const res = await api.get('/credits?summary=1&limit=1000');
+      const items = res.data.data || [];
+      setCredits(items);
+
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), items }));
+      } catch {
+        // Ignore cache write failures
+      }
     } catch (err) {
       console.error('Error fetching credits:', err);
       alert('Failed to load credit ledger');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchCreditDetails = async (creditId) => {
+    if (!creditId) return;
+
+    try {
+      setDetailsLoading(true);
+      const res = await api.get(`/credits/${creditId}?slice=300`);
+      if (res.data?.success && res.data?.data) {
+        setSelectedCredit(res.data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching credit details:', err);
+      alert('Failed to load account details');
+    } finally {
+      setDetailsLoading(false);
     }
   };
 
@@ -202,13 +241,49 @@ const CreditLedger = () => {
     window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
   };
 
-  const filteredCredits = credits.filter(credit =>
-    credit.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    credit.customerPhone?.includes(searchTerm)
-  );
+  const formatMoney = (value) => `₹${Number(value || 0).toFixed(2)}`;
 
-  const accountsWithBalance = filteredCredits.filter(c => Number(c.remainingAmount || 0) > 0);
-  const closedAccounts = filteredCredits.filter(c => Number(c.remainingAmount || 0) <= 0);
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredCredits = credits.filter((credit) => {
+    const name = String(credit.customerName || '').toLowerCase();
+    const phone = String(credit.customerPhone || '').toLowerCase();
+    return name.includes(normalizedSearch) || phone.includes(normalizedSearch);
+  });
+
+  const sortCredits = (list) => {
+    const next = [...list];
+    if (sortBy === 'due-desc') {
+      next.sort((a, b) => Number(b.remainingAmount || 0) - Number(a.remainingAmount || 0));
+    } else if (sortBy === 'due-asc') {
+      next.sort((a, b) => Number(a.remainingAmount || 0) - Number(b.remainingAmount || 0));
+    } else if (sortBy === 'name') {
+      next.sort((a, b) => String(a.customerName || '').localeCompare(String(b.customerName || '')));
+    } else if (sortBy === 'recent') {
+      next.sort((a, b) => new Date(b.lastUpdated || b.createdDate || 0) - new Date(a.lastUpdated || a.createdDate || 0));
+    }
+    return next;
+  };
+
+  const sortedCredits = sortCredits(filteredCredits);
+  const accountsWithBalance = sortedCredits.filter((c) => Number(c.remainingAmount || 0) > 0);
+  const closedAccounts = sortedCredits.filter((c) => Number(c.remainingAmount || 0) <= 0);
+  const visibleCredits = accountView === 'active'
+    ? accountsWithBalance
+    : (accountView === 'closed' ? closedAccounts : sortedCredits);
+
+  const totalDue = accountsWithBalance.reduce((sum, c) => sum + Number(c.remainingAmount || 0), 0);
+
+  useEffect(() => {
+    if (!visibleCredits.length) {
+      setSelectedCredit(null);
+      return;
+    }
+
+    if (!selectedCredit || !visibleCredits.some((c) => c._id === selectedCredit._id)) {
+      setSelectedCredit(visibleCredits[0]);
+      fetchCreditDetails(visibleCredits[0]._id);
+    }
+  }, [credits, searchTerm, accountView, sortBy]);
 
   return (
     <div className="credit-ledger-container">
@@ -216,11 +291,25 @@ const CreditLedger = () => {
         <h1>📋 Credit Ledger (उधारी खाता)</h1>
         <input
           type="text"
-          placeholder="Search by name or phone..."
+          placeholder="Search customer by name or phone..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="search-input"
         />
+        <div className="ledger-stats">
+          <div className="stat-card emphasis">
+            <span>Active Accounts</span>
+            <strong>{accountsWithBalance.length}</strong>
+          </div>
+          <div className="stat-card alert">
+            <span>Total Due</span>
+            <strong>{formatMoney(totalDue)}</strong>
+          </div>
+          <div className="stat-card">
+            <span>Closed</span>
+            <strong>{closedAccounts.length}</strong>
+          </div>
+        </div>
       </div>
 
       <div className="credit-content">
@@ -283,21 +372,63 @@ const CreditLedger = () => {
             )}
           </div>
 
+          <div className="list-controls">
+            <div className="account-tabs">
+              <button
+                type="button"
+                className={`tab-btn ${accountView === 'active' ? 'active' : ''}`}
+                onClick={() => setAccountView('active')}
+              >
+                Active ({accountsWithBalance.length})
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${accountView === 'all' ? 'active' : ''}`}
+                onClick={() => setAccountView('all')}
+              >
+                All ({sortedCredits.length})
+              </button>
+              <button
+                type="button"
+                className={`tab-btn ${accountView === 'closed' ? 'active' : ''}`}
+                onClick={() => setAccountView('closed')}
+              >
+                Closed ({closedAccounts.length})
+              </button>
+            </div>
+            <select
+              className="sort-select"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <option value="due-desc">Sort: Highest Due</option>
+              <option value="due-asc">Sort: Lowest Due</option>
+              <option value="recent">Sort: Recently Updated</option>
+              <option value="name">Sort: Name A-Z</option>
+            </select>
+          </div>
+
           <div className="list-header">
-            <h3>Active Accounts ({accountsWithBalance.length})</h3>
+            <h3>
+              {accountView === 'active' ? 'Active Accounts' : accountView === 'closed' ? 'Closed Accounts' : 'All Accounts'}
+              ({visibleCredits.length})
+            </h3>
           </div>
 
           {loading ? (
             <div className="loading">Loading...</div>
-          ) : accountsWithBalance.length === 0 ? (
-            <div className="no-credits">No active credit accounts</div>
+          ) : visibleCredits.length === 0 ? (
+            <div className="no-credits">No accounts found for this filter</div>
           ) : (
             <div className="credits-list">
-              {accountsWithBalance.map((credit) => (
+              {visibleCredits.map((credit) => (
                 <div
                   key={credit._id}
                   className={`credit-card ${selectedCredit?._id === credit._id ? 'active' : ''}`}
-                  onClick={() => setSelectedCredit(credit)}
+                  onClick={() => {
+                    setSelectedCredit(credit);
+                    fetchCreditDetails(credit._id);
+                  }}
                 >
                   <div className="card-header">
                     <h4>{credit.customerName}</h4>
@@ -308,52 +439,26 @@ const CreditLedger = () => {
                   <div className="card-details">
                     <p className="phone">📱 {credit.customerPhone}</p>
                     {credit.customerDoctor && <p className="doctor">🏥 {credit.customerDoctor}</p>}
+                    <p className="updated-at">
+                      Updated: {new Date(credit.lastUpdated || credit.createdDate || Date.now()).toLocaleDateString('en-IN')}
+                    </p>
                     <div className="amounts">
                       <div className="amount-item">
                         <span className="label">Total Due:</span>
-                        <span className="value">₹{credit.totalAmount.toFixed(2)}</span>
+                        <span className="value">{formatMoney(credit.totalAmount)}</span>
                       </div>
                       <div className="amount-item">
                         <span className="label">Paid:</span>
-                        <span className="value">₹{credit.paidAmount.toFixed(2)}</span>
+                        <span className="value">{formatMoney(credit.paidAmount)}</span>
                       </div>
                       <div className="amount-item remaining">
                         <span className="label">Remaining:</span>
-                        <span className="value">₹{credit.remainingAmount.toFixed(2)}</span>
+                        <span className="value">{formatMoney(credit.remainingAmount)}</span>
                       </div>
                     </div>
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-
-          {closedAccounts.length > 0 && (
-            <div className="closed-accounts">
-              <div className="closed-accounts-header">
-                <h3>✓ Closed Accounts ({closedAccounts.length})</h3>
-                <button
-                  type="button"
-                  className="btn-toggle-closed"
-                  onClick={() => setShowClosedAccounts((prev) => !prev)}
-                >
-                  {showClosedAccounts ? '−' : '+'}
-                </button>
-              </div>
-              {showClosedAccounts && (
-                <div className="closed-list">
-                  {closedAccounts.map((credit) => (
-                    <div
-                      key={credit._id}
-                      className="closed-card"
-                      onClick={() => setSelectedCredit(credit)}
-                    >
-                      <h4>{credit.customerName}</h4>
-                      <p className="phone">📱 {credit.customerPhone}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -362,6 +467,10 @@ const CreditLedger = () => {
         <div className="credit-details-panel">
           {selectedCredit ? (
             <>
+              {detailsLoading && (
+                <div className="loading">Loading details...</div>
+              )}
+
               <div className="details-header">
                 <h2>{selectedCredit.customerName}</h2>
                 <span className={`status-badge ${selectedCredit.status.toLowerCase()}`}>
@@ -466,7 +575,7 @@ const CreditLedger = () => {
 
               <div className="bills-section">
                 <h3>📑 Bills</h3>
-                {selectedCredit.bills.length > 0 ? (
+                {(selectedCredit.bills || []).length > 0 ? (
                   <table className="bills-table">
                     <thead>
                       <tr>
@@ -477,7 +586,7 @@ const CreditLedger = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedCredit.bills.map((bill, idx) => (
+                      {(selectedCredit.bills || []).map((bill, idx) => (
                         <tr key={idx}>
                           <td>
                             <button
@@ -507,7 +616,7 @@ const CreditLedger = () => {
 
               <div className="payments-section">
                 <h3>💰 Payment History</h3>
-                {selectedCredit.payments.length > 0 ? (
+                {(selectedCredit.payments || []).length > 0 ? (
                   <table className="payments-table">
                     <thead>
                       <tr>
@@ -518,7 +627,7 @@ const CreditLedger = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {selectedCredit.payments.map((payment, idx) => (
+                      {(selectedCredit.payments || []).map((payment, idx) => (
                         <tr key={idx}>
                           <td>{new Date(payment.paymentDate).toLocaleDateString('en-IN')}</td>
                           <td>₹{payment.paymentAmount.toFixed(2)}</td>

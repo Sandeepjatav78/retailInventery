@@ -44,5 +44,7 @@ CreditSchema.index({ customerName: 1 });
 CreditSchema.index({ customerPhone: 1 });
 CreditSchema.index({ status: 1 });
 CreditSchema.index({ createdDate: -1 });
+CreditSchema.index({ lastUpdated: -1 });
+CreditSchema.index({ status: 1, lastUpdated: -1 });
 
 module.exports = mongoose.model('Credit', CreditSchema);
