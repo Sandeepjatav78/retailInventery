@@ -11,6 +11,42 @@ const normalizePhone = (phone = '') => {
   return digits;
 };
 
+const normalizeCustomerName = (name = '') => String(name).trim();
+
+const buildMedicineKey = (item = {}) => {
+  const medicineId = String(item.medicineId || '').trim();
+  if (medicineId) return `id:${medicineId}`;
+
+  const name = String(item.name || '').trim().toLowerCase();
+  const batch = String(item.batch || '').trim().toLowerCase();
+  return `name:${name}|batch:${batch}`;
+};
+
+const buildCustomerPriceMap = (sales = []) => {
+  const priceMap = new Map();
+
+  for (const sale of sales) {
+    for (const item of sale.items || []) {
+      const itemName = String(item.name || '').trim();
+      if (!itemName || itemName === 'Medical/Dose Charge') continue;
+
+      const key = buildMedicineKey(item);
+      if (!priceMap.has(key)) {
+        priceMap.set(key, {
+          medicineId: item.medicineId || null,
+          name: item.name || '',
+          batch: item.batch || '',
+          price: Number(item.price || 0),
+          date: sale.date || sale.createdAt || null,
+          invoiceNo: sale.invoiceNo || ''
+        });
+      }
+    }
+  }
+
+  return Array.from(priceMap.values());
+};
+
 // --- 1. GET NEXT INVOICE ID ---
 exports.getNextInvoiceNumber = async (req, res) => {
   try {
@@ -19,6 +55,31 @@ exports.getNextInvoiceNumber = async (req, res) => {
     res.json({ success: true, nextInvoiceNo: `RP-${nextSeq}` });
   } catch (err) {
     res.status(500).json({ message: "Error fetching ID", error: err.message });
+  }
+};
+
+// --- 1B. GET CUSTOMER LAST PRICES ---
+exports.getCustomerLastPrices = async (req, res) => {
+  try {
+    const phone = normalizePhone(req.query.phone || '');
+    const name = normalizeCustomerName(req.query.name || '');
+
+    if (!phone && name.length < 2) {
+      return res.json({ success: true, items: [] });
+    }
+
+    const query = phone
+      ? { 'customerDetails.phone': { $in: [phone, req.query.phone || ''] } }
+      : { 'customerDetails.name': { $regex: `^${name}$`, $options: 'i' } };
+
+    const sales = await Sale.find(query)
+      .sort({ date: -1 })
+      .select('invoiceNo customerDetails date items')
+      .limit(20);
+
+    res.json({ success: true, items: buildCustomerPriceMap(sales) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 };
 
@@ -59,6 +120,44 @@ exports.createSale = async (req, res) => {
       purchasePrice: safeNumber(item?.purchasePrice),
       total: safeNumber(item?.total)
     }));
+
+    const customerPhone = normalizePhone(customerDetails?.phone || '');
+    const customerName = normalizeCustomerName(customerDetails?.name || '');
+    const customerHistoryQuery = customerPhone
+      ? { 'customerDetails.phone': { $in: [customerPhone, customerDetails?.phone || ''] } }
+      : (customerName.length >= 2 ? { 'customerDetails.name': { $regex: `^${customerName}$`, $options: 'i' } } : null);
+
+    const customerPriceLookup = new Map();
+    if (customerHistoryQuery) {
+      const previousSales = await Sale.find(customerHistoryQuery)
+        .sort({ date: -1 })
+        .select('items date invoiceNo')
+        .limit(20);
+
+      for (const sale of previousSales) {
+        for (const previousItem of sale.items || []) {
+          const itemName = String(previousItem.name || '').trim();
+          if (!itemName || itemName === 'Medical/Dose Charge') continue;
+
+          const key = buildMedicineKey(previousItem);
+          if (!customerPriceLookup.has(key)) {
+            customerPriceLookup.set(key, {
+              price: Number(previousItem.price || 0),
+              date: sale.date || null
+            });
+          }
+        }
+      }
+    }
+
+    const enrichedItems = sanitizedItems.map((item) => {
+      const lastPrice = customerPriceLookup.get(buildMedicineKey(item));
+      return {
+        ...item,
+        customerLastPrice: lastPrice ? Number(lastPrice.price || 0) : undefined,
+        customerLastPriceDate: lastPrice?.date || undefined
+      };
+    });
 
     if (userRole === 'staff') {
       const itemWithoutHsn = sanitizedItems.find((item) => {
@@ -118,8 +217,12 @@ exports.createSale = async (req, res) => {
     // 1. Create Sale Record
     const newSale = new Sale({
       invoiceNo: finalInvoiceNo,
-      customerDetails,
-      items: sanitizedItems,
+      customerDetails: {
+        name: customerName || 'Unknown',
+        phone: customerPhone || String(customerDetails?.phone || '').trim(),
+        doctor: String(customerDetails?.doctor || '').trim()
+      },
+      items: enrichedItems,
       totalAmount: safeNumber(totalAmount),
       paymentMode,
       isBillRequired: isBillRequired,

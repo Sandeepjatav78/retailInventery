@@ -26,6 +26,8 @@ const SaleSchema = new mongoose.Schema({
 
       quantity: { type: Number },
       price: { type: Number },   // Selling Price
+      customerLastPrice: { type: Number },
+      customerLastPriceDate: { type: Date },
       purchasePrice: { type: Number }, 
       total: { type: Number }
     }
@@ -49,6 +51,7 @@ const SaleSchema = new mongoose.Schema({
 SaleSchema.index({ invoiceNo: 1 });
 SaleSchema.index({ date: -1 });
 SaleSchema.index({ 'customerDetails.name': 1 });
+SaleSchema.index({ 'customerDetails.phone': 1 });
 SaleSchema.index({ 'items.name': 1 });
 
 module.exports = mongoose.model('Sale', SaleSchema);

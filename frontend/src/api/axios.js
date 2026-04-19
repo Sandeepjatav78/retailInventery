@@ -15,7 +15,15 @@ instance.interceptors.request.use((config) => {
 instance.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error?.response?.status === 401) {
+    const status = error?.response?.status;
+    const message = String(error?.response?.data?.message || '').toLowerCase();
+    const isAuthError = status === 401 && (
+      message.includes('token') ||
+      message.includes('unauthorized') ||
+      message.includes('invalid token')
+    );
+
+    if (isAuthError) {
       localStorage.removeItem('token');
       localStorage.removeItem('userRole');
       if (window.location.pathname !== '/login') {

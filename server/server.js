@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const connectDB = require('./config/db');
 // const path = require('path'); // You can remove this if using Cloudinary, Vercel doesn't use local uploads
 
 // Import Routes
@@ -20,22 +21,17 @@ app.use(express.json());
 console.log('[INFO] Attempting to connect to MongoDB...');
 console.log('[INFO] MongoDB URI:', process.env.MONGODB_URI ? process.env.MONGODB_URI.replace(/password=([^&]+)|:([^:/@]+)@/, '***') : 'NOT SET');
 
-mongoose.connect(process.env.MONGODB_URI, {
-  serverSelectionTimeoutMS: 15000,
-  connectTimeoutMS: 15000,
-  socketTimeoutMS: 45000,
-})
-  .then(() => {
-    console.log('✅ MongoDB Connected Successfully');
-  })
-  .catch(err => {
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    return next();
+  } catch (err) {
     console.error('❌ MongoDB Connection Error:', err.message);
-    console.error('   Please ensure:');
-    console.error('   1. MongoDB Atlas cluster is running');
-    console.error('   2. Connection string is correct');
-    console.error('   3. Network access is allowed (IP whitelist)');
-    console.error('   4. Database username/password is correct');
-  });
+    return res.status(503).json({
+      message: 'Database connection unavailable. Please try again in a moment.'
+    });
+  }
+});
 
 // Routes
 app.use('/api/medicines', inventoryRoutes);

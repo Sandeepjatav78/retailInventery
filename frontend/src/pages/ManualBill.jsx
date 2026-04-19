@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { generateBillHTML } from '../utils/BillGenerator';
 import api from '../api/axios'; 
+import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from '../utils/medicineCache';
 
 const getLocalDateString = () => {
     const date = new Date();
@@ -46,6 +47,7 @@ const ManualBill = () => {
   const resultListRef = useRef(null);
     const suggestionSelectionLockRef = useRef(false);
   const currentUserRole = localStorage.getItem('userRole') || 'admin';
+    const [inventory, setInventory] = useState(() => getCachedMedicines());
 
   useEffect(() => {
     if (focusedIndex >= 0 && resultListRef.current) {
@@ -69,6 +71,27 @@ const ManualBill = () => {
   }, []);
 
   useEffect(() => {
+        let mounted = true;
+
+        const refreshInventory = async () => {
+            try {
+                const fresh = await syncMedicinesCache(api);
+                if (mounted) setInventory(fresh);
+            } catch (err) {
+                console.error(err);
+            }
+        };
+
+        refreshInventory();
+        const intervalId = setInterval(refreshInventory, 5 * 60 * 1000);
+
+        return () => {
+            mounted = false;
+            clearInterval(intervalId);
+        };
+    }, []);
+
+    useEffect(() => {
     const fetchMedicines = async () => {
         if (suggestionSelectionLockRef.current) {
             suggestionSelectionLockRef.current = false;
@@ -77,19 +100,16 @@ const ManualBill = () => {
 
         if (isSuggestionsEnabled && query.length > 1) {
             try {
-                const res = await api.get(`/medicines/search?q=${query}`);
-                const filtered = currentUserRole === 'staff'
-                    ? res.data.filter((med) => String(med.hsnCode || '').trim())
-                    : res.data;
+                                const filtered = filterMedicinesFromCache(inventory, query, { includeOutOfStock: false, userRole: currentUserRole });
                 setSuggestions(filtered);
                 setShowSuggestions(true);
                 setFocusedIndex(-1); 
             } catch (err) { setSuggestions([]); }
         } else { setSuggestions([]); setShowSuggestions(false); }
     };
-    const timer = setTimeout(fetchMedicines, 300);
+        const timer = setTimeout(fetchMedicines, 150);
     return () => clearTimeout(timer);
-  }, [query, isSuggestionsEnabled]);
+    }, [query, isSuggestionsEnabled, inventory, currentUserRole]);
 
   useEffect(() => {
       const handleClickOutside = (event) => {

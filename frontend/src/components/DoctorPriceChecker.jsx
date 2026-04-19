@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../api/axios';
+import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from '../utils/medicineCache';
 
 const DoctorPriceChecker = () => {
   const [query, setQuery] = useState('');
@@ -8,7 +9,29 @@ const DoctorPriceChecker = () => {
   const [priceDrafts, setPriceDrafts] = useState({});
   const [savingId, setSavingId] = useState(null);
   const [editingState, setEditingState] = useState({ id: null, target: null });
+  const [inventory, setInventory] = useState(() => getCachedMedicines());
   const searchRef = useRef(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const refreshInventory = async () => {
+      try {
+        const fresh = await syncMedicinesCache(api);
+        if (mounted) setInventory(fresh);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    refreshInventory();
+    const intervalId = setInterval(refreshInventory, 5 * 60 * 1000);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, []);
 
   const normalizeNumber = (value) => {
     const parsed = Number(value);
@@ -112,25 +135,25 @@ const DoctorPriceChecker = () => {
 
   useEffect(() => {
     const fetchMedicines = async () => {
-      if (query.length > 1) {
-        setLoading(true);
-        try {
-          const res = await api.get(`/medicines/search?q=${query}`);
-          setResults(res.data);
-        } catch (err) {
-          console.error(err);
-          setResults([]);
-        } finally {
-          setLoading(false);
-        }
-      } else {
+      if (query.length <= 1) {
         setResults([]);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        setResults(filterMedicinesFromCache(inventory, query, { includeOutOfStock: true, userRole: 'admin' }));
+      } catch (err) {
+        console.error(err);
+        setResults([]);
+      } finally {
+        setLoading(false);
       }
     };
 
-    const timer = setTimeout(fetchMedicines, 300);
+    const timer = setTimeout(fetchMedicines, 150);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, inventory]);
 
   const handleClear = () => {
     setQuery('');

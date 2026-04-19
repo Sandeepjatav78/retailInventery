@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import api from "../api/axios";
 import { generateBillHTML } from "../utils/BillGenerator";
+import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from "../utils/medicineCache";
 
 const SaleForm = () => {
   const getSavedState = (key, defaultValue) => {
@@ -37,6 +38,8 @@ const SaleForm = () => {
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
   const [focusedCustomerIndex, setFocusedCustomerIndex] = useState(-1);
   const [customerFocusField, setCustomerFocusField] = useState("name");
+  const [inventory, setInventory] = useState(() => getCachedMedicines());
+  const [customerPriceHistory, setCustomerPriceHistory] = useState({});
 
   // --- SUGGESTION TOGGLE STATE ---
   const [suggestionsEnabled, setSuggestionsEnabled] = useState(true);
@@ -106,18 +109,35 @@ const SaleForm = () => {
   }, [cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, grandTotal, isCredit, creditNotes]);
 
   useEffect(() => {
+    let mounted = true;
+
+    const refreshInventory = async () => {
+      try {
+        const fresh = await syncMedicinesCache(api);
+        if (mounted) setInventory(fresh);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    refreshInventory();
+    const intervalId = setInterval(refreshInventory, 5 * 60 * 1000);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
     if (query.length > 1 && suggestionsEnabled) {
-      api.get(`/medicines/search?q=${query}`).then((res) => {
-        const filtered = isStaff
-          ? res.data.filter((med) => String(med.hsnCode || '').trim())
-          : res.data;
-        setResults(filtered);
-        setFocusedIndex(-1);
-      });
-    } else { 
+      const filtered = filterMedicinesFromCache(inventory, query, { includeOutOfStock: false, userRole });
+      setResults(filtered);
+      setFocusedIndex(-1);
+    } else {
         setResults([]); 
     }
-  }, [query, suggestionsEnabled, isStaff]);
+  }, [query, suggestionsEnabled, inventory, userRole]);
 
   useEffect(() => {
     if (customerSuggestionLockRef.current) {
@@ -155,6 +175,48 @@ const SaleForm = () => {
 
     return () => clearTimeout(timer);
   }, [customer.name, customer.phone, customerFocusField, isBillNeeded]);
+
+  useEffect(() => {
+    if (!isBillNeeded) {
+      setCustomerPriceHistory({});
+      return;
+    }
+
+    const phone = String(customer.phone || '').trim();
+    const name = String(customer.name || '').trim();
+    const lookupLabel = phone.length >= 2 ? 'phone' : (name.length >= 2 ? 'name' : '');
+
+    if (!lookupLabel) {
+      setCustomerPriceHistory({});
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        if (phone.length >= 2) params.set('phone', phone);
+        if (name.length >= 2) params.set('name', name);
+
+        const res = await api.get(`/sales/customer-last-prices?${params.toString()}`);
+        const items = res.data?.items || [];
+        const nextMap = {};
+
+        items.forEach((item) => {
+          const key = item.medicineId
+            ? `id:${item.medicineId}`
+            : `name:${String(item.name || '').trim().toLowerCase()}|batch:${String(item.batch || '').trim().toLowerCase()}`;
+          nextMap[key] = item;
+        });
+
+        setCustomerPriceHistory(nextMap);
+      } catch (err) {
+        console.error('Failed to load customer price history:', err);
+        setCustomerPriceHistory({});
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [customer.name, customer.phone, isBillNeeded]);
 
   // --- LOGIC ---
   const calculateRowTotal = (price, qty, unit, packSize) => {
@@ -242,6 +304,12 @@ const SaleForm = () => {
     setQuery(""); setResults([]);
   };
 
+  const getCustomerLastPrice = (item) => {
+    const directKey = item.medicineId ? `id:${item.medicineId}` : '';
+    const fallbackKey = `name:${String(item.name || '').trim().toLowerCase()}|batch:${String(item.batch || '').trim().toLowerCase()}`;
+    return customerPriceHistory[directKey] || customerPriceHistory[fallbackKey] || null;
+  };
+
   // ✅ CHECKOUT LOGIC
   const handleCheckout = async () => {
     if (cart.length === 0 && doseVal <= 0) return alert("Cart is empty");
@@ -260,10 +328,13 @@ const SaleForm = () => {
     const finalItems = cart.map((i) => {
         let quantityToSend = i.unit === 'loose' ? (i.quantity / i.packSize) : i.quantity;
         quantityToSend = parseFloat(quantityToSend.toFixed(4));
+      const previousSale = getCustomerLastPrice(i);
         return { 
             ...i, 
             quantity: quantityToSend,
-            medicineId: i.medicineId 
+        medicineId: i.medicineId,
+        customerLastPrice: previousSale?.price ?? null,
+        customerLastPriceDate: previousSale?.date ?? null
         };
     });
 
@@ -485,6 +556,9 @@ const SaleForm = () => {
                 <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
                   Rate
                 </th>
+                <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">
+                  Prev To This Patient
+                </th>
                 <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase text-center">Qty / Unit</th>
                 <th className="px-4 py-3 text-xs font-bold text-gray-500 uppercase text-right">Total</th>
                 <th className="px-2 py-3 text-xs font-bold text-gray-500 uppercase"></th>
@@ -540,6 +614,26 @@ const SaleForm = () => {
                     </td>
 
                     <td className="px-2 py-3 text-center">
+                      {(() => {
+                        const previousSale = getCustomerLastPrice(item);
+                        if (!previousSale) {
+                          return <span className="text-xs text-gray-400 italic">-</span>;
+                        }
+
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-xs font-bold text-indigo-700">
+                              ₹{Number(previousSale.price || 0).toFixed(2)}
+                            </span>
+                            <span className="text-[10px] text-gray-400">
+                              {previousSale.date ? new Date(previousSale.date).toLocaleDateString('en-IN') : ''}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </td>
+
+                    <td className="px-2 py-3 text-center">
                       <div className="flex flex-col items-center gap-1">
                         <div className="flex items-center justify-center border border-gray-300 rounded overflow-hidden w-24 bg-white">
                             <button onClick={() => updateQty(idx, item.quantity - 1)} className="px-2 py-1 bg-gray-50 text-gray-600 font-bold">-</button>
@@ -584,7 +678,7 @@ const SaleForm = () => {
       {/* RIGHT: CHECKOUT (Same as before) */}
       <div className="lg:col-span-1 bg-white rounded-xl shadow-sm border border-gray-200 p-6 flex flex-col h-fit sticky top-4">
         {/* ... Checkout UI ... */}
-        <div className="bg-gradient-to-br from-teal-600 to-teal-800 rounded-xl p-6 text-center text-white shadow-lg mb-6">
+        <div className="bg-linear-to-br from-teal-600 to-teal-800 rounded-xl p-6 text-center text-white shadow-lg mb-6">
           <div className="text-teal-100 text-xs font-bold uppercase tracking-wider mb-1">
             Grand Total
           </div>

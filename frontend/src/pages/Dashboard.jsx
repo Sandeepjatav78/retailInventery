@@ -3,6 +3,7 @@ import api from "../api/axios";
 import ExpiryAlert from "../components/ExpiryAlert";
 import InventoryTable from "../components/InventoryTable";
 import { useNavigate } from "react-router-dom";
+import { getCachedMedicines, syncMedicinesCache } from "../utils/medicineCache";
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -31,16 +32,13 @@ const Dashboard = () => {
     packSize: "10",
   });
 
-  const fetchMeds = () => {
-    api.get("/medicines").then((res) => {
-      setMeds(res.data);
-      try {
-        const payload = { items: res.data, ts: Date.now() };
-        localStorage.setItem("inventory_cache_v1", JSON.stringify(payload));
-      } catch {
-        // ignore cache write errors
-      }
-    });
+  const fetchMeds = async () => {
+    try {
+      const data = await syncMedicinesCache(api);
+      setMeds(data);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   useEffect(() => {
@@ -50,13 +48,9 @@ const Dashboard = () => {
     } else {
       // 1) Try to load fast from localStorage cache
       try {
-        const raw = localStorage.getItem("inventory_cache_v1");
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          const maxAgeMs = 5 * 60 * 1000; // 5 minutes
-          if (parsed.ts && Date.now() - parsed.ts < maxAgeMs && Array.isArray(parsed.items)) {
-            setMeds(parsed.items);
-          }
+        const cached = getCachedMedicines();
+        if (cached.length) {
+          setMeds(cached);
         }
       } catch {
         // ignore cache read errors
@@ -64,6 +58,12 @@ const Dashboard = () => {
 
       // 2) Always refresh from server in background
       fetchMeds();
+
+      const intervalId = setInterval(() => {
+        fetchMeds();
+      }, 5 * 60 * 1000);
+
+      return () => clearInterval(intervalId);
     }
   }, []);
 
@@ -213,7 +213,7 @@ const Dashboard = () => {
         packSize: "10",
       }));
       document.querySelector('input[type="file"]').value = "";
-      fetchMeds();
+      await fetchMeds();
     } catch (error) {
       console.error(error);
       alert("Error adding stock: " + (error.response?.data?.message || error.message));
@@ -224,7 +224,7 @@ const Dashboard = () => {
     try {
       await api.put(`/medicines/${id}`, updatedData);
       alert("Updated Successfully!");
-      fetchMeds();
+      await fetchMeds();
     } catch (err) { alert("Update Failed"); }
   };
 
@@ -232,7 +232,7 @@ const Dashboard = () => {
     try {
       await api.delete(`/medicines/${id}`);
       alert("🗑️ Item Deleted Successfully");
-      fetchMeds();
+      await fetchMeds();
     } catch (err) { alert("Failed to delete item"); }
   };
 

@@ -8,6 +8,9 @@ router.use(authenticateToken);
 // 1. Get Next ID (Frontend calls this on load)
 router.get('/next-id', salesController.getNextInvoiceNumber);
 
+// 1B. Get latest prices for this customer
+router.get('/customer-last-prices', salesController.getCustomerLastPrices);
+
 // 2. Create New Sale
 router.post('/', salesController.createSale);
 

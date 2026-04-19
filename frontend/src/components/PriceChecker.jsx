@@ -1,36 +1,59 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../api/axios';
+import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from '../utils/medicineCache';
 
 const PriceChecker = () => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [inventory, setInventory] = useState(() => getCachedMedicines());
   const searchRef = useRef(null);
   const userRole = typeof window !== 'undefined' ? localStorage.getItem('userRole') : null;
   const isAdmin = userRole === 'admin';
 
-  // --- SEARCH LOGIC ---
   useEffect(() => {
-    const fetchMedicines = async () => {
-      if (query.length > 1) {
-        setLoading(true);
-        try {
-          const res = await api.get(`/medicines/search?q=${encodeURIComponent(query)}&includeOutOfStock=true`);
-          setResults(res.data);
-        } catch (err) {
-          console.error(err);
-          setResults([]);
-        } finally {
-          setLoading(false);
-        }
-      } else {
-        setResults([]);
+    let mounted = true;
+
+    const refreshInventory = async () => {
+      try {
+        const fresh = await syncMedicinesCache(api);
+        if (mounted) setInventory(fresh);
+      } catch (err) {
+        console.error(err);
       }
     };
 
-    const timer = setTimeout(fetchMedicines, 300); 
+    refreshInventory();
+    const intervalId = setInterval(refreshInventory, 5 * 60 * 1000);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  // --- SEARCH LOGIC ---
+  useEffect(() => {
+    const fetchMedicines = async () => {
+      if (query.length <= 1) {
+        setResults([]);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        setResults(filterMedicinesFromCache(inventory, query, { includeOutOfStock: true, userRole }));
+      } catch (err) {
+        console.error(err);
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    const timer = setTimeout(fetchMedicines, 150);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, inventory, userRole]);
 
   // --- CLEAR SEARCH ---
   const handleClear = () => {

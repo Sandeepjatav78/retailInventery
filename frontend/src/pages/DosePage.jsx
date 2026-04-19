@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
+import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from '../utils/medicineCache';
 
 const DosePage = () => {
   // --- STATES ---
@@ -22,12 +23,37 @@ const DosePage = () => {
 
   // Loose Stock List State
   const [looseStock, setLooseStock] = useState([]);
+    const [inventory, setInventory] = useState(() => getCachedMedicines());
 
   // --- INITIAL LOAD ---
   useEffect(() => {
-    fetchPending();
-    fetchLooseStock(); 
-  }, []);
+        let mounted = true;
+
+        const refreshInventory = async () => {
+            try {
+                const fresh = await syncMedicinesCache(api);
+                if (mounted) setInventory(fresh);
+            } catch (err) {
+                console.error(err);
+            }
+        };
+
+        refreshInventory();
+        const intervalId = setInterval(refreshInventory, 5 * 60 * 1000);
+
+        return () => {
+            mounted = false;
+            clearInterval(intervalId);
+        };
+    }, []);
+
+    useEffect(() => {
+        fetchPending();
+    }, []);
+
+    useEffect(() => {
+        fetchLooseStock();
+    }, [inventory]);
 
   const fetchPending = async () => {
     try {
@@ -38,8 +64,7 @@ const DosePage = () => {
 
   const fetchLooseStock = async () => {
       try {
-          const res = await api.get('/medicines'); 
-          const loose = res.data.filter(m => m.looseQty > 0);
+          const loose = inventory.filter(m => Number(m.looseQty || 0) > 0);
           setLooseStock(loose);
       } catch (err) { console.error("Error fetching loose stock", err); }
   };
@@ -65,8 +90,8 @@ const DosePage = () => {
   const handleSearch = async (val) => {
     setQuery(val);
     if (val.length > 1) {
-      const res = await api.get(`/medicines/search?q=${val}`);
-      setResults(res.data);
+            const filtered = filterMedicinesFromCache(inventory, val, { includeOutOfStock: false, userRole: 'admin' });
+            setResults(filtered);
     } else { setResults([]); }
   };
 

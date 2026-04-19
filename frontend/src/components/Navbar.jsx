@@ -11,6 +11,7 @@ const Navbar = () => {
   const handleLogout = () => {
     if(window.confirm("Are you sure you want to Logout?")) {
         localStorage.removeItem('token'); // Token delete
+            localStorage.removeItem('userRole');
         localStorage.removeItem('user');  // User data delete
         navigate('/login'); // Redirect to Login
     }
