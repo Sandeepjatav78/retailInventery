@@ -241,6 +241,11 @@ const DailyReport = () => {
   const staffCash = staffTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
   const staffOnline = staffTxns.filter(t => t.paymentMode === 'Online' || t.paymentMode === 'Credit').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
 
+  // --- 🔥 USE BACKEND DATA DIRECTLY ---
+  const finalTotal = report?.totalRevenue || 0;
+  const finalCash = report?.cashRevenue || 0;
+  const finalOnline = report?.onlineRevenue || 0;
+
   // Admin and Staff filter for table display
   // Use a localized userRole check to be safe
   const currentRole = localStorage.getItem('userRole');
@@ -289,15 +294,26 @@ const DailyReport = () => {
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-green-500">
             <h4 className="text-gray-500 text-xs font-bold uppercase">{userRole === 'admin' ? 'Total Revenue' : 'My Total Revenue'}</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-gray-800">₹{totalRevenue.toFixed(0)}</h1>
-                {userRole === 'admin' && staffTotal > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{staffTotal.toFixed(0)})</span>}
+                <h1 className="text-2xl font-bold text-gray-800">₹{Number(finalTotal).toFixed(0)}</h1>
+                {userRole === 'admin' && staffTotal > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{Number(staffTotal).toFixed(0)})</span>}
             </div>
             <div className="text-green-600 text-xs font-bold mt-1">{filteredTransactions.length} Bills Found</div>
         </div>
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-orange-500">
             <h4 className="text-gray-500 text-xs font-bold uppercase">Cash</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-orange-600">₹{cashRevenue.toFixed(0)}</h1>
+                <h1 className="text-2xl font-bold text-orange-600">₹{Number(finalCash).toFixed(0)}</h1>
+                {userRole === 'admin' && staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{Number(staffCash).toFixed(0)})</span>}
+            </div>
+        </div>
+        <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-blue-500">
+            <h4 className="text-gray-500 text-xs font-bold uppercase">Online</h4>
+            <div className="flex flex-wrap items-baseline gap-2 mt-1">
+                <h1 className="text-2xl font-bold text-blue-600">₹{Number(finalOnline).toFixed(0)}</h1>
+                {userRole === 'admin' && staffOnline > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{Number(staffOnline).toFixed(0)})</span>}
+            </div>
+        </div>
+      </div>
                 {userRole === 'admin' && staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{staffCash.toFixed(0)})</span>}
             </div>
         </div>
