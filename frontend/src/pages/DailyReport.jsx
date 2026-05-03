@@ -314,17 +314,6 @@ const DailyReport = () => {
             </div>
         </div>
       </div>
-                {userRole === 'admin' && staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{staffCash.toFixed(0)})</span>}
-            </div>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-blue-500">
-            <h4 className="text-gray-500 text-xs font-bold uppercase">Online</h4>
-            <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-blue-600">₹{onlineRevenue.toFixed(0)}</h1>
-                {userRole === 'admin' && staffOnline > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{staffOnline.toFixed(0)})</span>}
-            </div>
-        </div>
-      </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="p-3 border-b bg-gray-50"><input type="text" placeholder="🔍 Search Invoice / Name / Medicine..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-2 border rounded text-sm focus:outline-none focus:border-teal-500" /></div>
