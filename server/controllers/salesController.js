@@ -349,11 +349,15 @@ exports.getAllSales = async (req, res) => {
     // Sort by Date (Newest First)
     const sales = await Sale.find(query).sort({ date: -1 });
 
+    // Note: totalRevenue, cashRevenue, onlineRevenue returned here 
+    // are for ALL sales in the result set (which might be filtered by search).
     let totalRevenue = 0, cashRevenue = 0, onlineRevenue = 0;
     sales.forEach(s => {
-      totalRevenue += s.totalAmount;
-      if (s.paymentMode === 'Cash') cashRevenue += s.totalAmount;
-      else onlineRevenue += s.totalAmount;
+      const amount = s.totalAmount || 0;
+      totalRevenue += amount;
+      if (s.paymentMode === 'Cash') cashRevenue += amount;
+      else if (s.paymentMode === 'Online' || s.paymentMode === 'Credit') onlineRevenue += amount; 
+      // Treating Credit as Online revenue in summary, or you might want to handle it separately.
     });
 
     res.json({

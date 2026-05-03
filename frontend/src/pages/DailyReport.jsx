@@ -211,24 +211,32 @@ const DailyReport = () => {
 
   let filteredTransactions = report ? [...report.transactions] : [];
 
-  if (userRole === 'staff') {
-      filteredTransactions = filteredTransactions.filter(t => t.createdBy === 'staff');
-  }
-
+  // Sort by Date (Newest First)
   filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
   const calcTransactions = filteredTransactions.filter(t => !t.invoiceNo.startsWith('MAN'));
-  const adminTxns = calcTransactions.filter(t => t.createdBy !== 'staff');
-  const adminTotal = adminTxns.reduce((acc, t) => acc + t.totalAmount, 0);
-  const adminCash = adminTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + t.totalAmount, 0);
-  const adminOnline = adminTxns.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + t.totalAmount, 0);
+  
+  // Calculate stats for current view
+  const displayTxns = userRole === 'staff' 
+    ? calcTransactions.filter(t => t.createdBy === 'staff')
+    : calcTransactions;
 
+  const totalRevenue = displayTxns.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+  const cashRevenue = displayTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+  const onlineRevenue = displayTxns.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+
+  // For Admin view, we also want to see staff component separately
   const staffTxns = calcTransactions.filter(t => t.createdBy === 'staff');
-  const staffTotal = staffTxns.reduce((acc, t) => acc + t.totalAmount, 0);
-  const staffCash = staffTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + t.totalAmount, 0);
-  const staffOnline = staffTxns.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + t.totalAmount, 0);
+  const staffTotal = staffTxns.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+  const staffCash = staffTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+  const staffOnline = staffTxns.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + (t.totalAmount || 0), 0);
 
-    if (!report) return <div className="text-center p-10 text-gray-500 font-medium">Loading...</div>;
+  // Admin and Staff filter for table display
+  if (userRole === 'staff') {
+    filteredTransactions = filteredTransactions.filter(t => t.createdBy === 'staff');
+  }
+
+  if (!report) return <div className="text-center p-10 text-gray-500 font-medium">Loading...</div>;
 
   return (
     <div className="p-4 md:p-6 bg-gray-50 min-h-screen">
@@ -266,25 +274,25 @@ const DailyReport = () => {
       {/* STATS CARDS */}
       <div className="grid gap-4 mb-6 grid-cols-1 md:grid-cols-3">
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-green-500">
-            <h4 className="text-gray-500 text-xs font-bold uppercase">{userRole === 'admin' ? 'Total Revenue (Admin)' : 'My Total Revenue'}</h4>
+            <h4 className="text-gray-500 text-xs font-bold uppercase">{userRole === 'admin' ? 'Total Revenue' : 'My Total Revenue'}</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-gray-800">₹{userRole === 'admin' ? adminTotal.toFixed(0) : staffTotal.toFixed(0)}</h1>
-                {userRole === 'admin' && staffTotal > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffTotal.toFixed(0)})</span>}
+                <h1 className="text-2xl font-bold text-gray-800">₹{totalRevenue.toFixed(0)}</h1>
+                {userRole === 'admin' && staffTotal > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{staffTotal.toFixed(0)})</span>}
             </div>
             <div className="text-green-600 text-xs font-bold mt-1">{filteredTransactions.length} Bills Found</div>
         </div>
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-orange-500">
             <h4 className="text-gray-500 text-xs font-bold uppercase">Cash</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-orange-600">₹{userRole === 'admin' ? adminCash.toFixed(0) : staffCash.toFixed(0)}</h1>
-                {userRole === 'admin' && staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffCash.toFixed(0)})</span>}
+                <h1 className="text-2xl font-bold text-orange-600">₹{cashRevenue.toFixed(0)}</h1>
+                {userRole === 'admin' && staffCash > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{staffCash.toFixed(0)})</span>}
             </div>
         </div>
         <div className="bg-white p-4 rounded-lg shadow-sm border-l-4 border-l-blue-500">
             <h4 className="text-gray-500 text-xs font-bold uppercase">Online</h4>
             <div className="flex flex-wrap items-baseline gap-2 mt-1">
-                <h1 className="text-2xl font-bold text-blue-600">₹{userRole === 'admin' ? adminOnline.toFixed(0) : staffOnline.toFixed(0)}</h1>
-                {userRole === 'admin' && staffOnline > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(+Staff: ₹{staffOnline.toFixed(0)})</span>}
+                <h1 className="text-2xl font-bold text-blue-600">₹{onlineRevenue.toFixed(0)}</h1>
+                {userRole === 'admin' && staffOnline > 0 && <span className="text-xs text-purple-600 font-bold bg-purple-50 px-1 rounded">(inc. Staff: ₹{staffOnline.toFixed(0)})</span>}
             </div>
         </div>
       </div>
