@@ -26,13 +26,19 @@ const DailyReport = () => {
 
   const fetchReport = () => {
     let url = '';
+    const queryParams = new URLSearchParams();
+    
     if (searchTerm.length > 1) { 
-        url = `/sales/filter?search=${searchTerm}`; 
+        queryParams.append('search', searchTerm);
     } else { 
-        url = `/sales/filter?start=${dates.start}&end=${dates.end}`; 
+        queryParams.append('start', dates.start);
+        queryParams.append('end', dates.end);
     }
 
+    url = `/sales/filter?${queryParams.toString()}`;
+
     api.get(url).then(res => {
+          console.log("Report Data Received:", res.data); // Debugging
           setReport(res.data);
           setReportError('');
       }).catch(err => {
@@ -221,18 +227,25 @@ const DailyReport = () => {
     ? calcTransactions.filter(t => t.createdBy === 'staff')
     : calcTransactions;
 
-  const totalRevenue = displayTxns.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
-  const cashRevenue = displayTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + (t.totalAmount || 0), 0);
-  const onlineRevenue = displayTxns.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+  // Debugging total amount values
+  const totalRevenue = displayTxns.reduce((acc, t) => {
+    const amt = Number(t.totalAmount) || 0;
+    return acc + amt;
+  }, 0);
+  const cashRevenue = displayTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
+  const onlineRevenue = displayTxns.filter(t => t.paymentMode === 'Online' || t.paymentMode === 'Credit').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
 
   // For Admin view, we also want to see staff component separately
   const staffTxns = calcTransactions.filter(t => t.createdBy === 'staff');
-  const staffTotal = staffTxns.reduce((acc, t) => acc + (t.totalAmount || 0), 0);
-  const staffCash = staffTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + (t.totalAmount || 0), 0);
-  const staffOnline = staffTxns.filter(t => t.paymentMode === 'Online').reduce((acc, t) => acc + (t.totalAmount || 0), 0);
+  const staffTotal = staffTxns.reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
+  const staffCash = staffTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
+  const staffOnline = staffTxns.filter(t => t.paymentMode === 'Online' || t.paymentMode === 'Credit').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
 
   // Admin and Staff filter for table display
-  if (userRole === 'staff') {
+  // Use a localized userRole check to be safe
+  const currentRole = localStorage.getItem('userRole');
+
+  if (currentRole === 'staff') {
     filteredTransactions = filteredTransactions.filter(t => t.createdBy === 'staff');
   }
 

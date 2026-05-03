@@ -326,18 +326,29 @@ exports.getAllSales = async (req, res) => {
     let query = {};
     const userRole = req.user?.role || 'staff';
 
+    // --- 🔥 ROLE-BASED VISIBILITY ---
+    // If staff, only show their own sales
     if (userRole === 'staff') {
       query.createdBy = 'staff';
     }
 
     // --- 🔥 GLOBAL SEARCH LOGIC ---
     if (search) {
-      // Search in Invoice, Customer Name, AND Medicine Names
-      query.$or = [
-        { invoiceNo: { $regex: search, $options: 'i' } },
-        { "customerDetails.name": { $regex: search, $options: 'i' } },
-        { "items.name": { $regex: search, $options: 'i' } } // <--- Checks inside items array
-      ];
+      // Create a separate condition for search
+      const searchCondition = {
+        $or: [
+          { invoiceNo: { $regex: search, $options: 'i' } },
+          { "customerDetails.name": { $regex: search, $options: 'i' } },
+          { "items.name": { $regex: search, $options: 'i' } }
+        ]
+      };
+
+      // Merge search into query
+      if (query.createdBy) {
+        query = { $and: [{ createdBy: query.createdBy }, searchCondition] };
+      } else {
+        query = searchCondition;
+      }
     }
     // --- 📅 DATE FILTER LOGIC ---
     else if (start && end) {
