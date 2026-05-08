@@ -322,14 +322,15 @@ exports.createSale = async (req, res) => {
 // --- 3. GET REPORT (With Medicine Search Fixed) ---
 exports.getAllSales = async (req, res) => {
   try {
-    const { start, end, search } = req.query; 
-    let query = {};
+    const { start, end, search, paymentMode } = req.query; 
+    const conditions = [];
     const userRole = req.user?.role || 'staff';
+    const normalizedPaymentMode = String(paymentMode || '').trim().toLowerCase();
 
     // --- 🔥 ROLE-BASED VISIBILITY ---
     // If staff, only show their own sales
     if (userRole === 'staff') {
-      query.createdBy = 'staff';
+      conditions.push({ createdBy: 'staff' });
     }
 
     // --- 🔥 GLOBAL SEARCH LOGIC ---
@@ -343,19 +344,25 @@ exports.getAllSales = async (req, res) => {
         ]
       };
 
-      // Merge search into query
-      if (query.createdBy) {
-        query = { $and: [{ createdBy: query.createdBy }, searchCondition] };
-      } else {
-        query = searchCondition;
-      }
+      conditions.push(searchCondition);
     }
     // --- 📅 DATE FILTER LOGIC ---
     else if (start && end) {
       let startDate = new Date(start); startDate.setHours(0, 0, 0, 0);
       let endDate = new Date(end); endDate.setHours(23, 59, 59, 999);
-      query.date = { $gte: startDate, $lte: endDate };
+      conditions.push({ date: { $gte: startDate, $lte: endDate } });
     }
+
+    // --- 💳 PAYMENT MODE FILTER LOGIC ---
+    if (normalizedPaymentMode === 'cash') {
+      conditions.push({ paymentMode: 'Cash' });
+    } else if (normalizedPaymentMode === 'online') {
+      conditions.push({ paymentMode: 'Online' });
+    } else if (normalizedPaymentMode === 'credit') {
+      conditions.push({ paymentMode: 'Credit' });
+    }
+
+    const query = conditions.length ? { $and: conditions } : {};
 
     // Sort by Date (Newest First)
     const sales = await Sale.find(query).sort({ date: -1 });

@@ -10,10 +10,32 @@ const getLocalDateString = (date = new Date()) => {
   return new Date(date.getTime() - offset).toISOString().split('T')[0];
 };
 
+const normalizePaymentMode = (paymentMode = '') => String(paymentMode || '').trim().toLowerCase();
+const isCashPayment = (paymentMode = '') => normalizePaymentMode(paymentMode) === 'cash';
+const isOnlinePayment = (paymentMode = '') => {
+    const normalized = normalizePaymentMode(paymentMode);
+    return normalized === 'online' || normalized === 'credit';
+};
+
+const getPaymentTagConfig = (paymentMode = '') => {
+    const normalized = normalizePaymentMode(paymentMode);
+    if (normalized === 'cash') {
+        return { label: 'CASH', className: 'bg-orange-100 text-orange-700 border-orange-200' };
+    }
+    if (normalized === 'online') {
+        return { label: 'ONLINE', className: 'bg-blue-100 text-blue-700 border-blue-200' };
+    }
+    if (normalized === 'credit') {
+        return { label: 'CREDIT', className: 'bg-violet-100 text-violet-700 border-violet-200' };
+    }
+    return { label: String(paymentMode || 'N/A').toUpperCase(), className: 'bg-gray-100 text-gray-700 border-gray-200' };
+};
+
 const DailyReport = () => {
   const [report, setReport] = useState(null);
     const [reportError, setReportError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+    const [paymentFilter, setPaymentFilter] = useState('all');
   
   const [dates, setDates] = useState({ 
       start: getLocalDateString(), 
@@ -35,6 +57,10 @@ const DailyReport = () => {
         queryParams.append('end', dates.end);
     }
 
+    if (paymentFilter !== 'all') {
+        queryParams.append('paymentMode', paymentFilter);
+    }
+
     url = `/sales/filter?${queryParams.toString()}`;
 
     api.get(url).then(res => {
@@ -51,7 +77,7 @@ const DailyReport = () => {
   useEffect(() => { 
       const timer = setTimeout(() => { fetchReport(); }, 500);
       return () => clearTimeout(timer);
-  }, [dates, searchTerm]); 
+    }, [dates, searchTerm, paymentFilter]); 
 
   const setRange = (type) => {
     const today = new Date(); 
@@ -220,32 +246,6 @@ const DailyReport = () => {
   // Sort by Date (Newest First)
   filteredTransactions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  const calcTransactions = filteredTransactions.filter(t => !t.invoiceNo.startsWith('MAN'));
-  
-  // Calculate stats for current view
-  const displayTxns = userRole === 'staff' 
-    ? calcTransactions.filter(t => t.createdBy === 'staff')
-    : calcTransactions;
-
-  // Debugging total amount values
-  const totalRevenue = displayTxns.reduce((acc, t) => {
-    const amt = Number(t.totalAmount) || 0;
-    return acc + amt;
-  }, 0);
-  const cashRevenue = displayTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
-  const onlineRevenue = displayTxns.filter(t => t.paymentMode === 'Online' || t.paymentMode === 'Credit').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
-
-  // For Admin view, we also want to see staff component separately
-  const staffTxns = calcTransactions.filter(t => t.createdBy === 'staff');
-  const staffTotal = staffTxns.reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
-  const staffCash = staffTxns.filter(t => t.paymentMode === 'Cash').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
-  const staffOnline = staffTxns.filter(t => t.paymentMode === 'Online' || t.paymentMode === 'Credit').reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
-
-  // --- 🔥 USE BACKEND DATA DIRECTLY ---
-  const finalTotal = report?.totalRevenue || 0;
-  const finalCash = report?.cashRevenue || 0;
-  const finalOnline = report?.onlineRevenue || 0;
-
   // Admin and Staff filter for table display
   // Use a localized userRole check to be safe
   const currentRole = localStorage.getItem('userRole');
@@ -253,6 +253,24 @@ const DailyReport = () => {
   if (currentRole === 'staff') {
     filteredTransactions = filteredTransactions.filter(t => t.createdBy === 'staff');
   }
+
+    // Keep cards in sync with exactly what table shows.
+    const finalTotal = filteredTransactions.reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
+    const finalCash = filteredTransactions
+        .filter((t) => isCashPayment(t.paymentMode))
+        .reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
+    const finalOnline = filteredTransactions
+        .filter((t) => isOnlinePayment(t.paymentMode))
+        .reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
+
+    const staffTxns = filteredTransactions.filter((t) => t.createdBy === 'staff');
+    const staffTotal = staffTxns.reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
+    const staffCash = staffTxns
+        .filter((t) => isCashPayment(t.paymentMode))
+        .reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
+    const staffOnline = staffTxns
+        .filter((t) => isOnlinePayment(t.paymentMode))
+        .reduce((acc, t) => acc + (Number(t.totalAmount) || 0), 0);
 
   if (!report) return <div className="text-center p-10 text-gray-500 font-medium">Loading...</div>;
 
@@ -271,6 +289,18 @@ const DailyReport = () => {
             <input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="text-xs border rounded p-1" />
             <span className="text-xs">-</span>
             <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="text-xs border rounded p-1" />
+
+            <select
+                value={paymentFilter}
+                onChange={(e) => setPaymentFilter(e.target.value)}
+                className="text-xs border rounded p-1 bg-white"
+                title="Filter by payment mode"
+            >
+                <option value="all">All Payments</option>
+                <option value="cash">Cash</option>
+                <option value="online">Online</option>
+                <option value="credit">Credit</option>
+            </select>
             
             {(userRole === 'admin' || userRole === 'staff') && (
                 <button 
@@ -329,6 +359,7 @@ const DailyReport = () => {
                         const isManual = t.invoiceNo.startsWith('MAN');
                         const isReturn = t.invoiceNo.startsWith('RET');
                         const isStaffBill = t.createdBy === 'staff';
+                        const paymentTag = getPaymentTagConfig(t.paymentMode);
                         
                         const medicineNames = t.items
                             .filter(i => i.name !== "Medical/Dose Charge")
@@ -359,6 +390,7 @@ const DailyReport = () => {
                                                                         )}
                                 </div>
                                                                 {isManual && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 rounded mr-2">MANUAL</span>}
+                                                                <span className={`text-[9px] px-1.5 py-0.5 rounded border uppercase font-bold tracking-wider ${paymentTag.className}`}>{paymentTag.label}</span>
                             </td>
                             <td className="px-4 py-3">
                                 <div className="font-semibold text-gray-800 text-sm">{t.customerDetails?.name || 'Walk-in'}</div>
