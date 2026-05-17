@@ -24,7 +24,17 @@ const to12HourTimeFrom24 = (time24, dateStr) => {
 
 const ManualBill = () => {
   const [customer, setCustomer] = useState({ name: '', phone: '', doctor: '', mode: 'Cash' });
-  const [invoiceNo, setInvoiceNo] = useState(`MAN-${Math.floor(Date.now() / 1000)}`);
+    const [invoiceNo, setInvoiceNo] = useState('Loading...');
+
+    const fetchNextInvoice = async () => {
+        try {
+            const res = await api.get('/sales/next-id');
+            if (res.data && res.data.success) setInvoiceNo(res.data.nextInvoiceNo);
+            else setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
+        } catch (err) {
+            setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
+        }
+    };
   
   const [billDate, setBillDate] = useState(getLocalDateString()); 
         const [billTime, setBillTime] = useState(formatTime24Hour(new Date()));
@@ -90,6 +100,8 @@ const ManualBill = () => {
             clearInterval(intervalId);
         };
     }, []);
+
+  useEffect(() => { fetchNextInvoice(); }, []);
 
     useEffect(() => {
     const fetchMedicines = async () => {
@@ -248,7 +260,7 @@ const ManualBill = () => {
         });
 
     const saleData = {
-        invoiceNo: invoiceNo, 
+        // Don't send invoiceNo here — backend will allocate the next year-based sequence
         customerDetails: customer,
         totalAmount: cart.reduce((a,b)=>a+b.total,0),
         paymentMode: customer.mode,
@@ -260,10 +272,10 @@ const ManualBill = () => {
     };
 
     try {
-        await api.post('/sales', saleData);
-
+        const res = await api.post('/sales', saleData);
+        const returnedInvoiceNo = res.data?.invoiceNo || invoiceNo;
         const invData = {
-            no: invoiceNo,
+            no: returnedInvoiceNo,
             name: customer.name,
             phone: customer.phone,
             doctor: customer.doctor,
@@ -281,7 +293,7 @@ const ManualBill = () => {
 
         setCustomer({ name: '', phone: '', doctor: '', mode: 'Cash' });
         setCart([]);
-        setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
+        fetchNextInvoice();
         setBillDate(getLocalDateString());
         setBillTime(formatTime24Hour(new Date()));
 

@@ -76,26 +76,24 @@ const SaleForm = () => {
   }, []);
 
   const fetchNextInvoice = async () => {
-    if (isStaff) {
+    try {
+      const res = await api.get("/sales/next-id");
+      if (res.data.success) setInvoiceNo(res.data.nextInvoiceNo);
+      else {
+        // fallback to time-based if API didn't return a next id
+        const timeCode = Math.floor(Date.now() / 1000);
+        setInvoiceNo(`RP-${timeCode}`);
+      }
+    } catch (err) {
+      // Offline fallback
       const timeCode = Math.floor(Date.now() / 1000);
       setInvoiceNo(`RP-${timeCode}`);
-    } else {
-      try {
-        const res = await api.get("/sales/next-id");
-        if (res.data.success) setInvoiceNo(res.data.nextInvoiceNo);
-      } catch (err) { setInvoiceNo("OFFLINE"); }
     }
   };
 
   useEffect(() => {
     fetchNextInvoice();
-    let interval;
-    if (isStaff) {
-      interval = setInterval(() => {
-        setInvoiceNo(`RP-${Math.floor(Date.now() / 1000)}`);
-      }, 60000);
-    }
-    return () => clearInterval(interval);
+    return () => {};
   }, [isStaff]);
 
   const cartTotal = cart.reduce((a, b) => a + b.total, 0);

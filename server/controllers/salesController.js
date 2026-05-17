@@ -4,6 +4,10 @@ const Counter = require('../models/Counter');
 const AuditLog = require('../models/AuditLog');
 const Credit = require('../models/Credit');
 
+// Invoice formatting configuration
+const INVOICE_PREFIX = 'RP-';
+const INVOICE_DIGITS = 6; // e.g. RP-2026-000001 (6 digits per year)
+
 const normalizePhone = (phone = '') => {
   const digits = String(phone).replace(/\D/g, '');
   if (!digits) return '';
@@ -50,9 +54,12 @@ const buildCustomerPriceMap = (sales = []) => {
 // --- 1. GET NEXT INVOICE ID ---
 exports.getNextInvoiceNumber = async (req, res) => {
   try {
-    let counter = await Counter.findOne({ id: "invoice_seq" });
-    let nextSeq = counter ? counter.seq + 1 : 101;
-    res.json({ success: true, nextInvoiceNo: `RP-${nextSeq}` });
+    const year = new Date().getFullYear();
+    const key = `invoice_seq_${year}`;
+    let counter = await Counter.findOne({ id: key });
+    let nextSeq = counter ? counter.seq + 1 : 1;
+    const padded = String(nextSeq).padStart(INVOICE_DIGITS, '0');
+    res.json({ success: true, nextInvoiceNo: `${INVOICE_PREFIX}${year}-${padded}` });
   } catch (err) {
     res.status(500).json({ message: "Error fetching ID", error: err.message });
   }
@@ -174,26 +181,24 @@ exports.createSale = async (req, res) => {
 
     let finalInvoiceNo = invoiceNo; // Gets value if Manual Bill sends it
 
-    // --- 🔥 INVOICE GENERATION LOGIC (Restored) ---
-    // If no ID provided (SaleForm), generate one automatically
+    // --- 🔥 INVOICE GENERATION LOGIC ---
+    // If no ID provided, generate one. Only increment sequence when a bill is required/finalized.
     if (!finalInvoiceNo) {
-      if (userRole === 'staff') {
-        // Staff uses Time-based ID
-        finalInvoiceNo = `RP-${Math.floor(Date.now() / 1000)}`;
+      if (isBillRequired === true) {
+        // Year-based sequential invoice for finalized bills (applies to staff & admin)
+        const year = new Date().getFullYear();
+        const key = `invoice_seq_${year}`;
+        const counter = await Counter.findOneAndUpdate(
+          { id: key },
+          { $inc: { seq: 1 } },
+          { new: true, upsert: true }
+        );
+        const seq = counter.seq || 0;
+        const padded = String(seq).padStart(INVOICE_DIGITS, '0');
+        finalInvoiceNo = `${INVOICE_PREFIX}${year}-${padded}`;
       } else {
-        // Admin Logic
-        if (isBillRequired === true) {
-          // Generate Sequential ID (RP-101, RP-102...)
-          const counter = await Counter.findOneAndUpdate(
-            { id: "invoice_seq" }, 
-            { $inc: { seq: 1 } }, 
-            { new: true, upsert: true }
-          );
-          finalInvoiceNo = `RP-${counter.seq}`;
-        } else {
-          // Cash Sale ID (CS-timestamp)
-          finalInvoiceNo = `CS-${Math.floor(Date.now() / 1000)}`;
-        }
+        // Non-bill / quick sale: keep a time-based fallback to avoid consuming sequence
+        finalInvoiceNo = `CS-${Math.floor(Date.now() / 1000)}`;
       }
     }
 
