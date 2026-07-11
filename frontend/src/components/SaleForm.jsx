@@ -3,6 +3,8 @@ import api from "../api/axios";
 import { generateBillHTML } from "../utils/BillGenerator";
 import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from "../utils/medicineCache";
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 const SaleForm = () => {
   const getSavedState = (key, defaultValue) => {
     try {
@@ -84,7 +86,8 @@ const SaleForm = () => {
         const timeCode = Math.floor(Date.now() / 1000);
         setInvoiceNo(`RP-${timeCode}`);
       }
-    } catch (err) {
+    } catch (error) {
+      console.error(error);
       // Offline fallback
       const timeCode = Math.floor(Date.now() / 1000);
       setInvoiceNo(`RP-${timeCode}`);
@@ -377,9 +380,9 @@ const SaleForm = () => {
       setCart([]); setAmountGiven(""); setDoseAmount(""); setCustomer({ name: "", phone: "", doctor: "" });
       fetchNextInvoice();
 
-    } catch (err) { 
+    } catch (error) { 
       if (billWindow) billWindow.close(); 
-      const backendMessage = err.response?.data?.message || err.response?.data?.error || err.message;
+      const backendMessage = error.response?.data?.message || error.response?.data?.error || error.message;
       alert("Failed: " + backendMessage); 
     }
   };
@@ -900,5 +903,7 @@ const SaleForm = () => {
     </div>
   );
 };
+
+/* eslint-enable react-hooks/set-state-in-effect */
 
 export default SaleForm;

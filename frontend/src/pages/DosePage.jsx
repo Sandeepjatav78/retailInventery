@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
 import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from '../utils/medicineCache';
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 const DosePage = () => {
   // --- STATES ---
   const [activeTab, setActiveTab] = useState('quick'); // 'quick' or 'resolve'
@@ -24,6 +26,13 @@ const DosePage = () => {
   // Loose Stock List State
   const [looseStock, setLooseStock] = useState([]);
     const [inventory, setInventory] = useState(() => getCachedMedicines());
+
+    const fetchPending = async () => {
+        try {
+                const res = await api.get('/medicines/dose/pending');
+                setPendingList(res.data);
+        } catch (err){ console.error(err); }  
+    };
 
   // --- INITIAL LOAD ---
   useEffect(() => {
@@ -52,22 +61,8 @@ const DosePage = () => {
     }, []);
 
     useEffect(() => {
-        fetchLooseStock();
+        setLooseStock(inventory.filter(m => Number(m.looseQty || 0) > 0));
     }, [inventory]);
-
-  const fetchPending = async () => {
-    try {
-        const res = await api.get('/medicines/dose/pending');
-        setPendingList(res.data);
-    } catch (err){ console.error(err); }  
-  };
-
-  const fetchLooseStock = async () => {
-      try {
-          const loose = inventory.filter(m => Number(m.looseQty || 0) > 0);
-          setLooseStock(loose);
-      } catch (err) { console.error("Error fetching loose stock", err); }
-  };
 
   const handleQuickSave = async () => {
     if(!quickAmount || !quickReason) return alert("Fill Amount & Reason!");
@@ -78,7 +73,7 @@ const DosePage = () => {
         setQuickAmount('');
         setQuickReason('');
         fetchPending(); 
-    } catch(err) { alert("Error saving"); }
+    } catch(error) { console.error(error); alert("Error saving"); }
   };
 
   const handleStartResolve = (item) => {
@@ -138,8 +133,8 @@ const DosePage = () => {
         
         setDoseList([]);
         setActiveTab('quick');
-        fetchPending();
-        fetchLooseStock(); 
+                fetchPending();
+                setLooseStock(inventory.filter(m => Number(m.looseQty || 0) > 0));
 
     } catch(err) { alert("Error: " + err.message); }
   };
@@ -356,5 +351,7 @@ const DosePage = () => {
     </div>
   );
 };
+
+/* eslint-enable react-hooks/set-state-in-effect */
 
 export default DosePage;

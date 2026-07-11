@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api/axios';
 import { generateBillHTML } from '../utils/BillGenerator';
 import EditBillModal from '../components/EditBillModal';
@@ -31,6 +31,12 @@ const getPaymentTagConfig = (paymentMode = '') => {
     return { label: String(paymentMode || 'N/A').toUpperCase(), className: 'bg-gray-100 text-gray-700 border-gray-200' };
 };
 
+const formatSoldItemLabel = (item) => {
+    const quantity = Number(item?.quantity) || 0;
+    const visualQuantity = Number.isInteger(quantity) ? quantity : Number(quantity.toFixed(3));
+    return `${visualQuantity}x ${item?.name || '-'}`;
+};
+
 const DailyReport = () => {
   const [report, setReport] = useState(null);
     const [reportError, setReportError] = useState('');
@@ -46,7 +52,7 @@ const DailyReport = () => {
   const [editingSale, setEditingSale] = useState(null);
     const [returningSale, setReturningSale] = useState(null);
 
-  const fetchReport = () => {
+    const fetchReport = useCallback(() => {
     let url = '';
     const queryParams = new URLSearchParams();
     
@@ -72,12 +78,12 @@ const DailyReport = () => {
           setReport({ transactions: [], totalRevenue: 0, cashRevenue: 0, onlineRevenue: 0, totalSalesCount: 0 });
           setReportError('Unable to load report right now. Please refresh or login again.');
       });
-  };
+    }, [dates, searchTerm, paymentFilter]);
 
   useEffect(() => { 
       const timer = setTimeout(() => { fetchReport(); }, 500);
       return () => clearTimeout(timer);
-    }, [dates, searchTerm, paymentFilter]); 
+        }, [fetchReport]); 
 
   const setRange = (type) => {
     const today = new Date(); 
@@ -348,7 +354,7 @@ const DailyReport = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div className="p-3 border-b bg-gray-50"><input type="text" placeholder="🔍 Search Invoice / Name / Medicine..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full p-2 border rounded text-sm focus:outline-none focus:border-teal-500" /></div>
         <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[700px]">
+            <table className="w-full text-left border-collapse min-w-175">
                 <thead className="bg-gray-50 border-b">
                 <tr><th className="px-4 py-3 text-xs font-bold text-gray-500">Date</th><th className="px-4 py-3 text-xs font-bold text-gray-500">Invoice</th><th className="px-4 py-3 text-xs font-bold text-gray-500">Customer & Medicines</th><th className="px-4 py-3 text-xs font-bold text-gray-500 text-right">Amount</th><th className="px-4 py-3 text-xs font-bold text-gray-500 text-center">Actions</th></tr>
                 </thead>
@@ -363,7 +369,7 @@ const DailyReport = () => {
                         
                         const medicineNames = t.items
                             .filter(i => i.name !== "Medical/Dose Charge")
-                            .map(i => i.name)
+                            .map(formatSoldItemLabel)
                             .join(', ');
                                                 return (
                                                 <tr
@@ -395,7 +401,7 @@ const DailyReport = () => {
                             <td className="px-4 py-3">
                                 <div className="font-semibold text-gray-800 text-sm">{t.customerDetails?.name || 'Walk-in'}</div>
                                 {medicineNames && (
-                                    <div className="text-xs text-gray-500 mt-1 italic max-w-xs break-words">
+                                    <div className="text-xs text-gray-500 mt-1 italic max-w-xs wrap-break-word">
                                         ({medicineNames})
                                     </div>
                                 )}

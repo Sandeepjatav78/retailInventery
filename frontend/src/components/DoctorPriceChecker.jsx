@@ -104,7 +104,8 @@ const DoctorPriceChecker = () => {
       }));
 
       setEditingState({ id: null, target: null });
-    } catch (err) {
+    } catch (error) {
+      console.error(error);
       alert('Failed to save price. Please try again.');
     } finally {
       setSavingId(null);
@@ -204,7 +205,6 @@ const DoctorPriceChecker = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {results.map((med) => {
               const draft = getDraft(med);
-              const cp = normalizeNumber(med.costPrice);
               const sellingPrice = normalizeNumber(draft.sellingPrice);
               const doctorPrice = normalizeNumber(draft.doctorPrice);
               const isEditing = editingState.id === med._id;

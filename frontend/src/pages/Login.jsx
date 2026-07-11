@@ -30,7 +30,8 @@ const Login = () => {
       } else {
         setError("❌ Wrong Password");
       }
-    } catch (err) {
+    } catch (error) {
+      console.error(error);
       setError("Server Error. Try again.");
     }
   };

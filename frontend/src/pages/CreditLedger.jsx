@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api/axios';
 import { generateBillHTML } from '../utils/BillGenerator';
 import '../styles/CreditLedger.css';
@@ -61,7 +61,7 @@ const CreditLedger = () => {
     }
   };
 
-  const fetchCreditDetails = async (creditId) => {
+  const fetchCreditDetails = useCallback(async (creditId) => {
     if (!creditId) return;
 
     try {
@@ -76,7 +76,7 @@ const CreditLedger = () => {
     } finally {
       setDetailsLoading(false);
     }
-  };
+  }, []);
 
   const handleOpenBillByReference = async (bill) => {
     if (!bill?.invoiceNo) return;
@@ -283,7 +283,7 @@ const CreditLedger = () => {
       setSelectedCredit(visibleCredits[0]);
       fetchCreditDetails(visibleCredits[0]._id);
     }
-  }, [credits, searchTerm, accountView, sortBy]);
+  }, [visibleCredits, selectedCredit, fetchCreditDetails]);
 
   return (
     <div className="credit-ledger-container">

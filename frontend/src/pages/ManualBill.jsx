@@ -31,7 +31,8 @@ const ManualBill = () => {
             const res = await api.get('/sales/next-id');
             if (res.data && res.data.success) setInvoiceNo(res.data.nextInvoiceNo);
             else setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
-        } catch (err) {
+        } catch (error) {
+                console.error(error);
             setInvoiceNo(`MAN-${Math.floor(Date.now() / 1000)}`);
         }
     };
@@ -87,8 +88,8 @@ const ManualBill = () => {
             try {
                 const fresh = await syncMedicinesCache(api);
                 if (mounted) setInventory(fresh);
-            } catch (err) {
-                console.error(err);
+            } catch (error) {
+                console.error(error);
             }
         };
 
@@ -101,7 +102,8 @@ const ManualBill = () => {
         };
     }, []);
 
-  useEffect(() => { fetchNextInvoice(); }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    useEffect(() => { fetchNextInvoice(); }, []);
 
     useEffect(() => {
     const fetchMedicines = async () => {
@@ -116,7 +118,7 @@ const ManualBill = () => {
                 setSuggestions(filtered);
                 setShowSuggestions(true);
                 setFocusedIndex(-1); 
-            } catch (err) { setSuggestions([]); }
+            } catch (error) { console.error(error); setSuggestions([]); }
         } else { setSuggestions([]); setShowSuggestions(false); }
     };
         const timer = setTimeout(fetchMedicines, 150);
@@ -297,8 +299,8 @@ const ManualBill = () => {
         setBillDate(getLocalDateString());
         setBillTime(formatTime24Hour(new Date()));
 
-    } catch (err) {
-        const backendMessage = err.response?.data?.message || err.response?.data?.error || err.message;
+    } catch (error) {
+        const backendMessage = error.response?.data?.message || error.response?.data?.error || error.message;
         alert("Error saving bill: " + backendMessage);
     }
   };

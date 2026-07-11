@@ -14,7 +14,14 @@ const creditRoutes = require('./routes/creditRoutes');
 const app = express();
 
 // Middleware
-app.use(cors()); // Allow all origins (Good for testing, restrict later if needed)
+const corsOptions = {
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 
 // Database Connection

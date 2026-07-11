@@ -2,24 +2,43 @@ import React, { useState } from 'react';
 import api from '../api/axios';
 import * as XLSX from 'xlsx';
 
-const InventoryTable = ({ meds, onUpdate, onDelete }) => {
+const InventoryTable = ({ meds, onDelete, userRole }) => {
   const [editId, setEditId] = useState(null);
   const [editFormData, setEditFormData] = useState({});
   const [newBillFile, setNewBillFile] = useState(null);
   const [showCP, setShowCP] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
+  const hasCompleteInventoryData = (med) => {
+      const requiredFields = [
+          med.productName,
+          med.batchNumber,
+          med.hsnCode,
+          med.expiryDate,
+          med.mrp,
+          med.sellingPrice,
+          med.costPrice,
+          med.packSize,
+      ];
+
+      return requiredFields.every((value) => String(value ?? '').trim()) && (Number(med.quantity || 0) > 0 || Number(med.looseQty || 0) > 0);
+  };
+
     // --- FILTER LOGIC (Hide zero stock from inventory view) ---
     const filteredMeds = meds
         .filter(m => {
             const baseQty = m.quantity || 0; // may be decimal (packs + loose)
             const loose = m.looseQty || 0;
-            return baseQty > 0 || loose > 0; // hide fully out-of-stock items
+            const stockAvailable = baseQty > 0 || loose > 0; // hide fully out-of-stock items
+            if (!stockAvailable) return false;
+            if (userRole === 'staff') return hasCompleteInventoryData(m);
+            return true;
         })
         .filter(m => 
             m.productName.toLowerCase().includes(searchTerm.toLowerCase()) || 
             (m.partyName && m.partyName.toLowerCase().includes(searchTerm.toLowerCase())) ||
-            m.batchNumber.toLowerCase().includes(searchTerm.toLowerCase())
+            m.batchNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (m.hsnCode && m.hsnCode.toLowerCase().includes(searchTerm.toLowerCase()))
         );
 
   // --- EXPORT TO EXCEL ---
@@ -32,6 +51,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
 
         return {
             "Product Name": m.productName,
+            "HSN": m.hsnCode || '-',
             "Batch": m.batchNumber,
             "Party Name": m.partyName || '-',
             "Packing": packSize,
@@ -68,7 +88,8 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
             } else {
                 alert("❌ Wrong Code!");
             }
-        } catch (err) {
+        } catch (error) {
+            console.error(error);
             alert("Server Error");
         }
     };
@@ -83,7 +104,10 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                 const res = await api.post('/admin/secret', { code });
                 if (res.data.success) { onDelete(id); } 
                 else { alert("❌ Wrong Secret! Delete Cancelled."); }
-    } catch (err) { alert("Server Error"); }
+    } catch (error) {
+        console.error(error);
+        alert("Server Error");
+    }
   };
 
   // --- EDIT HANDLERS ---
@@ -117,7 +141,8 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     alert('❌ Wrong Secret! Edit cancelled.');
                     return;
                 }
-            } catch (err) {
+            } catch (error) {
+                console.error(error);
                 alert('Verification failed. Please try again.');
                 return;
             }
@@ -142,9 +167,9 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
         alert("✅ Updated Successfully!");
         setEditId(null);
         window.location.reload();
-      } catch (err) {
-          console.error("Update Failed:", err.response?.data?.message || err.message);
-          alert("Update Failed: " + (err.response?.data?.message || "Unknown Error"));
+      } catch (error) {
+          console.error("Update Failed:", error.response?.data?.message || error.message);
+          alert("Update Failed: " + (error.response?.data?.message || "Unknown Error"));
       }
   };
 
@@ -158,7 +183,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
       
       {/* --- HEADER: Search & Buttons --- */}
       <div className="flex flex-wrap items-center justify-between p-4 gap-4 bg-gray-50 border-b border-gray-200">
-         <div className="flex items-center gap-4 flex-grow">
+         <div className="flex items-center gap-4 grow">
             <h3 className="font-bold text-lg text-gray-800 whitespace-nowrap">
                 📦 Stock List <span className="text-gray-500 text-sm font-normal">({filteredMeds.length})</span>
             </h3>
@@ -177,12 +202,14 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
              <button onClick={handleExport} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2">
                  📊 Export Excel
              </button>
-             <button 
-                onClick={handleToggleCP} 
-                className={`px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2 ${showCP ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gray-600 hover:bg-gray-700 text-white'}`}
-             >
-                {showCP ? '🙈' : '🔒'}
-             </button>
+                 {userRole !== 'staff' && (
+                      <button 
+                          onClick={handleToggleCP} 
+                          className={`px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2 ${showCP ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-gray-600 hover:bg-gray-700 text-white'}`}
+                      >
+                          {showCP ? '🙈' : '🔒'}
+                      </button>
+                 )}
          </div>
       </div>
 
@@ -193,6 +220,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                 <tr>
                     <th className={thClass}>Name</th>
                     <th className={thClass}>Batch</th>
+                    <th className={thClass}>HSN</th>
                     <th className={thClass}>Party</th>
                     <th className={`${thClass} text-center`}>Pack of</th>
                     <th className={`${thClass} text-center`}>Qty (Strips)</th>
@@ -202,9 +230,9 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <th className={`${thClass} text-indigo-700`}>D.Price</th>
                     <th className={thClass}>GST%</th>
                     {/* ✅ UPDATED: CP Header Color */}
-                    {showCP && <th className={`${thClass} text-[#59677d]`}>CP</th>}
+                    {showCP && userRole !== 'staff' && <th className={`${thClass} text-[#59677d]`}>CP</th>}
                     <th className={thClass}>Bill Upload</th>
-                    <th className={`${thClass} text-center`}>Action</th>
+                    {userRole !== 'staff' && <th className={`${thClass} text-center`}>Action</th>}
                 </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
@@ -260,6 +288,7 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                     <>
                     <td className={`${tdClass} font-medium text-gray-900`}>{m.productName}</td>
                     <td className={`${tdClass} text-gray-500`}>{m.batchNumber}</td>
+                    <td className={`${tdClass} text-gray-500`}>{m.hsnCode || '-'}</td>
                     <td className={`${tdClass} text-gray-500 text-xs`}>{m.partyName || '-'}</td>
                     <td className={`${tdClass} text-center font-semibold text-gray-600`}>{m.packSize || 10}</td>
                     <td className={tdClass}>
@@ -281,18 +310,20 @@ const InventoryTable = ({ meds, onUpdate, onDelete }) => {
                         <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-semibold border border-indigo-100">{m.gst}%</span>
                     </td>
                     {/* ✅ UPDATED: CP View Color */}
-                    {showCP && <td className={`${tdClass} font-bold text-[#59677d]`}>₹{m.costPrice}</td>}
+                    {showCP && userRole !== 'staff' && <td className={`${tdClass} font-bold text-[#59677d]`}>₹{m.costPrice}</td>}
                     <td className={tdClass}>
                         {m.billImage ? (
                             <a href={m.billImage} target="_blank" rel="noopener noreferrer" className="text-teal-600 hover:text-teal-800 text-xs underline font-medium">View Bill</a>
                         ) : <span className="text-gray-400 text-xs italic">No Bill</span>}
                     </td>
-                    <td className={tdClass}>
-                        <div className="flex gap-2 justify-center">
-                            <button onClick={() => handleEditClick(m)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit">✏️</button>
-                            <button onClick={() => handleDeleteClick(m._id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors" title="Delete">🗑️</button>
-                        </div>
-                    </td>
+                    {userRole !== 'staff' && (
+                        <td className={tdClass}>
+                            <div className="flex gap-2 justify-center">
+                                <button onClick={() => handleEditClick(m)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit">✏️</button>
+                                <button onClick={() => handleDeleteClick(m._id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors" title="Delete">🗑️</button>
+                            </div>
+                        </td>
+                    )}
                     </>
                 )}
                 </tr>

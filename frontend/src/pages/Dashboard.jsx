@@ -5,9 +5,12 @@ import InventoryTable from "../components/InventoryTable";
 import { useNavigate } from "react-router-dom";
 import { getCachedMedicines, syncMedicinesCache } from "../utils/medicineCache";
 
+/* eslint-disable react-hooks/set-state-in-effect */
+
 const Dashboard = () => {
   const navigate = useNavigate();
-  const [meds, setMeds] = useState([]);
+  const userRole = localStorage.getItem("userRole");
+  const [meds, setMeds] = useState(() => getCachedMedicines());
   
   // --- NEW STATE FOR AUTOCOMPLETE ---
   const [suggestions, setSuggestions] = useState([]);
@@ -42,30 +45,20 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    const role = localStorage.getItem("userRole");
-    if (role !== "admin") {
+    if (userRole !== "admin" && userRole !== "staff") {
       navigate("/sales");
-    } else {
-      // 1) Try to load fast from localStorage cache
-      try {
-        const cached = getCachedMedicines();
-        if (cached.length) {
-          setMeds(cached);
-        }
-      } catch {
-        // ignore cache read errors
-      }
-
-      // 2) Always refresh from server in background
-      fetchMeds();
-
-      const intervalId = setInterval(() => {
-        fetchMeds();
-      }, 5 * 60 * 1000);
-
-      return () => clearInterval(intervalId);
+      return;
     }
-  }, []);
+
+    // Refresh from server in background.
+    fetchMeds();
+
+    const intervalId = setInterval(() => {
+      fetchMeds();
+    }, 5 * 60 * 1000);
+
+    return () => clearInterval(intervalId);
+  }, [navigate, userRole]);
 
   // --- FILE HANDLING ---
   const handleFileChange = (e) =>
@@ -225,7 +218,10 @@ const Dashboard = () => {
       await api.put(`/medicines/${id}`, updatedData);
       alert("Updated Successfully!");
       await fetchMeds();
-    } catch (err) { alert("Update Failed"); }
+    } catch (error) {
+      console.error(error);
+      alert("Update Failed");
+    }
   };
 
   const handleDelete = async (id) => {
@@ -233,7 +229,10 @@ const Dashboard = () => {
       await api.delete(`/medicines/${id}`);
       alert("🗑️ Item Deleted Successfully");
       await fetchMeds();
-    } catch (err) { alert("Failed to delete item"); }
+    } catch (error) {
+      console.error(error);
+      alert("Failed to delete item");
+    }
   };
 
   // Reusable Classes
@@ -244,15 +243,15 @@ const Dashboard = () => {
     <div className="p-6 bg-gray-50 min-h-screen">
       <ExpiryAlert />
 
-      {/* --- ADD STOCK FORM --- */}
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8">
-        <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
-          <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-            📦 Inventory Management
-          </h3>
-        </div>
+      {userRole === "admin" && (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-8">
+          <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
+            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+              📦 Inventory Management
+            </h3>
+          </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
           
           {/* Row 1 */}
           <div className="col-span-2 md:col-span-1 relative"> 
@@ -365,22 +364,24 @@ const Dashboard = () => {
             <input name="maxDiscount" type="number" value={form.maxDiscount} onChange={handleInputChange} placeholder="e.g. 10" className={inputClass} />
           </div>
 
-          <div className="flex items-end col-span-2 md:col-span-1">
-            <button 
-                className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2.5 rounded-lg shadow-md transition-all flex items-center justify-center gap-2 transform active:scale-95"
-                onClick={handleAdd}
-            >
-              <span>+</span> Add Stock
-            </button>
-          </div>
+            <div className="flex items-end col-span-2 md:col-span-1">
+              <button 
+                  className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2.5 rounded-lg shadow-md transition-all flex items-center justify-center gap-2 transform active:scale-95"
+                  onClick={handleAdd}
+              >
+                <span>+</span> Add Stock
+              </button>
+            </div>
 
+          </div>
         </div>
-      </div>
+      )}
 
       {/* --- INVENTORY TABLE --- */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <InventoryTable
           meds={meds}
+          userRole={userRole}
           onUpdate={handleUpdate}
           onDelete={handleDelete}
         />
@@ -388,5 +389,7 @@ const Dashboard = () => {
     </div>
   );
 };
+
+/* eslint-enable react-hooks/set-state-in-effect */
 
 export default Dashboard;
