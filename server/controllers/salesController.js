@@ -209,6 +209,12 @@ exports.createSale = async (req, res) => {
       const med = await Medicine.findById(item.medicineId);
       if (!med) continue; // If medicine record missing, skip stock logic
 
+      if (userRole === 'staff' && med.isKachiEntry) {
+        return res.status(403).json({
+          message: `Staff cannot bill Kachi entry item: ${med.productName}`
+        });
+      }
+
       const currentQty = med.quantity || 0; // Stored in strips (can be decimal)
       const requestedQty = Number(item.quantity) || 0; // Also in strips
 

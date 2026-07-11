@@ -6,7 +6,17 @@ const AuditLog = require('../models/AuditLog');
 // 1. GET ALL MEDICINES
 const getMedicines = async (req, res) => {
   try {
-    const meds = await Medicine.find().sort({ productName: 1 });
+    const userRole = req.user?.role || 'staff';
+    const query = userRole === 'admin'
+      ? {
+          $or: [
+            { isKachiEntry: { $ne: true } },
+            { isKachiEntry: true, canShowInAdminInventory: true }
+          ]
+        }
+      : { isKachiEntry: { $ne: true } };
+
+    const meds = await Medicine.find(query).sort({ productName: 1 });
     res.json(meds);
   } catch (err) {
     console.error('[Error] getMedicines:', err.message);
@@ -44,6 +54,7 @@ const searchMedicines = async (req, res) => {
     }
 
     if (userRole === 'staff') {
+      filters.push({ isKachiEntry: { $ne: true } });
       filters.push({
         hsnCode: { $exists: true, $nin: [null, ''] }
       });
@@ -243,9 +254,81 @@ const deleteMedicine = async (req, res) => {
   }
 };
 
+// 3B. ADMIN: ADD KACHI ENTRY
+const addKachiEntry = async (req, res) => {
+  try {
+    const productName = String(req.body.productName || '').trim();
+    const expiryDate = req.body.expiryDate;
+    const costPrice = Number(req.body.costPrice);
+    const canShowInAdminInventory = String(req.body.canShowInAdminInventory ?? 'true').toLowerCase() !== 'false';
+
+    if (!productName) {
+      return res.status(400).json({ message: 'Product Name is required' });
+    }
+    if (!expiryDate) {
+      return res.status(400).json({ message: 'Expiry is required' });
+    }
+    if (!Number.isFinite(costPrice) || costPrice < 0) {
+      return res.status(400).json({ message: 'Cost Price must be a valid non-negative number' });
+    }
+
+    const timeCode = Date.now().toString().slice(-8);
+    const batchNumber = `KACHI-${timeCode}`;
+
+    const newEntry = new Medicine({
+      productName,
+      batchNumber,
+      hsnCode: '',
+      mrp: costPrice,
+      sellingPrice: costPrice,
+      doctorPrice: costPrice,
+      costPrice,
+      gst: 0,
+      maxDiscount: 0,
+      quantity: 0,
+      looseQty: 0,
+      packSize: 1,
+      expiryDate,
+      partyName: 'Kachi Entry',
+      purchaseDate: new Date(),
+      billImage: req.file ? req.file.path : null,
+      isKachiEntry: true,
+      canShowInAdminInventory
+    });
+
+    const saved = await newEntry.save();
+
+    AuditLog.create({
+      action: 'CREATE_KACHI_ENTRY',
+      entityType: 'Medicine',
+      entityId: saved._id.toString(),
+      message: `Kachi entry added for ${saved.productName}`,
+      details: { productName: saved.productName, costPrice: saved.costPrice },
+      userRole: 'admin'
+    }).catch(err => console.error('Audit log error (CREATE_KACHI_ENTRY):', err.message));
+
+    return res.status(201).json(saved);
+  } catch (err) {
+    console.error('[Error] addKachiEntry:', err.message);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// 3C. ADMIN: LIST KACHI ENTRIES
+const getKachiEntries = async (req, res) => {
+  try {
+    const items = await Medicine.find({ isKachiEntry: true }).sort({ createdAt: -1 });
+    return res.json(items);
+  } catch (err) {
+    console.error('[Error] getKachiEntries:', err.message);
+    return res.status(500).json({ message: err.message });
+  }
+};
+
 // 6. EXPIRY ALERTS
 const getExpiringMedicines = async (req, res) => {
   try {
+    const userRole = req.user?.role || 'staff';
     const today = new Date();
     const futureDate = new Date();
 
@@ -256,12 +339,18 @@ const getExpiringMedicines = async (req, res) => {
     // Add the days to the current date
     futureDate.setDate(today.getDate() + daysThreshold);
 
-    const expiring = await Medicine.find({
+    const query = {
       expiryDate: {
         $gte: today,
         $lte: futureDate
       }
-    });
+    };
+
+    if (userRole !== 'admin') {
+      query.isKachiEntry = { $ne: true };
+    }
+
+    const expiring = await Medicine.find(query);
 
     res.json(expiring);
   } catch (err) {
@@ -451,6 +540,8 @@ const resolvePendingEntry = async (req, res) => {
 module.exports = {
   getMedicines,
   searchMedicines,
+  addKachiEntry,
+  getKachiEntries,
   addMedicine,
   updateMedicine,
   deleteMedicine,

@@ -27,6 +27,10 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
     // --- FILTER LOGIC (Hide zero stock from inventory view) ---
     const filteredMeds = meds
         .filter(m => {
+            if (m.isKachiEntry) {
+                return userRole !== 'staff' && Boolean(m.canShowInAdminInventory);
+            }
+
             const baseQty = m.quantity || 0; // may be decimal (packs + loose)
             const loose = m.looseQty || 0;
             const stockAvailable = baseQty > 0 || loose > 0; // hide fully out-of-stock items
@@ -294,13 +298,13 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
                     <td className={tdClass}>
                         <div className="text-center">
                             <span className={`font-bold ${fullStrips < 5 ? 'text-red-600 bg-red-50 px-2 py-0.5 rounded' : 'text-gray-900'}`}>
-                                {fullStrips}
+                                {m.isKachiEntry ? '-' : fullStrips}
                             </span>
                         </div>
                     </td>
                     
                     <td className={`${tdClass} text-center font-bold text-orange-600 bg-orange-50`}>
-                        {looseTablets}
+                        {m.isKachiEntry ? '-' : looseTablets}
                     </td>
 
                     <td className={tdClass}>{m.mrp}</td>

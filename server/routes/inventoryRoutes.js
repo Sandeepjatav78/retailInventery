@@ -4,7 +4,7 @@ const multer = require('multer');
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const cloudinary = require('cloudinary').v2;
 const inventoryController = require('../controllers/inventoryController');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, authorizeRoles } = require('../middleware/auth');
 
 // --- CLOUDINARY CONFIG ---
 cloudinary.config({
@@ -25,22 +25,25 @@ const storage = new CloudinaryStorage({
 const upload = multer({ storage: storage });
 
 // --- ROUTES ---
+router.use(authenticateToken);
 
 // 1. GET Methods
 router.get('/', inventoryController.getMedicines); 
-router.get('/search', authenticateToken, inventoryController.searchMedicines);
+router.get('/search', inventoryController.searchMedicines);
 router.get('/expiring', inventoryController.getExpiringMedicines);
 router.get('/dose/pending', inventoryController.getPendingEntries);
+router.get('/kachi', authorizeRoles('admin'), inventoryController.getKachiEntries);
 
 // 2. POST Methods
-router.post('/', upload.single('billImage'), inventoryController.addMedicine);
+router.post('/', authorizeRoles('admin'), upload.single('billImage'), inventoryController.addMedicine);
+router.post('/kachi', authorizeRoles('admin'), upload.single('billImage'), inventoryController.addKachiEntry);
 router.post('/dose', inventoryController.sellLooseMedicine);
 router.post('/dose/quick', inventoryController.addQuickEntry);
 router.post('/dose/resolve', inventoryController.resolvePendingEntry);
 
 // 3. PUT/DELETE Methods
 // ✅ THIS IS THE FIX: The upload middleware is present here
-router.put('/:id', upload.single('billImage'), inventoryController.updateMedicine); 
-router.delete('/:id', inventoryController.deleteMedicine);
+router.put('/:id', authorizeRoles('admin'), upload.single('billImage'), inventoryController.updateMedicine); 
+router.delete('/:id', authorizeRoles('admin'), inventoryController.deleteMedicine);
 
 module.exports = router;

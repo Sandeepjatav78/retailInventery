@@ -64,6 +64,10 @@ export const filterMedicinesFromCache = (items, query, options = {}) => {
   if (!normalizedQuery) return [];
 
   return (Array.isArray(items) ? items : []).filter((med) => {
+    if (userRole === 'staff' && med.isKachiEntry) {
+      return false;
+    }
+
     if (!includeOutOfStock) {
       const quantity = Number(med.quantity || 0);
       const looseQty = Number(med.looseQty || 0);
