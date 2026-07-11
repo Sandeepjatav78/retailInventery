@@ -14,8 +14,28 @@ const creditRoutes = require('./routes/creditRoutes');
 const app = express();
 
 // Middleware
+const parseOrigins = (value = '') =>
+  value
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+const allowedOrigins = new Set([
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://retail-mocha-five.vercel.app',
+  ...parseOrigins(process.env.CORS_ORIGINS),
+  ...parseOrigins(process.env.FRONTEND_URL),
+]);
+
 const corsOptions = {
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  origin: (origin, callback) => {
+    // Allow non-browser requests (no Origin header) and explicitly whitelisted frontends.
+    if (!origin || allowedOrigins.has(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 };
