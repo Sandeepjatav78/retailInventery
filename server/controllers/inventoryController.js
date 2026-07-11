@@ -2,6 +2,7 @@ const Medicine = require('../models/Medicine');
 const Sale = require('../models/Sale'); // <--- IMPORT SALE MODEL ZARURI HAI
 const PendingDose = require('../models/PendingDose');
 const AuditLog = require('../models/AuditLog');
+const PurchaseReturn = require('../models/PurchaseReturn');
 
 // 1. GET ALL MEDICINES
 const getMedicines = async (req, res) => {
@@ -537,17 +538,64 @@ const resolvePendingEntry = async (req, res) => {
   }
 };
 
+// ADMIN: Return purchased stock to a wholesaler and retain an auditable bill record.
+const createPurchaseReturn = async (req, res) => {
+  try {
+    const { wholesalerName, supplierBillNumber = '', returnDate, notes = '', items } = req.body;
+    if (!String(wholesalerName || '').trim()) return res.status(400).json({ message: 'Wholesaler name is required' });
+    if (!Array.isArray(items) || !items.length) return res.status(400).json({ message: 'Add at least one medicine to return' });
+
+    const seen = new Set();
+    const validated = [];
+    for (const item of items) {
+      const medicineId = String(item.medicineId || '');
+      const returnedStrips = Number(item.returnedStrips || 0);
+      const returnedLoose = Number(item.returnedLoose || 0);
+      if (!medicineId || seen.has(medicineId) || !Number.isInteger(returnedStrips) || !Number.isInteger(returnedLoose) || returnedStrips < 0 || returnedLoose < 0 || (!returnedStrips && !returnedLoose)) {
+        return res.status(400).json({ message: 'Each return item needs a unique medicine batch and valid quantity' });
+      }
+      seen.add(medicineId);
+      const med = await Medicine.findById(medicineId);
+      if (!med || med.isKachiEntry) return res.status(404).json({ message: 'A selected medicine was not found' });
+      const packSize = Number(med.packSize) || 1;
+      const availableTabs = (Math.max(0, Number(med.quantity) || 0) * packSize) + Math.max(0, Number(med.looseQty) || 0);
+      const returnedTabs = returnedStrips * packSize + returnedLoose;
+      if (returnedTabs > availableTabs) return res.status(400).json({ message: `Insufficient stock for ${med.productName} (${med.batchNumber})` });
+      validated.push({ med, returnedStrips, returnedLoose, packSize, returnedTabs, availableTabs });
+    }
+
+    let totalAmount = 0;
+    const returnItems = [];
+    for (const entry of validated) {
+      const { med, returnedStrips, returnedLoose, packSize, returnedTabs, availableTabs } = entry;
+      const remainingTabs = availableTabs - returnedTabs;
+      const unitCost = Number(med.costPrice) || 0;
+      const lineTotal = (returnedTabs / packSize) * unitCost;
+      med.quantity = Math.floor(remainingTabs / packSize);
+      med.looseQty = remainingTabs % packSize;
+      await med.save();
+      totalAmount += lineTotal;
+      returnItems.push({ medicineId: med._id, productName: med.productName, batchNumber: med.batchNumber, expiryDate: med.expiryDate, packSize, returnedStrips, returnedLoose, unitCost, lineTotal, stockBefore: { strips: Math.floor(availableTabs / packSize), loose: availableTabs % packSize }, stockAfter: { strips: med.quantity, loose: med.looseQty } });
+    }
+
+    const purchaseReturn = await PurchaseReturn.create({
+      returnNumber: `PR-${Date.now().toString().slice(-8)}`, wholesalerName: String(wholesalerName).trim(), supplierBillNumber: String(supplierBillNumber).trim(), returnDate: returnDate || new Date(), notes: String(notes).trim(), items: returnItems, totalAmount: Number(totalAmount.toFixed(2)), createdByRole: req.user?.role || 'admin'
+    });
+    AuditLog.create({ action: 'CREATE_PURCHASE_RETURN', entityType: 'PurchaseReturn', entityId: purchaseReturn._id.toString(), message: `Purchase return ${purchaseReturn.returnNumber} created for ${purchaseReturn.wholesalerName}`, details: { returnNumber: purchaseReturn.returnNumber, totalAmount: purchaseReturn.totalAmount, itemCount: returnItems.length }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (CREATE_PURCHASE_RETURN):', err.message));
+    return res.status(201).json(purchaseReturn);
+  } catch (err) {
+    console.error('[Error] createPurchaseReturn:', err.message);
+    return res.status(500).json({ message: 'Could not create purchase return' });
+  }
+};
+
+const getPurchaseReturns = async (req, res) => {
+  try { return res.json(await PurchaseReturn.find().sort({ returnDate: -1, createdAt: -1 }).limit(100)); }
+  catch (err) { return res.status(500).json({ message: 'Could not load purchase return history' }); }
+};
+
 module.exports = {
-  getMedicines,
-  searchMedicines,
-  addKachiEntry,
-  getKachiEntries,
-  addMedicine,
-  updateMedicine,
-  deleteMedicine,
-  getExpiringMedicines,
-  sellLooseMedicine,
-  addQuickEntry,
-  getPendingEntries,
-  resolvePendingEntry
+  getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
+  getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
+  sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry
 };

@@ -7,6 +7,7 @@ import DosePage from './pages/DosePage';
 import DailyReport from './pages/DailyReport';
 import ManualBill from './pages/ManualBill'; 
 import CreditLedger from './pages/CreditLedger';
+import PurchaseReturn from './pages/PurchaseReturn';
 import KachiEntry from './pages/KachiEntry';
 import PriceChecker from './components/PriceChecker'; // <--- 1. IMPORT THIS
 import DoctorPriceChecker from './components/DoctorPriceChecker';
@@ -34,6 +35,7 @@ function App() {
                   <Route path="/doctor-price" element={<DoctorPriceChecker />} />
                   <Route path="/reports" element={<DailyReport />} />
                   <Route path="/credits" element={<CreditLedger />} />
+                  <Route path="/purchase-returns" element={<PurchaseReturn />} />
                 </Routes>
               </main>
             </div>

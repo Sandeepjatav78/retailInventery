@@ -96,6 +96,11 @@ const Sidebar = () => {
                     <Link to="/credits" className={getLinkClass('/credits')}>💳 Credit</Link>
                 </li>
             )}
+            {userRole === 'staff' && (
+                <li>
+                    <Link to="/purchase-returns" className={getLinkClass('/purchase-returns')}>↩️ Purchase Return</Link>
+                </li>
+            )}
 
                 </ul>
             </div>

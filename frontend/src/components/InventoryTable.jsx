@@ -8,6 +8,7 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
   const [newBillFile, setNewBillFile] = useState(null);
   const [showCP, setShowCP] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [stockFilter, setStockFilter] = useState('all');
 
   const hasCompleteInventoryData = (med) => {
       const requiredFields = [
@@ -35,6 +36,7 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
             const loose = m.looseQty || 0;
             const stockAvailable = baseQty > 0 || loose > 0; // hide fully out-of-stock items
             if (!stockAvailable) return false;
+            if (stockFilter === 'loose' && loose <= 0) return false;
             if (userRole === 'staff') return hasCompleteInventoryData(m);
             return true;
         })
@@ -49,9 +51,8 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
   const handleExport = () => {
     const dataToExport = filteredMeds.map(m => {
         const packSize = m.packSize || 10;
-        const totalStock = m.quantity || 0;
-        const strips = Math.floor(totalStock);
-        const loose = Math.round((totalStock - strips) * packSize);
+        const strips = Math.floor(m.quantity || 0);
+        const loose = Math.round(m.looseQty || 0);
 
         return {
             "Product Name": m.productName,
@@ -200,6 +201,10 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
                 />
                 <span className="absolute left-3 top-2.5 text-gray-400">🔍</span>
             </div>
+            <div className="flex rounded-lg border border-gray-300 overflow-hidden text-xs font-semibold">
+                <button onClick={() => setStockFilter('all')} className={`px-3 py-2 ${stockFilter === 'all' ? 'bg-teal-600 text-white' : 'bg-white text-gray-600'}`}>All stock</button>
+                <button onClick={() => setStockFilter('loose')} className={`px-3 py-2 ${stockFilter === 'loose' ? 'bg-orange-500 text-white' : 'bg-white text-gray-600'}`}>Loose only</button>
+            </div>
          </div>
          
          <div className="flex gap-3">
@@ -241,9 +246,8 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
             {filteredMeds.map((m) => {
-                const totalQty = m.quantity || 0;
-                const fullStrips = Math.floor(totalQty);
-                const looseTablets = Math.round((totalQty - fullStrips) * (m.packSize || 10));
+                const fullStrips = Math.floor(m.quantity || 0);
+                const looseTablets = Math.round(m.looseQty || 0);
 
                 return (
                 <tr key={m._id} className="hover:bg-gray-50 transition-colors">
