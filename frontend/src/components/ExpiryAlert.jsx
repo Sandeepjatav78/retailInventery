@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/axios';
 
+const EXPIRY_ALERT_VISIBLE_KEY = 'expiry-alert-visible';
+
 const ExpiryAlert = () => {
   const [expiring, setExpiring] = useState([]);
-  const [isVisible, setIsVisible] = useState(true);
+  const [isVisible, setIsVisible] = useState(() => localStorage.getItem(EXPIRY_ALERT_VISIBLE_KEY) !== 'false');
+
+  const toggleVisibility = () => {
+    setIsVisible((previous) => {
+      const next = !previous;
+      localStorage.setItem(EXPIRY_ALERT_VISIBLE_KEY, String(next));
+      return next;
+    });
+  };
 
   useEffect(() => {
     // Request 90 days (approx 3 months)
@@ -37,7 +47,7 @@ const ExpiryAlert = () => {
 
           <button
               type="button"
-              onClick={() => setIsVisible((prev) => !prev)}
+              onClick={toggleVisibility}
               style={{
                   border: '1px solid #fdba74',
                   background: '#fff',
