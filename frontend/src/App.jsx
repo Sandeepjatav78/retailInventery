@@ -9,6 +9,7 @@ import ManualBill from './pages/ManualBill';
 import CreditLedger from './pages/CreditLedger';
 import PurchaseReturn from './pages/PurchaseReturn';
 import KachiEntry from './pages/KachiEntry';
+import PurchaseBillEntry from './pages/PurchaseBillEntry';
 import PriceChecker from './components/PriceChecker'; // <--- 1. IMPORT THIS
 import DoctorPriceChecker from './components/DoctorPriceChecker';
 import Login from './pages/Login'; 
@@ -31,6 +32,7 @@ function App() {
                   <Route path="/dose" element={<DosePage />} />
                   <Route path="/manual" element={<ManualBill />} />
                   <Route path="/kachi-entry" element={<KachiEntry />} />
+                  <Route path="/purchase-bill" element={<PurchaseBillEntry />} />
                   <Route path="/check-price" element={<PriceChecker />} />
                   <Route path="/doctor-price" element={<DoctorPriceChecker />} />
                   <Route path="/reports" element={<DailyReport />} />

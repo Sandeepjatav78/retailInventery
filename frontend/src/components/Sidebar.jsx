@@ -86,6 +86,12 @@ const Sidebar = () => {
                 </li>
             )}
 
+            {userRole === 'admin' && (
+                <li>
+                    <Link to="/purchase-bill" className={getLinkClass('/purchase-bill')}>📥 Purchase Bill</Link>
+                </li>
+            )}
+
             <li>
                 <Link to="/reports" className={getLinkClass('/reports')}>📊 Reports</Link>
             </li>

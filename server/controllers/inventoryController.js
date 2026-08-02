@@ -3,6 +3,7 @@ const Sale = require('../models/Sale'); // <--- IMPORT SALE MODEL ZARURI HAI
 const PendingDose = require('../models/PendingDose');
 const AuditLog = require('../models/AuditLog');
 const PurchaseReturn = require('../models/PurchaseReturn');
+const PurchaseBill = require('../models/PurchaseBill');
 
 // 1. GET ALL MEDICINES
 const getMedicines = async (req, res) => {
@@ -594,8 +595,80 @@ const getPurchaseReturns = async (req, res) => {
   catch (err) { return res.status(500).json({ message: 'Could not load purchase return history' }); }
 };
 
+// ADMIN: Save one complete supplier invoice and add all of its medicines to stock.
+const createPurchaseBill = async (req, res) => {
+  try {
+    const supplierName = String(req.body.supplierName || '').trim();
+    const invoiceNumber = String(req.body.invoiceNumber || '').trim();
+    const invoiceDate = req.body.invoiceDate;
+    let items;
+    try { items = JSON.parse(req.body.items || '[]'); } catch (_) { return res.status(400).json({ message: 'Medicine details are invalid' }); }
+
+    if (!supplierName || !invoiceNumber || !invoiceDate) return res.status(400).json({ message: 'Supplier name, invoice number and invoice date are required' });
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'Add at least one medicine' });
+
+    const duplicate = await PurchaseBill.findOne({ supplierName: new RegExp(`^${supplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), invoiceNumber });
+    if (duplicate) return res.status(409).json({ message: 'This supplier invoice is already saved' });
+
+    const number = (value, fallback = 0) => value === '' || value === null || value === undefined ? fallback : Number(value);
+    const validItems = items.map((item, index) => {
+      const productName = String(item.productName || '').trim();
+      const batchNumber = String(item.batchNumber || '').trim();
+      const expiryDate = item.expiryDate;
+      const quantity = number(item.quantity);
+      const freeQuantity = number(item.freeQuantity);
+      const mrp = number(item.mrp);
+      const rate = number(item.rate);
+      const sellingPrice = number(item.sellingPrice, rate);
+      const discount = number(item.discount);
+      const gst = number(item.gst);
+      if (!productName || !batchNumber || !expiryDate || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(mrp) || mrp < 0 || !Number.isFinite(rate) || rate < 0 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(freeQuantity) || freeQuantity < 0 || !Number.isFinite(discount) || discount < 0 || !Number.isFinite(gst) || gst < 0) {
+        throw new Error(`Medicine row ${index + 1} has missing or invalid details`);
+      }
+      const gross = quantity * rate;
+      const discountAmount = gross * (discount / 100);
+      const taxableAmount = gross - discountAmount;
+      const gstAmount = taxableAmount * (gst / 100);
+      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, sellingPrice, discount, gst, amount: Number((taxableAmount + gstAmount).toFixed(2)), taxableAmount, discountAmount, gstAmount };
+    });
+
+    const subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
+    const discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
+    const gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
+    const preRoundTotal = subtotal + gstTotal;
+    const roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
+    const grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
+
+    for (const item of validItems) {
+      const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
+      const stockAdded = item.quantity + item.freeQuantity;
+      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: req.file?.path || null };
+      if (existing) {
+        existing.quantity = Number(existing.quantity || 0) + stockAdded;
+        Object.assign(existing, medicineData);
+        await existing.save();
+      } else {
+        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stockAdded, packSize: 1, ...medicineData });
+      }
+    }
+
+    const bill = await PurchaseBill.create({ supplierName, supplierGstin: String(req.body.supplierGstin || '').trim(), invoiceNumber, invoiceDate, billType: String(req.body.billType || 'Credit'), paymentMode: String(req.body.paymentMode || 'Credit'), notes: String(req.body.notes || '').trim(), billImage: req.file?.path || null, items: validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item), subtotal: Number(subtotal.toFixed(2)), discountTotal: Number(discountTotal.toFixed(2)), gstTotal: Number(gstTotal.toFixed(2)), roundOff, grandTotal, createdBy: req.user?.role || 'admin' });
+    AuditLog.create({ action: 'CREATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: bill._id.toString(), message: `Purchase invoice ${invoiceNumber} saved`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (CREATE_PURCHASE_BILL):', err.message));
+    return res.status(201).json(bill);
+  } catch (err) {
+    console.error('[Error] createPurchaseBill:', err.message);
+    return res.status(400).json({ message: err.message || 'Could not save purchase bill' });
+  }
+};
+
+const getPurchaseBills = async (_req, res) => {
+  try { return res.json(await PurchaseBill.find().sort({ invoiceDate: -1, createdAt: -1 }).limit(50)); }
+  catch (_) { return res.status(500).json({ message: 'Could not load purchase bills' }); }
+};
+
 module.exports = {
   getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
   getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
-  sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry
+  sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
+  getPurchaseBills
 };

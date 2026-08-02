@@ -33,11 +33,13 @@ router.get('/search', inventoryController.searchMedicines);
 router.get('/expiring', inventoryController.getExpiringMedicines);
 router.get('/dose/pending', inventoryController.getPendingEntries);
 router.get('/kachi', authorizeRoles('admin'), inventoryController.getKachiEntries);
+router.get('/purchase-bills', authorizeRoles('admin'), inventoryController.getPurchaseBills);
 router.get('/purchase-returns', authorizeRoles('staff'), inventoryController.getPurchaseReturns);
 
 // 2. POST Methods
 router.post('/', authorizeRoles('admin'), upload.single('billImage'), inventoryController.addMedicine);
 router.post('/kachi', authorizeRoles('admin'), upload.single('billImage'), inventoryController.addKachiEntry);
+router.post('/purchase-bills', authorizeRoles('admin'), upload.single('billImage'), inventoryController.createPurchaseBill);
 router.post('/purchase-returns', authorizeRoles('staff'), inventoryController.createPurchaseReturn);
 router.post('/dose', inventoryController.sellLooseMedicine);
 router.post('/dose/quick', inventoryController.addQuickEntry);
