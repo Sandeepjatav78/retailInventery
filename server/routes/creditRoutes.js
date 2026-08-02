@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const Credit = require('../models/Credit');
 const Sale = require('../models/Sale');
+const { authenticateToken } = require('../middleware/auth');
+
+router.use(authenticateToken);
 
 const normalizePhone = (phone = '') => {
   const digits = String(phone).replace(/\D/g, '');

@@ -64,7 +64,7 @@ const Sidebar = () => {
                 <Link to="/manual" className={getLinkClass('/manual')}>📝 Bill</Link>
             </li>
 
-            {/* 🔥 NEW LINK: Price Check (Visible to ALL) */}
+            {/* Price Check (Visible to ALL) */}
             <li>
                 <Link to="/check-price" className={getLinkClass('/check-price')}>🔍 CP</Link>
             </li>
@@ -72,13 +72,6 @@ const Sidebar = () => {
             <li>
                 <Link to="/doctor-price" className={getLinkClass('/doctor-price')}>🩺 DP</Link>
             </li>
-
-            {/* Admin Only Link: Dose */}
-            {userRole === 'admin' && (
-                <li>
-                    <Link to="/dose" className={getLinkClass('/dose')}>💊 Dose</Link>
-                </li>
-            )}
 
             {userRole === 'admin' && (
                 <li>
@@ -108,8 +101,8 @@ const Sidebar = () => {
                 </li>
             )}
 
-                </ul>
-            </div>
+        </ul>
+      </div>
 
       {/* --- RIGHT: LOGOUT --- */}
       <div>

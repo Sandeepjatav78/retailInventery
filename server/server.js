@@ -51,6 +51,8 @@ console.log('[INFO] MongoDB URI:', process.env.MONGODB_URI ? process.env.MONGODB
 app.use(async (req, res, next) => {
   try {
     await connectDB();
+    const { syncTokenVersionFromDb } = require('./config/version');
+    syncTokenVersionFromDb().catch(() => {});
     return next();
   } catch (err) {
     console.error('❌ MongoDB Connection Error:', err.message);

@@ -1,49 +1,49 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Sidebar from './components/Sidebar'; 
-// import Navbar from './components/Navbar';
 import Dashboard from './pages/Dashboard';
 import SaleForm from './components/SaleForm';
-import DosePage from './pages/DosePage';
 import DailyReport from './pages/DailyReport';
 import ManualBill from './pages/ManualBill'; 
 import CreditLedger from './pages/CreditLedger';
 import PurchaseReturn from './pages/PurchaseReturn';
 import KachiEntry from './pages/KachiEntry';
 import PurchaseBillEntry from './pages/PurchaseBillEntry';
-import PriceChecker from './components/PriceChecker'; // <--- 1. IMPORT THIS
+import PriceChecker from './components/PriceChecker';
 import DoctorPriceChecker from './components/DoctorPriceChecker';
 import Login from './pages/Login'; 
 import PrivateRoute from './components/PrivateRoute'; 
+import SessionWatcher from './components/SessionWatcher';
 
 function App() {
   return (
     <Router>
-      <Routes>
-        <Route path="/login" element={<Login />} />
+      <SessionWatcher>
+        <Routes>
+          <Route path="/login" element={<Login />} />
 
-        <Route path="*" element={
-          <PrivateRoute>
-            <div className="min-h-screen bg-slate-100 flex flex-col">
-              <Sidebar />
-              <main className="flex-1 w-full px-3 sm:px-4 lg:px-6 py-3 sm:py-4 lg:py-6">
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/sales" element={<SaleForm />} />
-                  <Route path="/dose" element={<DosePage />} />
-                  <Route path="/manual" element={<ManualBill />} />
-                  <Route path="/kachi-entry" element={<KachiEntry />} />
-                  <Route path="/purchase-bill" element={<PurchaseBillEntry />} />
-                  <Route path="/check-price" element={<PriceChecker />} />
-                  <Route path="/doctor-price" element={<DoctorPriceChecker />} />
-                  <Route path="/reports" element={<DailyReport />} />
-                  <Route path="/credits" element={<CreditLedger />} />
-                  <Route path="/purchase-returns" element={<PurchaseReturn />} />
-                </Routes>
-              </main>
-            </div>
-          </PrivateRoute>
-        } />
-      </Routes>
+          <Route path="*" element={
+            <PrivateRoute>
+              <div className="min-h-screen bg-slate-100 flex flex-col">
+                <Sidebar />
+                <main className="flex-1 w-full px-3 sm:px-4 lg:px-6 py-3 sm:py-4 lg:py-6">
+                  <Routes>
+                    <Route path="/" element={<Dashboard />} />
+                    <Route path="/sales" element={<SaleForm />} />
+                    <Route path="/manual" element={<ManualBill />} />
+                    <Route path="/kachi-entry" element={<KachiEntry />} />
+                    <Route path="/purchase-bill" element={<PurchaseBillEntry />} />
+                    <Route path="/check-price" element={<PriceChecker />} />
+                    <Route path="/doctor-price" element={<DoctorPriceChecker />} />
+                    <Route path="/reports" element={<DailyReport />} />
+                    <Route path="/credits" element={<CreditLedger />} />
+                    <Route path="/purchase-returns" element={<PurchaseReturn />} />
+                  </Routes>
+                </main>
+              </div>
+            </PrivateRoute>
+          } />
+        </Routes>
+      </SessionWatcher>
     </Router>
   );
 }

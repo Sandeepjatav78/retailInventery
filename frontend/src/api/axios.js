@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const instance = axios.create({
-  baseURL: `${import.meta.env.VITE_BACKEND_URL}/api`, // Your Backend URL
+  baseURL: `${import.meta.env.VITE_BACKEND_URL}/api`,
 });
 
 instance.interceptors.request.use((config) => {
@@ -17,10 +17,16 @@ instance.interceptors.response.use(
   (error) => {
     const status = error?.response?.status;
     const message = String(error?.response?.data?.message || '').toLowerCase();
-    const isAuthError = status === 401 && (
-      message.includes('token') ||
-      message.includes('unauthorized') ||
-      message.includes('invalid token')
+    const code = error?.response?.data?.code;
+
+    const isAuthError = status === 401 || (
+      status === 401 && (
+        code === 'VERSION_MISMATCH' ||
+        message.includes('token') ||
+        message.includes('unauthorized') ||
+        message.includes('invalid token') ||
+        message.includes('expired')
+      )
     );
 
     if (isAuthError) {
