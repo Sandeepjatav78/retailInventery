@@ -301,12 +301,12 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
             <thead className="bg-gray-50">
                 <tr>
                     <th className={thClass}>Name</th>
+                    <th className={`${thClass} text-center`}>Qty (Strips)</th>
+                    <th className={`${thClass} bg-orange-50 text-orange-800 text-center`}>Loose</th> 
                     <th className={thClass}>Batch</th>
                     <th className={thClass}>HSN</th>
                     <th className={thClass}>Party</th>
                     <th className={`${thClass} text-center`}>Pack of</th>
-                    <th className={`${thClass} text-center`}>Qty (Strips)</th>
-                    <th className={`${thClass} bg-orange-50 text-orange-800 text-center`}>Loose</th> 
                     <th className={thClass}>MRP</th>
                     <th className={`${thClass} text-green-700`}>S.Price</th>
                     <th className={`${thClass} text-indigo-700`}>D.Price</th>
@@ -327,15 +327,14 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
                     // --- EDIT MODE ---
                     <>
                     <td className={tdClass}><input name="productName" value={editFormData.productName} onChange={handleEditFormChange} className={inputEditClass} /></td>
+                    <td className={tdClass}><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} className={`${inputEditClass} w-16 text-center`} /></td>
+                    <td className={`${tdClass} bg-orange-50 text-center text-gray-400 font-bold`}>
+                        -
+                    </td>
                     <td className={tdClass}><input name="batchNumber" value={editFormData.batchNumber} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
                     <td className={tdClass}><input name="hsnCode" value={editFormData.hsnCode || ''} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
                     <td className={tdClass}><input name="partyName" value={editFormData.partyName || ''} onChange={handleEditFormChange} className={inputEditClass} /></td>
                     <td className={tdClass}><input name="packSize" type="number" value={editFormData.packSize || ''} onChange={handleEditFormChange} className={`${inputEditClass} text-center w-16`} /></td>
-                    <td className={tdClass}><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} className={`${inputEditClass} w-16`} /></td>
-                    
-                    <td className={`${tdClass} bg-orange-50 text-center text-gray-400 font-bold`}>
-                        -
-                    </td>
 
                     <td className={tdClass}><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
                     <td className={tdClass}><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 font-bold text-green-700`} /></td>
@@ -367,10 +366,6 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
                     // --- VIEW MODE ---
                     <>
                     <td className={`${tdClass} font-medium text-gray-900`}>{m.productName}</td>
-                    <td className={`${tdClass} text-gray-500`}>{m.batchNumber}</td>
-                    <td className={`${tdClass} text-gray-500`}>{m.hsnCode || '-'}</td>
-                    <td className={`${tdClass} text-gray-500 text-xs`}>{m.partyName || '-'}</td>
-                    <td className={`${tdClass} text-center font-semibold text-gray-600`}>{m.packSize || 10}</td>
                     <td className={tdClass}>
                         <div className="text-center">
                             <span className={`font-bold ${fullStrips < 5 ? 'text-red-600 bg-red-50 px-2 py-0.5 rounded' : 'text-gray-900'}`}>
@@ -382,6 +377,10 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
                     <td className={`${tdClass} text-center font-bold text-orange-600 bg-orange-50`}>
                         {m.isKachiEntry ? '-' : looseTablets}
                     </td>
+                    <td className={`${tdClass} text-gray-500`}>{m.batchNumber}</td>
+                    <td className={`${tdClass} text-gray-500`}>{m.hsnCode || '-'}</td>
+                    <td className={`${tdClass} text-gray-500 text-xs`}>{m.partyName || '-'}</td>
+                    <td className={`${tdClass} text-center font-semibold text-gray-600`}>{m.packSize || 10}</td>
 
                     <td className={tdClass}>{m.mrp}</td>
                     <td className={`${tdClass} font-bold text-green-700`}>₹{m.sellingPrice}</td>
