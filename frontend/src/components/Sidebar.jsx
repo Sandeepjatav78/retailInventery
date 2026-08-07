@@ -64,15 +64,6 @@ const Sidebar = () => {
                 <Link to="/manual" className={getLinkClass('/manual')}>📝 Bill</Link>
             </li>
 
-            {/* Price Check (Visible to ALL) */}
-            <li>
-                <Link to="/check-price" className={getLinkClass('/check-price')}>🔍 CP</Link>
-            </li>
-
-            <li>
-                <Link to="/doctor-price" className={getLinkClass('/doctor-price')}>🩺 DP</Link>
-            </li>
-
             {userRole === 'admin' && (
                 <li>
                     <Link to="/kachi-entry" className={getLinkClass('/kachi-entry')}>🧾 Kachi Entry</Link>

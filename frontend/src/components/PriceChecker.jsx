@@ -7,9 +7,31 @@ const PriceChecker = () => {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [inventory, setInventory] = useState(() => getCachedMedicines());
+  const [unlockedCP, setUnlockedCP] = useState(false);
   const searchRef = useRef(null);
   const userRole = typeof window !== 'undefined' ? localStorage.getItem('userRole') : null;
   const isAdmin = userRole === 'admin';
+  const showCP = isAdmin || unlockedCP;
+
+  const handleUnlockCP = async () => {
+    if (unlockedCP) {
+      setUnlockedCP(false);
+      return;
+    }
+    const code = prompt("🔒 Enter Admin Secret to view CP:");
+    if (!code) return;
+    try {
+      const res = await api.post('/admin/secret', { code });
+      if (res.data.success) {
+        setUnlockedCP(true);
+      } else {
+        alert("❌ Wrong Secret!");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Server Error");
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -67,11 +89,19 @@ const PriceChecker = () => {
       <div className="max-w-5xl mx-auto">
         
         {/* HEADER */}
-        <div className="mb-8 text-center">
+        <div className="mb-8 text-center relative">
           <h2 className="text-3xl font-extrabold text-teal-800 flex justify-center items-center gap-3">
             🔍 Price & Stock Checker
           </h2>
           <p className="text-gray-500 mt-2 text-sm">Instantly check rates, batch, rack location, and vendor details.</p>
+          {!isAdmin && (
+            <button
+              onClick={handleUnlockCP}
+              className="mt-3 px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-xs font-bold transition-colors"
+            >
+              {unlockedCP ? '🙈 Hide CP' : '🔒 Unlock CP'}
+            </button>
+          )}
         </div>
 
         {/* SEARCH BAR */}
@@ -139,8 +169,8 @@ const PriceChecker = () => {
                     </span>
                 </div>
 
-                {isAdmin ? (
-                  // Admin view: show MRP, CP and Selling
+                {showCP ? (
+                  // View with CP: show MRP, CP and Selling
                   <div className="grid grid-cols-3 gap-2 bg-teal-50/50 p-4 rounded-xl border border-teal-100 mb-4">
                     {/* 1. MRP */}
                     <div className="flex flex-col border-r border-teal-200/50 pr-2">
@@ -148,7 +178,7 @@ const PriceChecker = () => {
                       <span className="text-gray-500 line-through font-semibold">₹{med.mrp}</span>
                     </div>
 
-                    {/* 2. COST PRICE (only visible for admin) */}
+                    {/* 2. COST PRICE */}
                     <div className="flex flex-col text-center border-r border-teal-200/50 px-2">
                       <span className="text-[10px] text-red-400 uppercase font-bold">Cost (CP)</span>
                       <span className="text-lg font-bold text-red-600">₹{med.costPrice}</span>
@@ -161,7 +191,7 @@ const PriceChecker = () => {
                     </div>
                   </div>
                 ) : (
-                  // Staff / general view: only show MRP and Selling
+                  // General view: show MRP and Selling
                   <div className="grid grid-cols-2 gap-2 bg-teal-50/50 p-4 rounded-xl border border-teal-100 mb-4">
                     {/* 1. MRP */}
                     <div className="flex flex-col border-r border-teal-200/50 pr-2">

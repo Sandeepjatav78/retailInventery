@@ -75,6 +75,19 @@ const EditBillModal = ({ sale, onClose, onUpdateSuccess }) => {
     };
 
     const handleSave = async () => {
+        const code = prompt("🛡 Enter Admin Secret to EDIT Bill:");
+        if (!code) return;
+
+        try {
+            const verify = await api.post('/admin/secret', { code });
+            if (!verify.data.success) {
+                return alert('❌ Wrong Secret! Edit cancelled.');
+            }
+        } catch (error) {
+            console.error(error);
+            return alert('Verification failed. Please try again.');
+        }
+
         const grandTotal = calculateTotal(items);
         const billTime24 = to24HourTime(formData.billTime);
         if (!billTime24) {
@@ -100,7 +113,7 @@ const EditBillModal = ({ sale, onClose, onUpdateSuccess }) => {
             alert("✅ Bill Updated Successfully!");
             onUpdateSuccess();
         } catch (err) {
-            alert("❌ Update Failed: " + err.message);
+            alert("❌ Update Failed: " + (err.response?.data?.message || err.message));
         }
     };
 

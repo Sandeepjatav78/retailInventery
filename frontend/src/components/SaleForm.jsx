@@ -280,6 +280,18 @@ const SaleForm = () => {
     if (isStaff && !String(med.hsnCode || '').trim()) {
       return alert("❌ This product has no HSN. Staff cannot bill it.");
     }
+
+    // Purchase Date Restriction Check
+    const pDate = med.purchaseDate ? new Date(med.purchaseDate) : (med.createdAt ? new Date(med.createdAt) : null);
+    if (pDate) {
+      const today = new Date();
+      const pDateOnly = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate());
+      const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      if (todayOnly < pDateOnly) {
+        return alert(`❌ Item cannot be sold before its purchase date!\nPurchase Date: ${pDate.toLocaleDateString('en-IN')}`);
+      }
+    }
+
     setLastSale(null);
     const idx = cart.findIndex((item) => item.medicineId === med._id);
     const discount = med.mrp > 0 ? ((med.mrp - med.sellingPrice) / med.mrp) * 100 : 0;
@@ -510,31 +522,28 @@ const SaleForm = () => {
                         {med.productName}
                       </div>
                       
-                      {!isStaff && (
-                          <div className="text-xs text-gray-500 mt-1 flex gap-3">
-                            {med.quantity <= 0 ? (
-                              <span className="text-red-600 font-bold">Stock is not available</span>
-                            ) : (
-                              <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600"}`}>
-                                Stock: {med.quantity}
-                              </span>
-                            )}
-                            <span>Batch: {med.batchNumber}</span>
-                            <span className={`${new Date(med.expiryDate) < new Date() ? "text-red-600 font-bold" : "text-gray-500"}`}>
-                              Exp: {new Date(med.expiryDate).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}
-                            </span>
-                          </div>
-                      )}
+                      <div className="text-xs text-gray-500 mt-1 flex flex-wrap gap-2 items-center">
+                        {med.quantity <= 0 ? (
+                          <span className="text-red-600 font-bold">Stock unavailable</span>
+                        ) : (
+                          <span className={`${med.quantity < 10 ? "text-orange-600 font-bold" : "text-green-600 font-semibold"}`}>
+                            Stock: {med.quantity}
+                          </span>
+                        )}
+                        <span>| Batch: {med.batchNumber}</span>
+                        <span>| {med.costPrice}</span>
+                        <span>| GST: {med.gst || 0}%</span>
+                      </div>
                     </div>
                     
                     <div className="text-right">
-                      <div className="font-bold text-teal-600 text-lg">
+                      <div className="font-bold text-teal-600 text-base">
                         ₹{med.sellingPrice}
                       </div>
                       {!isStaff && (
-                          <div className="text-xs text-gray-400 line-through">
-                            MRP: {med.mrp}
-                          </div>
+                        <div className="text-xs text-gray-400 line-through">
+                          MRP: {med.mrp}
+                        </div>
                       )}
                     </div>
                   </div>

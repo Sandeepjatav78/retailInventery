@@ -67,6 +67,19 @@ const DoctorPriceChecker = () => {
   };
 
   const handleSavePrices = async (med) => {
+    const code = prompt("🛡 Enter Admin Secret to update price:");
+    if (!code) return;
+
+    try {
+      const verify = await api.post('/admin/secret', { code });
+      if (!verify.data.success) {
+        return alert('❌ Wrong Secret! Edit cancelled.');
+      }
+    } catch (error) {
+      console.error(error);
+      return alert('Verification failed. Please try again.');
+    }
+
     const draft = getDraft(med);
     const { target } = editingState;
     const sellingPrice = normalizeNumber(draft.sellingPrice);

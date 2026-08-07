@@ -47,7 +47,7 @@ router.post('/dose/resolve', inventoryController.resolvePendingEntry);
 
 // 3. PUT/DELETE Methods
 // ✅ THIS IS THE FIX: The upload middleware is present here
-router.put('/:id', authorizeRoles('admin'), upload.single('billImage'), inventoryController.updateMedicine); 
+router.put('/:id', authorizeRoles('admin', 'staff'), upload.single('billImage'), inventoryController.updateMedicine); 
 router.delete('/:id', authorizeRoles('admin'), inventoryController.deleteMedicine);
 
 module.exports = router;

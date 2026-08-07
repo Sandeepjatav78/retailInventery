@@ -152,6 +152,16 @@ const ManualBill = () => {
           return alert("❌ This product has no HSN. Staff cannot bill it.");
       }
 
+      // Check purchase date restriction against chosen bill date
+      const pDate = med.purchaseDate ? new Date(med.purchaseDate) : (med.createdAt ? new Date(med.createdAt) : null);
+      if (pDate) {
+          const selectedBillDate = new Date(`${billDate}T00:00:00`);
+          const pDateOnly = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate());
+          if (selectedBillDate < pDateOnly) {
+              return alert(`❌ Item cannot be sold before its purchase date!\nPurchase Date: ${pDate.toLocaleDateString('en-IN')}`);
+          }
+      }
+
       suggestionSelectionLockRef.current = true;
 
       setCurrentItem({
@@ -165,7 +175,8 @@ const ManualBill = () => {
           unit: 'pack', 
           packSize: med.packSize || 10,
           hsn: med.hsnCode || '', // <--- 🔥 CAPTURE HSN
-          gst: med.gst || 0       // <--- 🔥 CAPTURE GST
+          gst: med.gst || 0,      // <--- 🔥 CAPTURE GST
+          purchaseDate: med.purchaseDate || med.createdAt || null
       });
       setQuery(med.productName);
       setShowSuggestions(false);
@@ -382,16 +393,20 @@ const ManualBill = () => {
                                 >
                                     <div>
                                         <div className="font-bold text-gray-800">{med.productName}</div>
-                                                                                <div className="text-xs text-gray-500">
-                                                                                    {med.quantity <= 0 ? (
-                                                                                        <span className="text-red-600 font-bold">Stock is not available</span>
-                                                                                    ) : (
-                                                                                        <span>Stock: {med.quantity}</span>
-                                                                                    )}
-                                                                                    <span> | Batch: {med.batchNumber} | GST: {med.gst}%</span>
-                                                                                </div>
+                                        <div className="text-xs text-gray-500 flex flex-wrap gap-1 items-center">
+                                            {med.quantity <= 0 ? (
+                                                <span className="text-red-600 font-bold">Stock unavailable</span>
+                                            ) : (
+                                                <span>Stock: {med.quantity}</span>
+                                            )}
+                                            <span>| Batch: {med.batchNumber}</span>
+                                            <span>| {med.costPrice}</span>
+                                            <span>| GST: {med.gst || 0}%</span>
+                                        </div>
                                     </div>
-                                    <div className="text-right text-teal-600 font-bold text-sm">₹{med.sellingPrice}</div>
+                                    <div className="text-right">
+                                        <div className="text-teal-600 font-bold text-sm">₹{med.sellingPrice}</div>
+                                    </div>
                                 </div>
                             ))}
                         </div>

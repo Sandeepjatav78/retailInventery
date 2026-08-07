@@ -202,12 +202,27 @@ exports.createSale = async (req, res) => {
       }
     }
 
-    // --- 🔍 STOCK VALIDATION (Pre-check to avoid negative stock) ---
+    // --- 🔍 STOCK & PURCHASE DATE VALIDATION ---
+    const saleDate = customDate ? new Date(customDate) : new Date();
+
     for (const item of sanitizedItems) {
       if (!item.medicineId) continue; // Manual items not linked to stock
 
       const med = await Medicine.findById(item.medicineId);
       if (!med) continue; // If medicine record missing, skip stock logic
+
+      // Check purchase date restriction: item cannot be sold before purchase date
+      const purchaseDate = med.purchaseDate ? new Date(med.purchaseDate) : (med.createdAt ? new Date(med.createdAt) : null);
+      if (purchaseDate) {
+        const pDateOnly = new Date(purchaseDate.getFullYear(), purchaseDate.getMonth(), purchaseDate.getDate());
+        const sDateOnly = new Date(saleDate.getFullYear(), saleDate.getMonth(), saleDate.getDate());
+        if (sDateOnly < pDateOnly) {
+          const formattedPDate = purchaseDate.toLocaleDateString('en-IN');
+          return res.status(400).json({
+            message: `Item '${med.productName}' cannot be sold before its purchase date (${formattedPDate}).`
+          });
+        }
+      }
 
       if (userRole === 'staff' && med.isKachiEntry) {
         return res.status(403).json({
