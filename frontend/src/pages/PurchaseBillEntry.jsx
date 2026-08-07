@@ -1,13 +1,134 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/axios';
 
 const emptyItem = () => ({ productName: '', packing: '', batchNumber: '', manufacturer: '', hsnCode: '', expiryDate: '', quantity: '1', freeQuantity: '0', mrp: '', rate: '', sellingPrice: '', discount: '0', gst: '5' });
 const money = (value) => `₹${Number(value || 0).toFixed(2)}`;
 
+const MedicineNameCell = ({ value, onChange, onPick }) => {
+  const [suggestions, setSuggestions] = useState([]);
+  const [open, setOpen] = useState(false);
+  const timerRef = useRef(null);
+
+  const fetchSuggestions = (query) => {
+    clearTimeout(timerRef.current);
+    if (!query.trim()) { setSuggestions([]); setOpen(false); return; }
+    timerRef.current = setTimeout(async () => {
+      try {
+        const res = await api.get(`/medicines/search?q=${encodeURIComponent(query)}&includeOutOfStock=true`);
+        const seen = new Set();
+        const unique = (res.data || []).filter(m => {
+          const key = m.productName?.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        setSuggestions(unique);
+        setOpen(true);
+      } catch { /* ignore suggestion errors */ }
+    }, 300);
+  };
+
+  useEffect(() => () => clearTimeout(timerRef.current), []);
+
+  const pick = (med) => {
+    onChange(med.productName || '');
+    if (onPick) onPick(med);
+    setOpen(false);
+  };
+
+  return <div className="relative">
+    <input
+      value={value}
+      onChange={e => { onChange(e.target.value); fetchSuggestions(e.target.value); }}
+      onFocus={() => { if (suggestions.length) setOpen(true); }}
+      onBlur={() => setTimeout(() => setOpen(false), 150)}
+      placeholder="Medicine name — type to search stock"
+      className="w-full min-w-[200px] rounded-md border border-teal-400 bg-teal-50/50 px-2 py-2 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+    />
+    {open && suggestions.length > 0 && (
+      <ul className="absolute left-0 right-0 z-50 mt-1 max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl">
+        {suggestions.map((med, i) => (
+          <li key={i}>
+            <button
+              type="button"
+              onMouseDown={e => e.preventDefault()}
+              onClick={() => pick(med)}
+              className="block w-full px-3 py-2 text-left hover:bg-teal-50"
+            >
+              <span className="block text-sm font-semibold text-slate-800">{med.productName}</span>
+              <span className="block text-xs text-slate-500">
+                {med.packSize ? `${med.packSize} TAB` : ''}{med.batchNumber ? ` · ${med.batchNumber}` : ''}
+                {med.mrp ? ` · MRP ₹${med.mrp}` : ''}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    )}
+  </div>;
+};
+
 const PurchaseBillEntry = () => {
   const [bill, setBill] = useState({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', billFile: null });
   const [items, setItems] = useState([emptyItem()]);
   const [saving, setSaving] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [suppliers, setSuppliers] = useState([]);
+
+  useEffect(() => {
+    api.get('/medicines/suppliers').then(res => setSuppliers(res.data || [])).catch(() => {});
+  }, []);
+
+  const handleScanBill = async (file) => {
+    if (!file) return;
+    setScanning(true);
+    try {
+      const formData = new FormData();
+      formData.append('billImage', file);
+      const res = await api.post('/medicines/scan-bill', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (res.data?.success && res.data?.data) {
+        const extracted = res.data.data;
+        setBill(prev => ({
+          ...prev,
+          supplierName: extracted.supplierName || prev.supplierName,
+          supplierGstin: extracted.supplierGstin || prev.supplierGstin,
+          invoiceNumber: extracted.invoiceNumber || prev.invoiceNumber,
+          invoiceDate: extracted.invoiceDate || prev.invoiceDate,
+          billType: extracted.billType || prev.billType,
+          paymentMode: extracted.paymentMode || prev.paymentMode,
+          notes: extracted.notes || prev.notes,
+          billFile: file
+        }));
+
+        if (Array.isArray(extracted.items) && extracted.items.length > 0) {
+          const scannedItems = extracted.items.map(item => ({
+            productName: item.productName || '',
+            packing: item.packing || '',
+            batchNumber: item.batchNumber || '',
+            manufacturer: item.manufacturer || '',
+            hsnCode: item.hsnCode || '',
+            expiryDate: item.expiryDate || '',
+            quantity: String(item.quantity ?? 1),
+            freeQuantity: String(item.freeQuantity ?? 0),
+            mrp: String(item.mrp ?? 0),
+            rate: String(item.rate ?? 0),
+            sellingPrice: String(item.sellingPrice ?? item.rate ?? 0),
+            discount: String(item.discount ?? 0),
+            gst: String(item.gst ?? 5)
+          }));
+          setItems(scannedItems);
+        }
+        alert('✨ AI Scanner: Purchase bill parsed and auto-filled successfully!');
+      }
+    } catch (error) {
+      console.error(error);
+      alert('AI Scanner Error: ' + (error.response?.data?.message || error.message));
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const totals = useMemo(() => items.reduce((result, item) => {
     const gross = Number(item.quantity || 0) * Number(item.rate || 0);
@@ -63,14 +184,49 @@ const PurchaseBillEntry = () => {
   return <div className="min-h-screen bg-slate-50 p-4 md:p-6">
     <form onSubmit={submit} className="mx-auto max-w-[1500px] space-y-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div><h1 className="text-2xl font-extrabold text-slate-800">Purchase Bill Entry</h1><p className="text-sm text-slate-500">Supplier bill upload karein, medicines add karein aur total automatically dekhein.</p></div>
+        <div><h1 className="text-2xl font-extrabold text-slate-800">Purchase Bill Entry</h1><p className="text-sm text-slate-500">Supplier bill upload karein, photo scan karein aur medicines automatically add karein.</p></div>
         <div className="rounded-lg bg-teal-700 px-5 py-3 text-right text-white shadow-sm"><p className="text-xs font-semibold uppercase tracking-wider text-teal-100">Grand Total</p><p className="text-2xl font-extrabold">{money(grandTotal)}</p></div>
+      </div>
+
+      {/* --- AI BILL AUTO-SCANNER BANNER --- */}
+      <div className="bg-gradient-to-r from-purple-700 to-indigo-800 p-4 rounded-xl text-white shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+        <div>
+          <h2 className="font-extrabold text-lg flex items-center gap-2">
+            📸 AI Purchase Bill Auto-Scanner
+          </h2>
+          <p className="text-xs text-purple-100 mt-0.5">
+            Bill ki photo snap karein ya file upload karein — AI automatically supplier, invoice no. aur saare medicine items fill kar dega!
+          </p>
+        </div>
+        <label className={`cursor-pointer px-5 py-2.5 rounded-lg font-bold text-sm shadow transition-all flex items-center gap-2 ${scanning ? 'bg-purple-300 text-purple-900 cursor-not-allowed' : 'bg-white text-purple-800 hover:bg-purple-50'}`}>
+          {scanning ? (
+            <>
+              <span className="w-4 h-4 border-2 border-purple-800 border-t-transparent rounded-full animate-spin"></span>
+              Scanning Bill with AI...
+            </>
+          ) : (
+            <>📷 Take Photo / Scan Bill Image</>
+          )}
+          <input
+            type="file"
+            accept="image/*,.pdf"
+            capture="environment"
+            disabled={scanning}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) handleScanBill(file);
+            }}
+            className="hidden"
+          />
+        </label>
       </div>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
         <h2 className="mb-4 font-bold text-slate-800">Invoice Details</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div><label className={labelClass}>Supplier / Party Name *</label><input required value={bill.supplierName} onChange={e => setBill({ ...bill, supplierName: e.target.value })} placeholder="Rosa Medical Agencies" className={inputClass} /></div>
+          <div><label className={labelClass}>Supplier / Party Name *</label><input required list="known-suppliers" value={bill.supplierName} onChange={e => setBill({ ...bill, supplierName: e.target.value })} placeholder="Rosa Medical Agencies" className={inputClass} />
+            <datalist id="known-suppliers">{suppliers.map(s => <option key={s} value={s} />)}</datalist>
+          </div>
           <div><label className={labelClass}>Supplier GSTIN</label><input value={bill.supplierGstin} onChange={e => setBill({ ...bill, supplierGstin: e.target.value })} placeholder="06ABCDE1234F1Z5" className={inputClass} /></div>
           <div><label className={labelClass}>Invoice No. *</label><input required value={bill.invoiceNumber} onChange={e => setBill({ ...bill, invoiceNumber: e.target.value })} placeholder="C-09141" className={inputClass} /></div>
           <div><label className={labelClass}>Invoice Date *</label><input required type="date" value={bill.invoiceDate} onChange={e => setBill({ ...bill, invoiceDate: e.target.value })} className={inputClass} /></div>
@@ -85,7 +241,23 @@ const PurchaseBillEntry = () => {
         <div className="flex items-center justify-between border-b border-slate-200 p-4 md:px-5"><div><h2 className="font-bold text-slate-800">Medicines</h2><p className="text-xs text-slate-500">Free quantity bhi inventory stock mein add hogi.</p></div><button type="button" onClick={() => setItems([...items, emptyItem()])} className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700">+ Add Medicine</button></div>
         <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{['Medicine Name *', 'Packing', 'Batch *', 'Mfr.', 'HSN', 'Expiry *', 'Qty *', 'Free', 'MRP *', 'Rate *', 'Sale Price', 'Disc %', 'GST %', 'Amount', ''].map(title => <th key={title} className="whitespace-nowrap px-2 py-3 font-bold">{title}</th>)}</tr></thead><tbody>
           {items.map((item, index) => <tr key={index} className="border-t border-slate-100 align-top">
-            <td className="p-2"><input value={item.productName} onChange={e => setItem(index, 'productName', e.target.value)} placeholder="Medicine name" className={inputClass} /></td>
+            <td className="p-2"><MedicineNameCell
+              value={item.productName}
+              onChange={val => setItem(index, 'productName', val)}
+              onPick={(med) => setItems(prev => prev.map((it, idx) => {
+                if (idx !== index) return it;
+                return {
+                  ...it,
+                  productName: med.productName || it.productName,
+                  packing: med.packSize ? `${med.packSize} TAB` : (it.packing || ''),
+                  manufacturer: med.manufacturer || it.manufacturer,
+                  hsnCode: med.hsnCode || it.hsnCode,
+                  gst: med.gst != null ? String(med.gst) : it.gst,
+                  mrp: med.mrp != null ? String(med.mrp) : it.mrp,
+                  sellingPrice: (med.sellingPrice != null && med.sellingPrice) ? String(med.sellingPrice) : (med.mrp ? String(med.mrp) : it.sellingPrice)
+                };
+              }))}
+            /></td>
             <td className="p-2"><input value={item.packing} onChange={e => setItem(index, 'packing', e.target.value)} placeholder="10 tab" className={inputClass} /></td>
             <td className="p-2"><input value={item.batchNumber} onChange={e => setItem(index, 'batchNumber', e.target.value)} placeholder="Batch" className={inputClass} /></td>
             <td className="p-2"><input value={item.manufacturer} onChange={e => setItem(index, 'manufacturer', e.target.value)} placeholder="Mfr" className={inputClass} /></td>

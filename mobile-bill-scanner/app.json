@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Radhe Pharmacy Bill Scanner",
+    "slug": "radhe-pharmacy-bill-scanner",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "This app uses camera to scan pharmacy purchase bills."
+      }
+    },
+    "android": {
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-status-bar"
+    ]
+  }
+}

@@ -30,6 +30,7 @@ router.use(authenticateToken);
 // 1. GET Methods
 router.get('/', inventoryController.getMedicines); 
 router.get('/search', inventoryController.searchMedicines);
+router.get('/suppliers', inventoryController.getSuppliers);
 router.get('/expiring', inventoryController.getExpiringMedicines);
 router.get('/dose/pending', inventoryController.getPendingEntries);
 router.get('/kachi', authorizeRoles('admin'), inventoryController.getKachiEntries);
@@ -40,6 +41,7 @@ router.get('/purchase-returns', authorizeRoles('staff'), inventoryController.get
 router.post('/', authorizeRoles('admin'), upload.single('billImage'), inventoryController.addMedicine);
 router.post('/kachi', authorizeRoles('admin'), upload.single('billImage'), inventoryController.addKachiEntry);
 router.post('/purchase-bills', authorizeRoles('admin'), upload.single('billImage'), inventoryController.createPurchaseBill);
+router.post('/scan-bill', authorizeRoles('admin', 'staff'), upload.single('billImage'), inventoryController.scanPurchaseBill);
 router.post('/purchase-returns', authorizeRoles('staff'), inventoryController.createPurchaseReturn);
 router.post('/dose', inventoryController.sellLooseMedicine);
 router.post('/dose/quick', inventoryController.addQuickEntry);

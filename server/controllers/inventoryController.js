@@ -27,6 +27,18 @@ const getMedicines = async (req, res) => {
 };
 
 
+// 2.5 GET KNOWN SUPPLIERS (for autocomplete in purchase bill entry)
+const getSuppliers = async (_req, res) => {
+  try {
+    const suppliers = await PurchaseBill.distinct('supplierName', { supplierName: { $ne: '' } });
+    const extra = await Medicine.distinct('partyName', { partyName: { $exists: true, $nin: ['', null] } });
+    const merged = [...new Set([...suppliers, ...extra])].filter(Boolean).sort((a, b) => a.localeCompare(b));
+    res.json(merged);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
 // 2. SEARCH MEDICINES
 const searchMedicines = async (req, res) => {
   const { q, includeOutOfStock } = req.query;
@@ -666,9 +678,114 @@ const getPurchaseBills = async (_req, res) => {
   catch (_) { return res.status(500).json({ message: 'Could not load purchase bills' }); }
 };
 
+// AI MULTIMODAL BILL SCANNER: Parses purchase bill photos into structured JSON
+const scanPurchaseBill = async (req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ message: 'GEMINI_API_KEY is not configured in server environment' });
+    }
+
+    let mimeType = 'image/jpeg';
+    let base64Data = '';
+
+    const bodyBase64 = req.body.imageBase64 || req.body.base64 || req.body.image;
+    if (bodyBase64) {
+      base64Data = bodyBase64.replace(/^data:image\/\w+;base64,/, '');
+      if (req.body.mimeType) mimeType = req.body.mimeType;
+    } else if (req.file) {
+      mimeType = req.file.mimetype || 'image/jpeg';
+      if (req.file.buffer) {
+        base64Data = req.file.buffer.toString('base64');
+      } else if (req.file.path && req.file.path.startsWith('http')) {
+        const imgRes = await fetch(req.file.path);
+        const arrayBuf = await imgRes.arrayBuffer();
+        base64Data = Buffer.from(arrayBuf).toString('base64');
+        const contentType = imgRes.headers.get('content-type');
+        if (contentType) mimeType = contentType;
+      } else if (req.file.path) {
+        const fs = require('fs');
+        base64Data = fs.readFileSync(req.file.path).toString('base64');
+      }
+    }
+
+    if (!base64Data) {
+      return res.status(400).json({ message: 'Bill image (file or base64) is required for AI scanning' });
+    }
+
+    const prompt = `You are an expert OCR parser for Indian pharmacy purchase bills and GST tax invoices.
+Analyze this invoice image and extract all details into a strict JSON object with this format:
+
+{
+  "supplierName": "Name of supplier or vendor issuing the bill",
+  "supplierGstin": "GSTIN number of the supplier",
+  "invoiceNumber": "Invoice or Bill Number e.g. A001437",
+  "invoiceDate": "YYYY-MM-DD date format e.g. 2026-07-24",
+  "billType": "Credit or Cash or GST Invoice",
+  "paymentMode": "Credit or Cash",
+  "notes": "Any transport or invoice notes",
+  "items": [
+    {
+      "productName": "Name of medicine / item e.g. ARISTO POVIDON 10 LOTION",
+      "packing": "Pack size e.g. 100 ML, 15CAP, 15 TAB, 10 TAB",
+      "manufacturer": "Mfr name e.g. ARISTO, CADILA, ELDER, ALKEM",
+      "batchNumber": "Batch number e.g. PS226127",
+      "expiryDate": "YYYY-MM-DD format e.g. 2028-03-31 for 3/28 or 12/27 -> 2027-12-31",
+      "hsnCode": "HSN code e.g. 300490",
+      "mrp": 103.95,
+      "rate": 45.00,
+      "sellingPrice": 45.00,
+      "discount": 0,
+      "gst": 5,
+      "quantity": 5.00,
+      "freeQuantity": 0
+    }
+  ]
+}
+
+Ensure all numerical values (mrp, rate, sellingPrice, discount, gst, quantity, freeQuantity) are numbers, not strings.
+Return ONLY raw valid JSON with no markdown tags or conversational text.`;
+
+    const { GoogleGenAI } = require('@google/genai');
+    const ai = new GoogleGenAI({ apiKey });
+
+    const contents = [
+      {
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType, data: base64Data } },
+          { text: prompt }
+        ]
+      }
+    ];
+
+    const response = await ai.models.generateContent({
+      model: process.env.GEMINI_MODEL || 'gemini-flash-latest',
+      contents,
+    });
+
+    let rawText = response.text || '';
+    rawText = rawText.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, '$1').trim();
+
+    let parsedData;
+    try {
+      parsedData = JSON.parse(rawText);
+    } catch (parseErr) {
+      console.error('[Error] JSON Parse error from Gemini response:', rawText);
+      return res.status(500).json({ message: 'AI Scanner could not parse bill text as valid JSON. Please retry with a clearer photo.' });
+    }
+
+    return res.json({ success: true, data: parsedData });
+
+  } catch (err) {
+    console.error('[Error] scanPurchaseBill:', err);
+    return res.status(500).json({ message: 'AI Bill Scanning failed: ' + (err.message || 'Unknown error') });
+  }
+};
+
 module.exports = {
   getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
   getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
   sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
-  getPurchaseBills
+  getPurchaseBills, scanPurchaseBill, getSuppliers
 };
