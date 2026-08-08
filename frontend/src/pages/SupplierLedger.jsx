@@ -19,10 +19,14 @@ const SupplierLedger = () => {
   // Payment Modal State
   const [paymentModalBill, setPaymentModalBill] = useState(null);
   const [payAmount, setPayAmount] = useState('');
-  const [payMode, setPayMode] = useState('Cash');
+  const [payMode, setPayMode] = useState('UPI');
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [payRemark, setPayRemark] = useState('');
   const [submittingPay, setSubmittingPay] = useState(false);
+
+  // Delete Party Modal State
+  const [deleteParty, setDeleteParty] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchLedger = async () => {
     setLoading(true);
@@ -75,6 +79,23 @@ const SupplierLedger = () => {
       alert(err.response?.data?.message || 'Payment save nahi ho saka.');
     } finally {
       setSubmittingPay(false);
+    }
+  };
+
+  const handleDeleteParty = async () => {
+    if (!deleteParty) return;
+    setDeleting(true);
+    try {
+      const res = await api.delete(`/medicines/supplier-ledger/${encodeURIComponent(deleteParty.supplierName)}`, {
+        data: { force: true }
+      });
+      alert(res.data.message || 'Party delete ho gayi.');
+      setDeleteParty(null);
+      fetchLedger();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Party delete nahi ho saki.');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -201,9 +222,18 @@ const SupplierLedger = () => {
                             <p className="text-xs text-slate-500 mt-0.5">GSTIN: {sup.supplierGstin}</p>
                           )}
                         </div>
-                        <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-200 shadow-2xs">
-                          {sup.billCount} {sup.billCount === 1 ? 'Bill' : 'Bills'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white text-slate-700 border border-slate-200 shadow-2xs">
+                            {sup.billCount} {sup.billCount === 1 ? 'Bill' : 'Bills'}
+                          </span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setDeleteParty(sup); }}
+                            title={`Delete party '${sup.supplierName}' from ledger`}
+                            className="w-8 h-8 rounded-lg bg-red-50 text-red-600 hover:bg-red-600 hover:text-white border border-red-200 flex items-center justify-center text-sm transition-colors"
+                          >
+                            🗑
+                          </button>
+                        </div>
                       </div>
 
                       {/* STATS */}
@@ -388,6 +418,54 @@ const SupplierLedger = () => {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- DELETE PARTY CONFIRMATION MODAL --- */}
+      {deleteParty && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-red-100 space-y-4 animate-in fade-in zoom-in duration-150">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-lg">🗑 Delete Party from Ledger</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Ye action undo nahi ho sakta.</p>
+              </div>
+              <button onClick={() => setDeleteParty(null)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+            </div>
+
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-1">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Party Name</p>
+              <p className="font-extrabold text-slate-800">{deleteParty.supplierName}</p>
+              <p className="text-xs text-slate-500 mt-2">{deleteParty.billCount} {deleteParty.billCount === 1 ? 'bill' : 'bills'} aur uske saare payment records delete ho jayenge.</p>
+            </div>
+
+            {Number(deleteParty.balanceDue) > 0 && (
+              <div className="bg-red-50 p-4 rounded-xl border border-red-200 space-y-1">
+                <p className="text-xs font-bold uppercase tracking-wide text-red-600">⚠️ Credit Due Hai</p>
+                <p className="font-extrabold text-red-700 text-lg">{money(deleteParty.balanceDue)}</p>
+                <p className="text-xs text-red-600">Iss party ka outstanding udhaar hai. Delete karne par ye due bhi hat jayega aur ledger me nahi dikhega.</p>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setDeleteParty(null)}
+                disabled={deleting}
+                className="flex-1 py-2.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteParty}
+                disabled={deleting}
+                className="flex-1 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-xs disabled:opacity-50"
+              >
+                {deleting ? 'Deleting...' : '🗑 Delete Party'}
+              </button>
             </div>
           </div>
         </div>

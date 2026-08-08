@@ -1011,6 +1011,62 @@ const getSupplierLedger = async (req, res) => {
   }
 };
 
+// ADMIN: Delete an entire supplier party (all their purchase bills) from the ledger
+const deleteSupplierParty = async (req, res) => {
+  try {
+    const partyName = decodeURIComponent(req.params.name).trim();
+    if (!partyName) {
+      return res.status(400).json({ message: 'Party name is required' });
+    }
+    const escapedName = String(partyName).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const nameRegex = new RegExp(`^${escapedName}$`, 'i');
+
+    const bills = await PurchaseBill.find({ supplierName: nameRegex }).lean();
+    if (bills.length === 0) {
+      return res.status(404).json({ message: `Party '${partyName}' ke liye koi bills nahi mile.` });
+    }
+
+    // Same due calculation as getSupplierLedger (.lean() avoids schema defaults)
+    let totalDue = 0;
+    bills.forEach(bill => {
+      const grandTotal = Number(bill.grandTotal || 0);
+      const hasPaidField = bill.amountPaid !== undefined && bill.amountPaid !== null;
+      const paid = hasPaidField
+        ? Number(bill.amountPaid || 0)
+        : (bill.paymentStatus === 'Paid' ? grandTotal : 0);
+      const due = bill.balanceDue !== undefined && bill.balanceDue !== null
+        ? Number(bill.balanceDue)
+        : Math.max(0, grandTotal - paid);
+      totalDue += due;
+    });
+
+    if (totalDue > 0 && req.body.force !== true) {
+      return res.status(400).json({
+        message: `Party '${partyName}' ka ₹${totalDue.toFixed(2)} ka credit due hai. Delete confirm karne ke liye force=true bhejo.`,
+        due: totalDue
+      });
+    }
+
+    const result = await PurchaseBill.deleteMany({ supplierName: nameRegex });
+
+    AuditLog.create({
+      action: 'DELETE_SUPPLIER_PARTY',
+      entityType: 'PurchaseBill',
+      entityId: partyName,
+      message: `Supplier party '${partyName}' deleted with ${result.deletedCount} bills`,
+      details: { supplierName: partyName, deletedBills: result.deletedCount },
+      userRole: req.user?.role || 'admin'
+    }).catch(err => console.error('Audit log error (DELETE_SUPPLIER_PARTY):', err.message));
+
+    return res.json({
+      message: `Party '${partyName}' aur uske ${result.deletedCount} bills ledger se delete ho gaye.`
+    });
+  } catch (err) {
+    console.error('[Error] deleteSupplierParty:', err.stack);
+    return res.status(500).json({ message: 'Party delete nahi ho saka' });
+  }
+};
+
 // ADMIN: Record repayment against an open purchase bill
 const recordSupplierPayment = async (req, res) => {
   try {
@@ -1087,5 +1143,5 @@ module.exports = {
   getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
   getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
   sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
-  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, recordSupplierPayment
+  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, recordSupplierPayment
 };

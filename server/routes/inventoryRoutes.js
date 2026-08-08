@@ -35,6 +35,7 @@ router.get('/dose/pending', inventoryController.getPendingEntries);
 router.get('/kachi', authorizeRoles('admin'), inventoryController.getKachiEntries);
 router.get('/purchase-bills', authorizeRoles('admin'), inventoryController.getPurchaseBills);
 router.get('/supplier-ledger', authorizeRoles('admin'), inventoryController.getSupplierLedger);
+router.delete('/supplier-ledger/:name', authorizeRoles('admin'), inventoryController.deleteSupplierParty);
 router.get('/purchase-returns', authorizeRoles('staff'), inventoryController.getPurchaseReturns);
 
 // 2. POST Methods
