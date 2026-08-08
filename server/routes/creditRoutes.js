@@ -152,6 +152,8 @@ router.post('/add-bill', async (req, res) => {
       credit.totalAmount += billAmount;
       credit.remainingAmount += billAmount;
       if (normalizedPhone) credit.customerPhone = normalizedPhone;
+      credit.status = 'Active';
+      credit.lastUpdated = new Date();
       credit.bills.push({
         billId,
         invoiceNo,

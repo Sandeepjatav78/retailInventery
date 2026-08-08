@@ -76,6 +76,12 @@ const Sidebar = () => {
                 </li>
             )}
 
+            {userRole === 'admin' && (
+                <li>
+                    <Link to="/supplier-ledger" className={getLinkClass('/supplier-ledger')}>📖 Party Ledger</Link>
+                </li>
+            )}
+
             <li>
                 <Link to="/reports" className={getLinkClass('/reports')}>📊 Reports</Link>
             </li>

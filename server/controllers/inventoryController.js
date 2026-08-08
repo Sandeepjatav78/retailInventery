@@ -651,6 +651,30 @@ const createPurchaseBill = async (req, res) => {
     const roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
     const grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
 
+    let rawPaymentStatus = String(req.body.paymentStatus || 'Credit').trim();
+    let amountPaid = Number(req.body.amountPaid || 0);
+    if (rawPaymentStatus === 'Paid') {
+      amountPaid = grandTotal;
+    } else if (rawPaymentStatus === 'Credit' && !req.body.amountPaid) {
+      amountPaid = 0;
+    }
+    amountPaid = Math.min(grandTotal, Math.max(0, amountPaid));
+    const balanceDue = Number(Math.max(0, grandTotal - amountPaid).toFixed(2));
+    let paymentStatus = 'Credit';
+    if (balanceDue <= 0) paymentStatus = 'Paid';
+    else if (amountPaid > 0) paymentStatus = 'Partial';
+
+    const paymentRemarks = String(req.body.paymentRemarks || req.body.notes || '').trim();
+    const paymentHistory = [];
+    if (amountPaid > 0) {
+      paymentHistory.push({
+        date: invoiceDate ? new Date(invoiceDate) : new Date(),
+        amount: amountPaid,
+        paymentMode: String(req.body.paymentMode || 'Cash'),
+        remark: 'Initial bill payment'
+      });
+    }
+
     for (const item of validItems) {
       const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
       const stockAdded = item.quantity + item.freeQuantity;
@@ -664,8 +688,30 @@ const createPurchaseBill = async (req, res) => {
       }
     }
 
-    const bill = await PurchaseBill.create({ supplierName, supplierGstin: String(req.body.supplierGstin || '').trim(), invoiceNumber, invoiceDate, billType: String(req.body.billType || 'Credit'), paymentMode: String(req.body.paymentMode || 'Credit'), notes: String(req.body.notes || '').trim(), billImage: req.file?.path || null, items: validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item), subtotal: Number(subtotal.toFixed(2)), discountTotal: Number(discountTotal.toFixed(2)), gstTotal: Number(gstTotal.toFixed(2)), roundOff, grandTotal, createdBy: req.user?.role || 'admin' });
-    AuditLog.create({ action: 'CREATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: bill._id.toString(), message: `Purchase invoice ${invoiceNumber} saved`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (CREATE_PURCHASE_BILL):', err.message));
+    const bill = await PurchaseBill.create({
+      supplierName,
+      supplierGstin: String(req.body.supplierGstin || '').trim(),
+      invoiceNumber,
+      invoiceDate,
+      billType: String(req.body.billType || 'Credit'),
+      paymentMode: String(req.body.paymentMode || 'Credit'),
+      notes: String(req.body.notes || '').trim(),
+      billImage: req.file?.path || null,
+      items: validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item),
+      subtotal: Number(subtotal.toFixed(2)),
+      discountTotal: Number(discountTotal.toFixed(2)),
+      gstTotal: Number(gstTotal.toFixed(2)),
+      roundOff,
+      grandTotal,
+      amountPaid: Number(amountPaid.toFixed(2)),
+      balanceDue,
+      paymentStatus,
+      paymentRemarks,
+      paymentHistory,
+      createdBy: req.user?.role || 'admin'
+    });
+
+    AuditLog.create({ action: 'CREATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: bill._id.toString(), message: `Purchase invoice ${invoiceNumber} saved`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal, balanceDue, paymentStatus }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (CREATE_PURCHASE_BILL):', err.message));
     return res.status(201).json(bill);
   } catch (err) {
     console.error('[Error] createPurchaseBill:', err.message);
@@ -676,6 +722,88 @@ const createPurchaseBill = async (req, res) => {
 const getPurchaseBills = async (_req, res) => {
   try { return res.json(await PurchaseBill.find().sort({ invoiceDate: -1, createdAt: -1 }).limit(50)); }
   catch (_) { return res.status(500).json({ message: 'Could not load purchase bills' }); }
+};
+
+// Clean & normalize items extracted by the AI scanner:
+// - merge pure-FREE lines into their parent item's freeQuantity
+// - merge exact duplicates (same name + batch)
+// - derive rate from line amount when rate is missing
+// - collect warnings for rows the user must fix manually
+const cleanScannedItems = (items = []) => {
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  const str = (v) => String(v ?? '').trim();
+  const stripFreeWords = (name) => str(name).toLowerCase().replace(/\b(free|foc|n\.c\.?|nc|with purchase|complementary)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  const similarName = (a, b) => {
+    const sa = stripFreeWords(a);
+    const sb = stripFreeWords(b);
+    if (!sa || !sb) return false;
+    return sa === sb || sa.includes(sb) || sb.includes(sa);
+  };
+
+  const rows = items.map(item => ({
+    productName: str(item.productName),
+    packing: str(item.packing),
+    manufacturer: str(item.manufacturer),
+    batchNumber: str(item.batchNumber),
+    hsnCode: str(item.hsnCode),
+    expiryDate: str(item.expiryDate),
+    mrp: Math.max(0, num(item.mrp)),
+    rate: Math.max(0, num(item.rate)),
+    sellingPrice: Math.max(0, num(item.sellingPrice)),
+    discount: Math.max(0, num(item.discount)),
+    gst: Math.max(0, num(item.gst)),
+    quantity: Math.max(1, num(item.quantity)),
+    freeQuantity: Math.max(0, num(item.freeQuantity)),
+    amount: Math.max(0, num(item.amount))
+  })).filter(r => r.productName);
+
+  // 1. Merge pure-FREE lines into a matching parent item (e.g. "TAB X" then "TAB X FREE")
+  const merged = [];
+  for (const row of rows) {
+    const isFreeLine = row.rate === 0 && row.amount === 0 && /\b(free|foc|n\.c\.?|nc)\b/.test(row.productName.toLowerCase());
+    if (isFreeLine) {
+      const parent = merged.find(m => m.rate > 0 && similarName(m.productName, row.productName));
+      if (parent) {
+        parent.freeQuantity += row.quantity;
+        continue;
+      }
+    }
+    merged.push(row);
+  }
+
+  // 2. Merge exact duplicates (same name + batch)
+  const final = [];
+  for (const row of merged) {
+    const dup = final.find(f => f.productName.toLowerCase() === row.productName.toLowerCase() && f.batchNumber === row.batchNumber);
+    if (dup) {
+      dup.quantity += row.quantity;
+      dup.freeQuantity += row.freeQuantity;
+      dup.amount += row.amount;
+    } else {
+      final.push({ ...row });
+    }
+  }
+
+  // 3. Derive rate from line amount when rate is missing
+  for (const row of final) {
+    if (row.rate === 0 && row.amount > 0 && row.quantity > 0) {
+      const factor = (1 - row.discount / 100) * (1 + row.gst / 100);
+      row.rate = factor > 0 ? Number((row.amount / (row.quantity * factor)).toFixed(2)) : 0;
+    }
+  }
+
+  // 4. Warnings for rows the user must review manually
+  const warnings = [];
+  final.forEach((row, i) => {
+    const issues = [];
+    if (!row.batchNumber) issues.push('Batch number missing');
+    if (!row.expiryDate) issues.push('Expiry date missing');
+    if (row.rate === 0 && row.freeQuantity === 0 && row.amount === 0) issues.push('Rate missing (may be FREE item)');
+    if (row.mrp === 0) issues.push('MRP missing');
+    if (issues.length) warnings.push({ index: i + 1, productName: row.productName, issues });
+  });
+
+  return { items: final, warnings };
 };
 
 // AI MULTIMODAL BILL SCANNER: Parses purchase bill photos into structured JSON
@@ -730,20 +858,45 @@ Analyze this invoice image and extract all details into a strict JSON object wit
       "packing": "Pack size e.g. 100 ML, 15CAP, 15 TAB, 10 TAB",
       "manufacturer": "Mfr name e.g. ARISTO, CADILA, ELDER, ALKEM",
       "batchNumber": "Batch number e.g. PS226127",
-      "expiryDate": "YYYY-MM-DD format e.g. 2028-03-31 for 3/28 or 12/27 -> 2027-12-31",
-      "hsnCode": "HSN code e.g. 300490",
+      "expiryDate": "YYYY-MM-DD format e.g. 2028-03-31",
+      "hsnCode": "6-digit HSN/SAC code e.g. 300490. If a column labelled HSN/SAC/HSN Code is present, ALWAYS extract it — never skip it. Use empty string only if truly absent.",
       "mrp": 103.95,
       "rate": 45.00,
       "sellingPrice": 45.00,
       "discount": 0,
       "gst": 5,
       "quantity": 5.00,
-      "freeQuantity": 0
+      "freeQuantity": 0,
+      "amount": 236.25
     }
   ]
 }
 
-Ensure all numerical values (mrp, rate, sellingPrice, discount, gst, quantity, freeQuantity) are numbers, not strings.
+QUANTITY & FREE ITEMS RULES (CRITICAL — READ CAREFULLY):
+- "quantity" = ONLY the PAID quantity of that item. Never include free pieces in it.
+- "freeQuantity" = pieces given FREE with the item (schemes like 1+1, 2+1, Buy 1 Get 1, BOGO, X FREE with Y).
+- Scheme like "1+1", "1+1 FREE", "2+1", "BUY 1 GET 1 FREE" means one paid item plus free pieces. Split it correctly, e.g. "1+1" => quantity: 1, freeQuantity: 1. "2+1" => quantity: 2, freeQuantity: 1.
+- If a whole line is FREE / no charge (marked "FREE", "FOC", "N.C.", "NC", "FREE WITH PURCHASE", or has rate blank / 0): output it as its OWN item with rate: 0, quantity = number of free pieces, freeQuantity: 0, amount: 0.
+- "rate" is the per-unit charge for the item. A free line always has rate 0.
+- "amount" = final line amount = quantity × rate × (1 − discount/100) × (1 + gst/100). If the bill has a printed per-line Amount column, use it to cross-check rate.
+- "sellingPrice" = the price this pharmacy should sell at. If the bill does not show a selling price, use rate.
+
+HSN EXTRACTION RULES (IMPORTANT):
+- Look for a column with header "HSN", "HSN Code", "SAC", "HSN/SAC" in the items table.
+- Each item row has its OWN hsnCode from that column — copy it exactly (usually 4 to 8 digits).
+- If the item table has NO HSN column, set hsnCode to "" (empty string). Do NOT guess or make up HSN codes.
+- Also extract supplier GSTIN carefully from the header.
+
+DATE RULES:
+- Always output YYYY-MM-DD.
+- "3/28" or "03/2028" or "3-28" (month/year only) -> last day of that month: 2028-03-31.
+- "28/3/25", "28-03-25" -> 2025-03-28. "12/27" -> 2027-12-31.
+- Text dates like "MAR 28", "MARCH 2028" -> 2028-03-31.
+
+NUMBER RULES:
+- All numbers (mrp, rate, sellingPrice, discount, gst, quantity, freeQuantity, amount) must be JSON numbers, never strings.
+- If a value is missing or illegible, use 0 for numbers and "" for text.
+
 Return ONLY raw valid JSON with no markdown tags or conversational text.`;
 
     const { GoogleGenAI } = require('@google/genai');
@@ -775,6 +928,11 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
       return res.status(500).json({ message: 'AI Scanner could not parse bill text as valid JSON. Please retry with a clearer photo.' });
     }
 
+    // Post-process: merge free lines & duplicates, derive missing rates, flag warnings
+    const cleaned = cleanScannedItems(parsedData.items);
+    parsedData.items = cleaned.items;
+    parsedData.warnings = cleaned.warnings;
+
     return res.json({ success: true, data: parsedData });
 
   } catch (err) {
@@ -783,9 +941,151 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
   }
 };
 
+// ADMIN: Get Wholesaler/Supplier Party Ledger summary, per-party statistics, and bills
+const getSupplierLedger = async (req, res) => {
+  try {
+    // .lean() avoids Mongoose schema defaults (amountPaid=0, balanceDue=0, paymentStatus='Credit')
+    // being applied to older bills that were saved before those fields existed.
+    // Without it, legacy credit bills wrongly appear as fully paid (due = 0).
+    const bills = await PurchaseBill.find().sort({ invoiceDate: -1, createdAt: -1 }).lean();
+
+    let totalPurchased = 0;
+    let totalPaid = 0;
+    let totalCreditDue = 0;
+    const supplierMap = {};
+
+    bills.forEach(bill => {
+      const grandTotal = Number(bill.grandTotal || 0);
+      const hasPaidField = bill.amountPaid !== undefined && bill.amountPaid !== null;
+      const hasDueField = bill.balanceDue !== undefined && bill.balanceDue !== null;
+      const paid = hasPaidField
+        ? Number(bill.amountPaid || 0)
+        : (bill.paymentStatus === 'Paid' ? grandTotal : 0);
+      const due = hasDueField
+        ? Number(bill.balanceDue)
+        : Math.max(0, grandTotal - paid);
+
+      totalPurchased += grandTotal;
+      totalPaid += paid;
+      totalCreditDue += due;
+
+      const supplier = String(bill.supplierName || 'Unknown').trim();
+      if (!supplierMap[supplier]) {
+        supplierMap[supplier] = {
+          supplierName: supplier,
+          supplierGstin: bill.supplierGstin || '',
+          totalPurchased: 0,
+          totalPaid: 0,
+          balanceDue: 0,
+          billCount: 0,
+          bills: []
+        };
+      }
+
+      supplierMap[supplier].totalPurchased += grandTotal;
+      supplierMap[supplier].totalPaid += paid;
+      supplierMap[supplier].balanceDue += due;
+      supplierMap[supplier].billCount += 1;
+      supplierMap[supplier].bills.push({
+        ...bill,
+        amountPaid: paid,
+        balanceDue: due
+      });
+    });
+
+    const suppliersList = Object.values(supplierMap).sort((a, b) => b.balanceDue - a.balanceDue);
+
+    return res.json({
+      summary: {
+        totalPurchased: Number(totalPurchased.toFixed(2)),
+        totalPaid: Number(totalPaid.toFixed(2)),
+        totalCreditDue: Number(totalCreditDue.toFixed(2)),
+        supplierCount: suppliersList.length
+      },
+      suppliers: suppliersList,
+      bills
+    });
+  } catch (err) {
+    console.error('[Error] getSupplierLedger:', err.message);
+    return res.status(500).json({ message: 'Could not load supplier ledger' });
+  }
+};
+
+// ADMIN: Record repayment against an open purchase bill
+const recordSupplierPayment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const paymentAmount = Number(req.body.amount || 0);
+    const paymentMode = String(req.body.paymentMode || 'Cash').trim();
+    const remark = String(req.body.remark || '').trim();
+
+    if (!paymentAmount || paymentAmount <= 0) {
+      return res.status(400).json({ message: 'Valid payment amount is required' });
+    }
+
+    const bill = await PurchaseBill.findById(id);
+    if (!bill) {
+      return res.status(404).json({ message: 'Purchase bill not found' });
+    }
+
+    // Older bills were saved before amountPaid/balanceDue/paymentStatus existed.
+    // Mongoose fills schema defaults (0 / 'Credit') for those missing fields, so we must
+    // detect them via $isDefault() and fall back to grandTotal for the true due amount.
+    const hasStoredPaid = !bill.$isDefault('amountPaid');
+    const hasStoredDue = !bill.$isDefault('balanceDue');
+    const currentPaid = hasStoredPaid
+      ? Number(bill.amountPaid || 0)
+      : (bill.paymentStatus === 'Paid' ? bill.grandTotal : 0);
+    const currentDue = hasStoredDue
+      ? Number(bill.balanceDue)
+      : Math.max(0, Number(bill.grandTotal || 0) - currentPaid);
+
+    if (currentDue <= 0) {
+      return res.status(400).json({ message: 'This bill is already fully paid' });
+    }
+
+    if (paymentAmount - currentDue > 0.009) {
+      return res.status(400).json({ message: `Payment cannot exceed remaining due of ₹${currentDue.toFixed(2)}` });
+    }
+
+    const newPaid = Number((currentPaid + paymentAmount).toFixed(2));
+    const newDue = Number(Math.max(0, bill.grandTotal - newPaid).toFixed(2));
+    const newStatus = newDue <= 0 ? 'Paid' : 'Partial';
+
+    bill.amountPaid = newPaid;
+    bill.balanceDue = newDue;
+    bill.paymentStatus = newStatus;
+    if (remark) bill.paymentRemarks = remark;
+
+    if (!Array.isArray(bill.paymentHistory)) bill.paymentHistory = [];
+    bill.paymentHistory.push({
+      date: req.body.paymentDate ? new Date(req.body.paymentDate) : new Date(),
+      amount: paymentAmount,
+      paymentMode,
+      remark
+    });
+
+    await bill.save();
+
+    AuditLog.create({
+      action: 'RECORD_SUPPLIER_PAYMENT',
+      entityType: 'PurchaseBill',
+      entityId: bill._id.toString(),
+      message: `Payment of ₹${paymentAmount} recorded for ${bill.supplierName} (Inv: ${bill.invoiceNumber})`,
+      details: { paymentAmount, remainingDue: newDue, paymentMode },
+      userRole: req.user?.role || 'admin'
+    }).catch(err => console.error('Audit log error (RECORD_SUPPLIER_PAYMENT):', err.message));
+
+    return res.json({ success: true, message: 'Payment recorded successfully', bill });
+  } catch (err) {
+    console.error('[Error] recordSupplierPayment:', err.message);
+    return res.status(500).json({ message: 'Could not record payment' });
+  }
+};
+
 module.exports = {
   getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
   getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
   sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
-  getPurchaseBills, scanPurchaseBill, getSuppliers
+  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, recordSupplierPayment
 };

@@ -279,6 +279,8 @@ exports.createSale = async (req, res) => {
           credit.totalAmount += safeNumber(totalAmount);
           credit.remainingAmount += safeNumber(totalAmount);
           if (normalizedPhone) credit.customerPhone = normalizedPhone;
+          credit.status = 'Active';
+          credit.lastUpdated = new Date();
           credit.bills.push({
             billId: newSale._id,
             invoiceNo: finalInvoiceNo,

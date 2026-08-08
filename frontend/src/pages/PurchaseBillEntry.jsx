@@ -233,6 +233,64 @@ const PurchaseBillEntry = () => {
           <div><label className={labelClass}>Bill Type</label><select value={bill.billType} onChange={e => setBill({ ...bill, billType: e.target.value })} className={inputClass}><option>Credit</option><option>Cash</option><option>GST Invoice</option></select></div>
           <div><label className={labelClass}>Payment Mode</label><select value={bill.paymentMode} onChange={e => setBill({ ...bill, paymentMode: e.target.value })} className={inputClass}><option>Credit</option><option>Cash</option><option>UPI</option><option>Bank Transfer</option></select></div>
           <div className="lg:col-span-2"><label className={labelClass}>Bill Photo / PDF</label><input id="purchase-bill-file" type="file" accept="image/*,.pdf" onChange={e => setBill({ ...bill, billFile: e.target.files?.[0] || null })} className="block w-full rounded-md border border-slate-300 p-1.5 text-sm file:mr-3 file:rounded file:border-0 file:bg-teal-50 file:px-3 file:py-1.5 file:font-semibold file:text-teal-700" /></div>
+          
+          {/* --- PAYMENT STATUS & LEDGER SECTION --- */}
+          <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4 sm:col-span-2 lg:col-span-4 mt-1">
+            <h3 className="text-xs font-extrabold text-teal-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+              💳 Payment Status & Ledger Details
+            </h3>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className={labelClass}>Payment Status *</label>
+                <select
+                  value={bill.paymentStatus || 'Credit'}
+                  onChange={e => {
+                    const status = e.target.value;
+                    let paid = bill.amountPaid || '0';
+                    if (status === 'Paid') paid = String(grandTotal);
+                    else if (status === 'Credit') paid = '0';
+                    setBill({ ...bill, paymentStatus: status, amountPaid: paid });
+                  }}
+                  className={inputClass}
+                >
+                  <option value="Credit">Credit (Udhar / Unpaid)</option>
+                  <option value="Paid">Paid (Fully Paid)</option>
+                  <option value="Partial">Partial Payment</option>
+                </select>
+              </div>
+
+              <div>
+                <label className={labelClass}>Amount Paid (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={bill.paymentStatus === 'Paid' ? grandTotal : (bill.amountPaid || '0')}
+                  disabled={bill.paymentStatus === 'Paid'}
+                  onChange={e => setBill({ ...bill, amountPaid: e.target.value })}
+                  className={inputClass}
+                />
+              </div>
+
+              <div>
+                <label className={labelClass}>Remaining Credit Due (₹)</label>
+                <div className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-red-600 shadow-xs">
+                  {money(Math.max(0, grandTotal - (bill.paymentStatus === 'Paid' ? grandTotal : Number(bill.amountPaid || 0))))}
+                </div>
+              </div>
+
+              <div>
+                <label className={labelClass}>Payment Remark / Note</label>
+                <input
+                  value={bill.paymentRemarks || ''}
+                  onChange={e => setBill({ ...bill, paymentRemarks: e.target.value })}
+                  placeholder="e.g. Paid ₹5000 via UPI, balance pending"
+                  className={inputClass}
+                />
+              </div>
+            </div>
+          </div>
+
           <div className="sm:col-span-2 lg:col-span-4"><label className={labelClass}>Notes</label><input value={bill.notes} onChange={e => setBill({ ...bill, notes: e.target.value })} placeholder="Transport, scheme or any note" className={inputClass} /></div>
         </div>
       </section>

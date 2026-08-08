@@ -12,6 +12,7 @@
       }
     },
     "android": {
+      "package": "com.radhepharmacy.billscanner",
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",

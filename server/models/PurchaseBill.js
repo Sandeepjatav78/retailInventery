@@ -32,6 +32,16 @@ const PurchaseBillSchema = new mongoose.Schema({
   gstTotal: { type: Number, default: 0 },
   roundOff: { type: Number, default: 0 },
   grandTotal: { type: Number, required: true },
+  amountPaid: { type: Number, default: 0 },
+  balanceDue: { type: Number, default: 0 },
+  paymentStatus: { type: String, enum: ['Paid', 'Credit', 'Partial'], default: 'Credit' },
+  paymentRemarks: { type: String, default: '' },
+  paymentHistory: [{
+    date: { type: Date, default: Date.now },
+    amount: { type: Number, required: true },
+    paymentMode: { type: String, default: 'Cash' },
+    remark: { type: String, default: '' }
+  }],
   createdBy: { type: String }
 }, { timestamps: true });
 
