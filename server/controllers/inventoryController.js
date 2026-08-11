@@ -641,15 +641,29 @@ const createPurchaseBill = async (req, res) => {
       const discountAmount = gross * (discount / 100);
       const taxableAmount = gross - discountAmount;
       const gstAmount = taxableAmount * (gst / 100);
-      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, sellingPrice, discount, gst, amount: Number((taxableAmount + gstAmount).toFixed(2)), taxableAmount, discountAmount, gstAmount };
+      const computedAmount = taxableAmount + gstAmount;
+      const manualAmount = Number(item.amount || 0);
+      const lineAmount = manualAmount > 0 ? manualAmount : Number(computedAmount.toFixed(2));
+      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, sellingPrice, discount, gst, amount: Number(lineAmount.toFixed(2)), taxableAmount, discountAmount, gstAmount, _manualAmount: manualAmount > 0 };
     });
 
-    const subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
-    const discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
-    const gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
-    const preRoundTotal = subtotal + gstTotal;
-    const roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
-    const grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
+    const hasManualAmounts = validItems.some(item => item._manualAmount);
+    let subtotal, discountTotal, gstTotal, roundOff, grandTotal;
+    if (hasManualAmounts) {
+      // User-typed amounts win: totals = sum of entered line amounts (no GST/discount recompute)
+      subtotal = validItems.reduce((sum, item) => sum + item.amount, 0);
+      discountTotal = 0;
+      gstTotal = 0;
+      roundOff = 0;
+      grandTotal = Number(subtotal.toFixed(2));
+    } else {
+      subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
+      discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
+      gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
+      const preRoundTotal = subtotal + gstTotal;
+      roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
+      grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
+    }
 
     let rawPaymentStatus = String(req.body.paymentStatus || 'Credit').trim();
     let amountPaid = Number(req.body.amountPaid || 0);
@@ -697,7 +711,7 @@ const createPurchaseBill = async (req, res) => {
       paymentMode: String(req.body.paymentMode || 'Credit'),
       notes: String(req.body.notes || '').trim(),
       billImage: req.file?.path || null,
-      items: validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item),
+      items: validItems.map(({ taxableAmount, discountAmount, gstAmount, _manualAmount, ...item }) => item),
       subtotal: Number(subtotal.toFixed(2)),
       discountTotal: Number(discountTotal.toFixed(2)),
       gstTotal: Number(gstTotal.toFixed(2)),
@@ -1067,6 +1081,97 @@ const deleteSupplierParty = async (req, res) => {
   }
 };
 
+// ADMIN: Manually add an old purchase bill to the supplier ledger (no stock added)
+const createManualSupplierBill = async (req, res) => {
+  try {
+    const supplierName = String(req.body.supplierName || '').trim();
+    const invoiceNumber = String(req.body.invoiceNumber || '').trim();
+    const invoiceDate = req.body.invoiceDate || new Date().toISOString().slice(0, 10);
+    const billAmount = Number(req.body.billAmount);
+    let amountPaid = Number(req.body.amountPaid || 0);
+
+    if (!supplierName || !invoiceNumber || !Number.isFinite(billAmount) || billAmount <= 0) {
+      return res.status(400).json({ message: 'Supplier name, invoice number and bill amount are required' });
+    }
+
+    const duplicate = await PurchaseBill.findOne({ supplierName: new RegExp(`^${supplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), invoiceNumber });
+    if (duplicate) return res.status(409).json({ message: 'This supplier invoice is already saved' });
+
+    amountPaid = Math.min(billAmount, Math.max(0, amountPaid));
+    const balanceDue = Number(Math.max(0, billAmount - amountPaid).toFixed(2));
+    let paymentStatus = 'Credit';
+    if (balanceDue <= 0) paymentStatus = 'Paid';
+    else if (amountPaid > 0) paymentStatus = 'Partial';
+
+    const grandTotal = Number(billAmount.toFixed(2));
+    const paymentMode = String(req.body.paymentMode || 'Cash').trim();
+    const paymentDate = req.body.paymentDate || invoiceDate;
+    const notes = String(req.body.notes || '').trim();
+
+    const paymentHistory = [];
+    if (amountPaid > 0) {
+      paymentHistory.push({
+        date: paymentDate ? new Date(paymentDate) : new Date(),
+        amount: Number(amountPaid.toFixed(2)),
+        paymentMode,
+        remark: 'Manual old bill - initial payment'
+      });
+    }
+
+    const bill = await PurchaseBill.create({
+      supplierName,
+      supplierGstin: String(req.body.supplierGstin || '').trim(),
+      invoiceNumber,
+      invoiceDate,
+      billType: String(req.body.billType || 'Credit').trim() || 'Credit',
+      paymentMode,
+      notes,
+      billImage: null,
+      items: [{
+        productName: 'OPENING / MANUAL ENTRY',
+        packing: '',
+        batchNumber: 'MANUAL',
+        manufacturer: '',
+        hsnCode: '',
+        expiryDate: invoiceDate,
+        quantity: 1,
+        freeQuantity: 0,
+        mrp: grandTotal,
+        rate: grandTotal,
+        sellingPrice: grandTotal,
+        discount: 0,
+        gst: 0,
+        amount: grandTotal
+      }],
+      subtotal: grandTotal,
+      discountTotal: 0,
+      gstTotal: 0,
+      roundOff: 0,
+      grandTotal,
+      amountPaid: Number(amountPaid.toFixed(2)),
+      balanceDue,
+      paymentStatus,
+      paymentRemarks: notes,
+      paymentHistory,
+      createdBy: req.user?.role || 'admin'
+    });
+
+    AuditLog.create({
+      action: 'CREATE_MANUAL_SUPPLIER_BILL',
+      entityType: 'PurchaseBill',
+      entityId: bill._id.toString(),
+      message: `Manual old bill ${invoiceNumber} (₹${grandTotal}) added for ${supplierName}`,
+      details: { supplierName, invoiceNumber, grandTotal, amountPaid, balanceDue },
+      userRole: req.user?.role || 'admin'
+    }).catch(err => console.error('Audit log error (CREATE_MANUAL_SUPPLIER_BILL):', err.message));
+
+    return res.status(201).json({ success: true, message: 'Old bill ledger me add ho gaya (stock add nahi hua)', bill });
+  } catch (err) {
+    console.error('[Error] createManualSupplierBill:', err.message);
+    return res.status(500).json({ message: err.message || 'Old bill add nahi ho saka' });
+  }
+};
+
 // ADMIN: Record repayment against an open purchase bill
 const recordSupplierPayment = async (req, res) => {
   try {
@@ -1143,5 +1248,5 @@ module.exports = {
   getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
   getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
   sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
-  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, recordSupplierPayment
+  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment
 };

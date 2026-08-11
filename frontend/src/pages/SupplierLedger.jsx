@@ -28,6 +28,21 @@ const SupplierLedger = () => {
   const [deleteParty, setDeleteParty] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
+  // Manual Old Bill Entry Modal State
+  const [showManualForm, setShowManualForm] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    supplierName: '',
+    supplierGstin: '',
+    invoiceNumber: '',
+    invoiceDate: new Date().toISOString().slice(0, 10),
+    billAmount: '',
+    amountPaid: '',
+    paymentMode: 'Cash',
+    paymentDate: new Date().toISOString().slice(0, 10),
+    notes: ''
+  });
+  const [savingManual, setSavingManual] = useState(false);
+
   const fetchLedger = async () => {
     setLoading(true);
     try {
@@ -99,6 +114,58 @@ const SupplierLedger = () => {
     }
   };
 
+  const openManualForm = (supplierName = '') => {
+    setManualForm({
+      supplierName: supplierName || '',
+      supplierGstin: '',
+      invoiceNumber: '',
+      invoiceDate: new Date().toISOString().slice(0, 10),
+      billAmount: '',
+      amountPaid: '',
+      paymentMode: 'Cash',
+      paymentDate: new Date().toISOString().slice(0, 10),
+      notes: ''
+    });
+    setShowManualForm(true);
+  };
+
+  const handleSaveManualBill = async (e) => {
+    e.preventDefault();
+    const amount = Number(manualForm.billAmount);
+    if (!manualForm.supplierName.trim() || !manualForm.invoiceNumber.trim()) {
+      return alert('Supplier name aur invoice number bharna zaroori hai.');
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return alert('Kripya valid bill amount bharein.');
+    }
+    const paid = Number(manualForm.amountPaid || 0);
+    if (paid > amount) {
+      return alert('Paid amount bill total se zyada nahi ho sakta.');
+    }
+
+    setSavingManual(true);
+    try {
+      const res = await api.post('/medicines/supplier-ledger/manual-bill', {
+        supplierName: manualForm.supplierName.trim(),
+        supplierGstin: manualForm.supplierGstin.trim(),
+        invoiceNumber: manualForm.invoiceNumber.trim(),
+        invoiceDate: manualForm.invoiceDate,
+        billAmount: amount,
+        amountPaid: paid,
+        paymentMode: manualForm.paymentMode,
+        paymentDate: manualForm.paymentDate,
+        notes: manualForm.notes.trim()
+      });
+      alert(res.data?.message || '✅ Old bill ledger me add ho gaya!');
+      setShowManualForm(false);
+      fetchLedger();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Old bill add nahi ho saka.');
+    } finally {
+      setSavingManual(false);
+    }
+  };
+
   // Filtered Suppliers for Folder View
   const filteredSuppliers = suppliers.filter(sup => {
     const q = searchQuery.toLowerCase().trim();
@@ -134,12 +201,20 @@ const SupplierLedger = () => {
                 Pehle supplier party select karein, uske baad andar unke saare bills & credit details dekhein.
               </p>
             </div>
-            <button
-              onClick={fetchLedger}
-              className="px-4 py-2 bg-teal-50 text-teal-700 hover:bg-teal-100 rounded-lg text-sm font-bold border border-teal-200 transition-colors"
-            >
-              🔄 Refresh Ledger
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={fetchLedger}
+                className="px-4 py-2 bg-teal-50 text-teal-700 hover:bg-teal-100 rounded-lg text-sm font-bold border border-teal-200 transition-colors"
+              >
+                🔄 Refresh Ledger
+              </button>
+              <button
+                onClick={() => openManualForm('')}
+                className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-bold shadow-xs transition-colors"
+              >
+                ➕ Old Bill Manual Entry
+              </button>
+            </div>
           </div>
 
           {/* SUMMARY KPI CARDS */}
@@ -419,6 +494,157 @@ const SupplierLedger = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MANUAL OLD BILL ENTRY MODAL --- */}
+      {showManualForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in duration-150">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-lg">➕ Old Bill Manual Entry</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Purana purchase bill ledger me add karein (stock add nahi hoga).</p>
+              </div>
+              <button onClick={() => setShowManualForm(false)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+            </div>
+
+            <form onSubmit={handleSaveManualBill} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Supplier / Party Name *</label>
+                <input
+                  type="text"
+                  required
+                  list="supplier-names-list"
+                  value={manualForm.supplierName}
+                  onChange={e => setManualForm(prev => ({ ...prev, supplierName: e.target.value }))}
+                  placeholder="e.g. AMIT TRADERS"
+                  className="w-full rounded-lg border border-slate-300 p-2.5 text-sm font-bold text-slate-800 outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                />
+                <datalist id="supplier-names-list">
+                  {suppliers.map((sup, idx) => (
+                    <option key={idx} value={sup.supplierName} />
+                  ))}
+                </datalist>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Supplier GSTIN</label>
+                  <input
+                    type="text"
+                    value={manualForm.supplierGstin}
+                    onChange={e => setManualForm(prev => ({ ...prev, supplierGstin: e.target.value }))}
+                    placeholder="Optional"
+                    className="w-full rounded-lg border border-slate-300 p-2.5 text-sm outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Invoice No. *</label>
+                  <input
+                    type="text"
+                    required
+                    value={manualForm.invoiceNumber}
+                    onChange={e => setManualForm(prev => ({ ...prev, invoiceNumber: e.target.value }))}
+                    placeholder="e.g. INV-2024-001"
+                    className="w-full rounded-lg border border-slate-300 p-2.5 text-sm font-bold text-slate-800 outline-none focus:border-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Bill Date *</label>
+                  <input
+                    type="date"
+                    required
+                    value={manualForm.invoiceDate}
+                    onChange={e => setManualForm(prev => ({ ...prev, invoiceDate: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Bill Total (₹) *</label>
+                  <input
+                    type="number"
+                    required
+                    min="0.01"
+                    step="0.01"
+                    value={manualForm.billAmount}
+                    onChange={e => setManualForm(prev => ({ ...prev, billAmount: e.target.value }))}
+                    placeholder="e.g. 12500"
+                    className="w-full rounded-lg border border-slate-300 p-2.5 text-sm font-bold text-slate-800 outline-none focus:border-teal-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Amount Paid (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={manualForm.amountPaid}
+                    onChange={e => setManualForm(prev => ({ ...prev, amountPaid: e.target.value }))}
+                    placeholder="0 = full credit"
+                    className="w-full rounded-lg border border-slate-300 p-2.5 text-sm font-semibold outline-none focus:border-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Payment Mode</label>
+                  <select
+                    value={manualForm.paymentMode}
+                    onChange={e => setManualForm(prev => ({ ...prev, paymentMode: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 p-2.5 text-xs font-semibold outline-none focus:border-teal-500 bg-white"
+                  >
+                    <option value="Cash">Cash</option>
+                    <option value="UPI">UPI / GPay / PhonePe</option>
+                    <option value="Bank Transfer">Bank Transfer (NEFT/RTGS)</option>
+                    <option value="Cheque">Cheque</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Payment Date</label>
+                <input
+                  type="date"
+                  value={manualForm.paymentDate}
+                  onChange={e => setManualForm(prev => ({ ...prev, paymentDate: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold outline-none focus:border-teal-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Notes / Remarks</label>
+                <textarea
+                  rows="2"
+                  value={manualForm.notes}
+                  onChange={e => setManualForm(prev => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Optional note"
+                  className="w-full rounded-lg border border-slate-300 p-2.5 text-xs outline-none focus:border-teal-500"
+                ></textarea>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowManualForm(false)}
+                  className="flex-1 py-2.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 font-bold text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingManual}
+                  className="flex-1 py-2.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs disabled:opacity-50"
+                >
+                  {savingManual ? 'Saving...' : '✅ Save Old Bill'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -39,7 +39,8 @@ const emptyItem = () => ({
   rate: '0',
   sellingPrice: '0',
   discount: '0',
-  gst: '5'
+  gst: '5',
+  amount: ''
 });
 
 const emptyBill = () => ({
@@ -213,7 +214,8 @@ export default function App() {
             rate: String(item.rate ?? 0),
             sellingPrice: String(item.sellingPrice ?? item.rate ?? 0),
             discount: String(item.discount ?? 0),
-            gst: String(item.gst ?? 5)
+            gst: String(item.gst ?? 5),
+            amount: String(item.amount ?? '')
           }));
         }
         setItems(scannedItems);
@@ -317,12 +319,11 @@ export default function App() {
   };
 
   const lineTotal = (item) => {
+    const manualAmount = Number(item.amount || 0);
+    if (manualAmount > 0) return manualAmount;
     const qty = Number(item.quantity || 0);
     const rate = Number(item.rate || 0);
-    const disc = Number(item.discount || 0);
-    const gst = Number(item.gst || 0);
-    const taxable = qty * rate * (1 - disc / 100);
-    return taxable + (taxable * gst / 100);
+    return qty * rate;
   };
 
   const totalBlockingMissing = useMemo(
@@ -856,6 +857,16 @@ export default function App() {
                         style={styles.input}
                         value={item.manufacturer}
                         onChangeText={(val) => updateItem(idx, 'manufacturer', val)}
+                      />
+
+                      {/* MANUAL AMOUNT OVERRIDE */}
+                      <Text style={styles.label}>Amount (₹) — khali chhodein to auto = Qty × Rate</Text>
+                      <TextInput
+                        style={[styles.input, Number(item.amount || 0) > 0 && styles.inputWarn]}
+                        keyboardType="numeric"
+                        value={item.amount}
+                        onChangeText={(val) => updateItem(idx, 'amount', val)}
+                        placeholder="Auto (Qty × Rate)"
                       />
 
                       {/* LINE TOTAL + ACTIONS */}
