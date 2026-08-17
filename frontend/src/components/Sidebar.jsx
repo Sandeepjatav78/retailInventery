@@ -78,6 +78,12 @@ const Sidebar = () => {
 
             {userRole === 'admin' && (
                 <li>
+                    <Link to="/purchase-bill-history" className={getLinkClass('/purchase-bill-history')}>🗂 Bill History</Link>
+                </li>
+            )}
+
+            {userRole === 'admin' && (
+                <li>
                     <Link to="/supplier-ledger" className={getLinkClass('/supplier-ledger')}>📖 Party Ledger</Link>
                 </li>
             )}

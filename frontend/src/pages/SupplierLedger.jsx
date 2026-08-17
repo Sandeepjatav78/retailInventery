@@ -39,6 +39,7 @@ const SupplierLedger = () => {
     amountPaid: '',
     paymentMode: 'Cash',
     paymentDate: new Date().toISOString().slice(0, 10),
+    paymentProof: '',
     notes: ''
   });
   const [savingManual, setSavingManual] = useState(false);
@@ -124,6 +125,7 @@ const SupplierLedger = () => {
       amountPaid: '',
       paymentMode: 'Cash',
       paymentDate: new Date().toISOString().slice(0, 10),
+      paymentProof: '',
       notes: ''
     });
     setShowManualForm(true);
@@ -154,6 +156,7 @@ const SupplierLedger = () => {
         amountPaid: paid,
         paymentMode: manualForm.paymentMode,
         paymentDate: manualForm.paymentDate,
+        paymentProof: manualForm.paymentProof.trim(),
         notes: manualForm.notes.trim()
       });
       alert(res.data?.message || '✅ Old bill ledger me add ho gaya!');
@@ -588,34 +591,53 @@ const SupplierLedger = () => {
                     step="0.01"
                     value={manualForm.amountPaid}
                     onChange={e => setManualForm(prev => ({ ...prev, amountPaid: e.target.value }))}
-                    placeholder="0 = full credit"
+                    placeholder="0 = full credit (koi payment nahi)"
                     className="w-full rounded-lg border border-slate-300 p-2.5 text-sm font-semibold outline-none focus:border-teal-500"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Payment Mode</label>
-                  <select
-                    value={manualForm.paymentMode}
-                    onChange={e => setManualForm(prev => ({ ...prev, paymentMode: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 p-2.5 text-xs font-semibold outline-none focus:border-teal-500 bg-white"
-                  >
-                    <option value="Cash">Cash</option>
-                    <option value="UPI">UPI / GPay / PhonePe</option>
-                    <option value="Bank Transfer">Bank Transfer (NEFT/RTGS)</option>
-                    <option value="Cheque">Cheque</option>
-                  </select>
-                </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Payment Date</label>
-                <input
-                  type="date"
-                  value={manualForm.paymentDate}
-                  onChange={e => setManualForm(prev => ({ ...prev, paymentDate: e.target.value }))}
-                  className="w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold outline-none focus:border-teal-500"
-                />
-              </div>
+              {/* PAYMENT PROOF DETAILS — sirf tab dikhe jab payment ho */}
+              {Number(manualForm.amountPaid) > 0 && (
+                <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4 space-y-3">
+                  <p className="text-[11px] font-extrabold text-teal-800 uppercase tracking-wider">💳 Payment Details (kab + kese + proof)</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Payment Mode *</label>
+                      <select
+                        value={manualForm.paymentMode}
+                        onChange={e => setManualForm(prev => ({ ...prev, paymentMode: e.target.value }))}
+                        className="w-full rounded-lg border border-slate-300 p-2.5 text-xs font-semibold outline-none focus:border-teal-500 bg-white"
+                      >
+                        <option value="Cash">Cash</option>
+                        <option value="UPI">UPI / GPay / PhonePe</option>
+                        <option value="Bank Transfer">Bank Transfer (NEFT/RTGS)</option>
+                        <option value="Cheque">Cheque</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Payment Date *</label>
+                      <input
+                        type="date"
+                        required
+                        value={manualForm.paymentDate}
+                        onChange={e => setManualForm(prev => ({ ...prev, paymentDate: e.target.value }))}
+                        className="w-full rounded-lg border border-slate-300 p-2 text-sm font-semibold outline-none focus:border-teal-500"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Payment Proof / Reference (UPI Txn ID, Cheque No., kaunse account se)</label>
+                    <input
+                      type="text"
+                      value={manualForm.paymentProof}
+                      onChange={e => setManualForm(prev => ({ ...prev, paymentProof: e.target.value }))}
+                      placeholder="e.g. UPI Txn #4102xxxxx, Cheque #001234, Cash diya shop pe"
+                      className="w-full rounded-lg border border-slate-300 p-2.5 text-xs outline-none focus:border-teal-500"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold uppercase tracking-wide text-slate-600 mb-1">Notes / Remarks</label>

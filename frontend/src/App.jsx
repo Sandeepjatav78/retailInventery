@@ -8,6 +8,7 @@ import CreditLedger from './pages/CreditLedger';
 import PurchaseReturn from './pages/PurchaseReturn';
 import KachiEntry from './pages/KachiEntry';
 import PurchaseBillEntry from './pages/PurchaseBillEntry';
+import PurchaseBillHistory from './pages/PurchaseBillHistory';
 import SupplierLedger from './pages/SupplierLedger';
 import PriceChecker from './components/PriceChecker';
 import DoctorPriceChecker from './components/DoctorPriceChecker';
@@ -33,6 +34,7 @@ function App() {
                     <Route path="/manual" element={<ManualBill />} />
                     <Route path="/kachi-entry" element={<KachiEntry />} />
                     <Route path="/purchase-bill" element={<PurchaseBillEntry />} />
+                    <Route path="/purchase-bill-history" element={<PurchaseBillHistory />} />
                     <Route path="/supplier-ledger" element={<SupplierLedger />} />
                     <Route path="/check-price" element={<PriceChecker />} />
                     <Route path="/doctor-price" element={<DoctorPriceChecker />} />

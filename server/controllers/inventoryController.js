@@ -631,10 +631,11 @@ const createPurchaseBill = async (req, res) => {
       const freeQuantity = number(item.freeQuantity);
       const mrp = number(item.mrp);
       const rate = number(item.rate);
+      const netRate = number(item.netRate, rate);
       const sellingPrice = number(item.sellingPrice, rate);
       const discount = number(item.discount);
       const gst = number(item.gst);
-      if (!productName || !batchNumber || !expiryDate || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(mrp) || mrp < 0 || !Number.isFinite(rate) || rate < 0 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(freeQuantity) || freeQuantity < 0 || !Number.isFinite(discount) || discount < 0 || !Number.isFinite(gst) || gst < 0) {
+      if (!productName || !batchNumber || !expiryDate || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(mrp) || mrp < 0 || !Number.isFinite(rate) || rate < 0 || !Number.isFinite(netRate) || netRate < 0 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(freeQuantity) || freeQuantity < 0 || !Number.isFinite(discount) || discount < 0 || !Number.isFinite(gst) || gst < 0) {
         throw new Error(`Medicine row ${index + 1} has missing or invalid details`);
       }
       const gross = quantity * rate;
@@ -644,7 +645,7 @@ const createPurchaseBill = async (req, res) => {
       const computedAmount = taxableAmount + gstAmount;
       const manualAmount = Number(item.amount || 0);
       const lineAmount = manualAmount > 0 ? manualAmount : Number(computedAmount.toFixed(2));
-      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, sellingPrice, discount, gst, amount: Number(lineAmount.toFixed(2)), taxableAmount, discountAmount, gstAmount, _manualAmount: manualAmount > 0 };
+      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, amount: Number(lineAmount.toFixed(2)), taxableAmount, discountAmount, gstAmount, _manualAmount: manualAmount > 0 };
     });
 
     const hasManualAmounts = validItems.some(item => item._manualAmount);
@@ -692,7 +693,7 @@ const createPurchaseBill = async (req, res) => {
     for (const item of validItems) {
       const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
       const stockAdded = item.quantity + item.freeQuantity;
-      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: req.file?.path || null };
+      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: req.file?.path || null };
       if (existing) {
         existing.quantity = Number(existing.quantity || 0) + stockAdded;
         Object.assign(existing, medicineData);
@@ -733,9 +734,159 @@ const createPurchaseBill = async (req, res) => {
   }
 };
 
-const getPurchaseBills = async (_req, res) => {
-  try { return res.json(await PurchaseBill.find().sort({ invoiceDate: -1, createdAt: -1 }).limit(50)); }
-  catch (_) { return res.status(500).json({ message: 'Could not load purchase bills' }); }
+const updatePurchaseBill = async (req, res) => {
+  try {
+    const billId = req.params.id;
+    const existingBill = await PurchaseBill.findById(billId);
+    if (!existingBill) return res.status(404).json({ message: 'Purchase bill nahi mili.' });
+
+    const supplierName = String(req.body.supplierName || '').trim();
+    const invoiceNumber = String(req.body.invoiceNumber || '').trim();
+    const invoiceDate = req.body.invoiceDate;
+    let items;
+    try { items = JSON.parse(req.body.items || '[]'); } catch (_) { return res.status(400).json({ message: 'Medicine details are invalid' }); }
+
+    if (!supplierName || !invoiceNumber || !invoiceDate) return res.status(400).json({ message: 'Supplier name, invoice number and invoice date are required' });
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'Add at least one medicine' });
+
+    const duplicate = await PurchaseBill.findOne({ _id: { $ne: billId }, supplierName: new RegExp(`^${supplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), invoiceNumber });
+    if (duplicate) return res.status(409).json({ message: 'Is supplier ki ye invoice already kisi aur bill me save hai' });
+
+    const number = (value, fallback = 0) => value === '' || value === null || value === undefined ? fallback : Number(value);
+    const validItems = items.map((item, index) => {
+      const productName = String(item.productName || '').trim();
+      const batchNumber = String(item.batchNumber || '').trim();
+      const expiryDate = item.expiryDate;
+      const quantity = number(item.quantity);
+      const freeQuantity = number(item.freeQuantity);
+      const mrp = number(item.mrp);
+      const rate = number(item.rate);
+      const netRate = number(item.netRate, rate);
+      const sellingPrice = number(item.sellingPrice, rate);
+      const discount = number(item.discount);
+      const gst = number(item.gst);
+      if (!productName || !batchNumber || !expiryDate || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(mrp) || mrp < 0 || !Number.isFinite(rate) || rate < 0 || !Number.isFinite(netRate) || netRate < 0 || !Number.isFinite(sellingPrice) || sellingPrice < 0 || !Number.isFinite(freeQuantity) || freeQuantity < 0 || !Number.isFinite(discount) || discount < 0 || !Number.isFinite(gst) || gst < 0) {
+        throw new Error(`Medicine row ${index + 1} has missing or invalid details`);
+      }
+      const gross = quantity * rate;
+      const discountAmount = gross * (discount / 100);
+      const taxableAmount = gross - discountAmount;
+      const gstAmount = taxableAmount * (gst / 100);
+      const computedAmount = taxableAmount + gstAmount;
+      const manualAmount = Number(item.amount || 0);
+      const lineAmount = manualAmount > 0 ? manualAmount : Number(computedAmount.toFixed(2));
+      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, amount: Number(lineAmount.toFixed(2)), taxableAmount, discountAmount, gstAmount, _manualAmount: manualAmount > 0 };
+    });
+
+    const hasManualAmounts = validItems.some(item => item._manualAmount);
+    let subtotal, discountTotal, gstTotal, roundOff, grandTotal;
+    if (hasManualAmounts) {
+      subtotal = validItems.reduce((sum, item) => sum + item.amount, 0);
+      discountTotal = 0;
+      gstTotal = 0;
+      roundOff = 0;
+      grandTotal = Number(subtotal.toFixed(2));
+    } else {
+      subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
+      discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
+      gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
+      const preRoundTotal = subtotal + gstTotal;
+      roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
+      grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
+    }
+
+    // Revert OLD stock first (so edited/deleted lines don't leave phantom stock)
+    for (const oldItem of existingBill.items || []) {
+      const med = await Medicine.findOne({ productName: { $regex: `^${oldItem.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${oldItem.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
+      if (!med) continue;
+      const revertQty = Number(oldItem.quantity || 0) + Number(oldItem.freeQuantity || 0);
+      med.quantity = Math.max(0, Number(med.quantity || 0) - revertQty);
+      if (med.quantity === 0) await Medicine.deleteOne({ _id: med._id });
+      else await med.save();
+    }
+
+    // Apply NEW stock
+    for (const item of validItems) {
+      const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
+      const stockAdded = item.quantity + item.freeQuantity;
+      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: req.file?.path || existingBill.billImage || null };
+      if (existing) {
+        existing.quantity = Number(existing.quantity || 0) + stockAdded;
+        Object.assign(existing, medicineData);
+        await existing.save();
+      } else {
+        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stockAdded, packSize: 1, ...medicineData });
+      }
+    }
+
+    // Keep existing payment records; recompute status from new total
+    let amountPaid = Math.min(Number(existingBill.amountPaid || 0), grandTotal);
+    const balanceDue = Number(Math.max(0, grandTotal - amountPaid).toFixed(2));
+    let paymentStatus = 'Credit';
+    if (balanceDue <= 0) paymentStatus = 'Paid';
+    else if (amountPaid > 0) paymentStatus = 'Partial';
+
+    existingBill.supplierName = supplierName;
+    existingBill.supplierGstin = String(req.body.supplierGstin || '').trim();
+    existingBill.invoiceNumber = invoiceNumber;
+    existingBill.invoiceDate = invoiceDate;
+    existingBill.billType = String(req.body.billType || 'Credit');
+    existingBill.paymentMode = String(req.body.paymentMode || 'Credit');
+    existingBill.notes = String(req.body.notes || '').trim();
+    existingBill.billImage = req.file?.path || existingBill.billImage || null;
+    existingBill.items = validItems.map(({ taxableAmount, discountAmount, gstAmount, _manualAmount, ...item }) => item);
+    existingBill.subtotal = Number(subtotal.toFixed(2));
+    existingBill.discountTotal = Number(discountTotal.toFixed(2));
+    existingBill.gstTotal = Number(gstTotal.toFixed(2));
+    existingBill.roundOff = roundOff;
+    existingBill.grandTotal = grandTotal;
+    existingBill.amountPaid = Number(amountPaid.toFixed(2));
+    existingBill.balanceDue = balanceDue;
+    existingBill.paymentStatus = paymentStatus;
+    existingBill.paymentRemarks = String(req.body.paymentRemarks || req.body.notes || '').trim();
+    await existingBill.save();
+
+    AuditLog.create({ action: 'UPDATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: existingBill._id.toString(), message: `Purchase invoice ${invoiceNumber} updated`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal, balanceDue, paymentStatus }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (UPDATE_PURCHASE_BILL):', err.message));
+    return res.json(existingBill);
+  } catch (err) {
+    console.error('[Error] updatePurchaseBill:', err.message);
+    return res.status(400).json({ message: err.message || 'Could not update purchase bill' });
+  }
+};
+
+const getPurchaseBills = async (req, res) => {
+  try {
+    const { search = '', supplier, from, to, status, page = 1, limit = 50 } = req.query;
+    const filter = {};
+    if (search) {
+      const q = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      filter.$or = [{ supplierName: q }, { invoiceNumber: q }];
+    }
+    if (supplier) filter.supplierName = new RegExp(`^${supplier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+    if (status && status !== 'ALL' && status !== 'all') filter.paymentStatus = status;
+    if (from || to) {
+      filter.invoiceDate = {};
+      if (from) filter.invoiceDate.$gte = new Date(from);
+      if (to) filter.invoiceDate.$lte = new Date(new Date(to).setHours(23, 59, 59, 999));
+    }
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+    const [bills, total] = await Promise.all([
+      PurchaseBill.find(filter).sort({ createdAt: -1, invoiceDate: -1 }).skip((pageNum - 1) * limitNum).limit(limitNum).lean(),
+      PurchaseBill.countDocuments(filter)
+    ]);
+    const summary = bills.reduce((acc, b) => {
+      acc.totalBills += 1;
+      acc.totalPurchased += Number(b.grandTotal || 0);
+      acc.totalPaid += Number(b.amountPaid || 0);
+      acc.totalDue += Number(b.balanceDue ?? Math.max(0, (b.grandTotal || 0) - (b.amountPaid || 0)));
+      return acc;
+    }, { totalBills: 0, totalPurchased: 0, totalPaid: 0, totalDue: 0 });
+    return res.json({ bills, summary, total, page: pageNum, limit: limitNum });
+  } catch (err) {
+    console.error('[Error] getPurchaseBills:', err.message);
+    return res.status(500).json({ message: 'Could not load purchase bills' });
+  }
 };
 
 // Clean & normalize items extracted by the AI scanner:
@@ -763,6 +914,7 @@ const cleanScannedItems = (items = []) => {
     expiryDate: str(item.expiryDate),
     mrp: Math.max(0, num(item.mrp)),
     rate: Math.max(0, num(item.rate)),
+    netRate: Math.max(0, num(item.netRate ?? item.rate)),
     sellingPrice: Math.max(0, num(item.sellingPrice)),
     discount: Math.max(0, num(item.discount)),
     gst: Math.max(0, num(item.gst)),
@@ -798,7 +950,20 @@ const cleanScannedItems = (items = []) => {
     }
   }
 
-  // 3. Derive rate from line amount when rate is missing
+  // 3. Fold FREE pieces into quantity (combined stock qty in form) while keeping line amount identical
+  for (const row of final) {
+    if (row.freeQuantity > 0) {
+      const paidQty = row.quantity;
+      row.quantity += row.freeQuantity;
+      row.freeQuantity = 0;
+      if (row.amount > 0 && row.rate > 0 && paidQty > 0) {
+        const factor = (1 - row.discount / 100) * (1 + row.gst / 100);
+        if (factor > 0) row.rate = Number((row.amount / (row.quantity * factor)).toFixed(2));
+      }
+    }
+  }
+
+  // 4. Derive rate from line amount when rate is missing
   for (const row of final) {
     if (row.rate === 0 && row.amount > 0 && row.quantity > 0) {
       const factor = (1 - row.discount / 100) * (1 + row.gst / 100);
@@ -806,7 +971,7 @@ const cleanScannedItems = (items = []) => {
     }
   }
 
-  // 4. Warnings for rows the user must review manually
+  // 5. Warnings for rows the user must review manually
   const warnings = [];
   final.forEach((row, i) => {
     const issues = [];
@@ -876,7 +1041,8 @@ Analyze this invoice image and extract all details into a strict JSON object wit
       "hsnCode": "6-digit HSN/SAC code e.g. 300490. If a column labelled HSN/SAC/HSN Code is present, ALWAYS extract it — never skip it. Use empty string only if truly absent.",
       "mrp": 103.95,
       "rate": 45.00,
-      "sellingPrice": 45.00,
+      "netRate": "The ACTUAL per-unit price the pharmacy pays AFTER all scheme/discount is applied. If the bill shows a separate Net Rate / Net Price / Effective Rate column, use that EXACT value. If not shown, calculate it: netRate = lineAmount / quantity. For scheme items (e.g. 1+1 free) divide by TOTAL pieces received (paid + free). Never leave it blank — use rate as fallback.",
+      "sellingPrice": 0,
       "discount": 0,
       "gst": 5,
       "quantity": 5.00,
@@ -892,7 +1058,8 @@ QUANTITY & FREE ITEMS RULES (CRITICAL — READ CAREFULLY):
 - Scheme like "1+1", "1+1 FREE", "2+1", "BUY 1 GET 1 FREE" means one paid item plus free pieces. Split it correctly, e.g. "1+1" => quantity: 1, freeQuantity: 1. "2+1" => quantity: 2, freeQuantity: 1.
 - If a whole line is FREE / no charge (marked "FREE", "FOC", "N.C.", "NC", "FREE WITH PURCHASE", or has rate blank / 0): output it as its OWN item with rate: 0, quantity = number of free pieces, freeQuantity: 0, amount: 0.
 - "rate" is the per-unit charge for the item. A free line always has rate 0.
-- "amount" = final line amount = quantity × rate × (1 − discount/100) × (1 + gst/100). If the bill has a printed per-line Amount column, use it to cross-check rate.
+- "netRate" is the real per-unit cost paid after scheme/discount (very important). Prefer the bill's printed Net Rate column; else compute lineAmount / totalPiecesReceived.
+- "amount" = final line amount EXACTLY as printed on the bill. NEVER recalculate it — trust the printed value. If no printed amount, calculate: quantity × rate × (1 − discount/100) × (1 + gst/100).
 - "sellingPrice" = the price this pharmacy should sell at. If the bill does not show a selling price, use rate.
 
 HSN EXTRACTION RULES (IMPORTANT):
@@ -926,10 +1093,32 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
       }
     ];
 
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-flash-latest',
-      contents,
-    });
+    const configuredModel = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
+    const candidateModels = [configuredModel, 'gemini-flash-lite-latest', 'gemini-flash-latest'].filter((m, i, arr) => arr.indexOf(m) === i);
+
+    let response;
+    let lastError = null;
+    for (const model of candidateModels) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          response = await ai.models.generateContent({ model, contents });
+          lastError = null;
+          break;
+        } catch (err) {
+          lastError = err;
+          const code = err?.error?.code || err?.status || err?.code;
+          const statusText = String(err?.error?.status || err?.status || err?.message || '');
+          const isRetryable = code === 429 || code === 503 || code === 500 || statusText.includes('UNAVAILABLE');
+          if (!isRetryable) break;
+          console.warn(`[WARN] Gemini model ${model} attempt ${attempt} failed (${code}): ${err.message}`);
+          await new Promise(resolve => setTimeout(resolve, attempt * 2000));
+        }
+      }
+      if (response) break;
+    }
+    if (!response) {
+      throw lastError || new Error('All Gemini models are currently unavailable. Please try again in a few minutes.');
+    }
 
     let rawText = response.text || '';
     rawText = rawText.replace(/^[\s\S]*?(\{[\s\S]*\})[\s\S]*$/, '$1').trim();
@@ -949,8 +1138,16 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
 
     return res.json({ success: true, data: parsedData });
 
-  } catch (err) {
+} catch (err) {
     console.error('[Error] scanPurchaseBill:', err);
+    const code = err?.error?.code || err?.status || err?.code;
+    const statusText = String(err?.error?.status || err?.status || err?.message || 'Unknown error');
+    if (code === 404 || statusText.includes('NOT_FOUND')) {
+      return res.status(500).json({ message: 'AI Scanner: Gemini model unavailable on this account. Check GEMINI_MODEL in server .env.' });
+    }
+    if (code === 429 || code === 503 || statusText.includes('UNAVAILABLE')) {
+      return res.status(503).json({ message: 'AI Bill Scanning: Google AI service is busy right now (high demand). Please wait a moment and try again.' });
+    }
     return res.status(500).json({ message: 'AI Bill Scanning failed: ' + (err.message || 'Unknown error') });
   }
 };
@@ -1106,6 +1303,7 @@ const createManualSupplierBill = async (req, res) => {
     const grandTotal = Number(billAmount.toFixed(2));
     const paymentMode = String(req.body.paymentMode || 'Cash').trim();
     const paymentDate = req.body.paymentDate || invoiceDate;
+    const paymentProof = String(req.body.paymentProof || '').trim();
     const notes = String(req.body.notes || '').trim();
 
     const paymentHistory = [];
@@ -1114,7 +1312,7 @@ const createManualSupplierBill = async (req, res) => {
         date: paymentDate ? new Date(paymentDate) : new Date(),
         amount: Number(amountPaid.toFixed(2)),
         paymentMode,
-        remark: 'Manual old bill - initial payment'
+        remark: paymentProof ? `Manual old bill - ${paymentProof}` : 'Manual old bill - initial payment'
       });
     }
 
@@ -1161,7 +1359,7 @@ const createManualSupplierBill = async (req, res) => {
       entityType: 'PurchaseBill',
       entityId: bill._id.toString(),
       message: `Manual old bill ${invoiceNumber} (₹${grandTotal}) added for ${supplierName}`,
-      details: { supplierName, invoiceNumber, grandTotal, amountPaid, balanceDue },
+      details: { supplierName, invoiceNumber, grandTotal, amountPaid, balanceDue, paymentMode, paymentProof },
       userRole: req.user?.role || 'admin'
     }).catch(err => console.error('Audit log error (CREATE_MANUAL_SUPPLIER_BILL):', err.message));
 
@@ -1248,5 +1446,5 @@ module.exports = {
   getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
   getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
   sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
-  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment
+  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment, updatePurchaseBill
 };

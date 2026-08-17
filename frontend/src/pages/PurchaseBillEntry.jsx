@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/axios';
 
-const emptyItem = () => ({ productName: '', packing: '', batchNumber: '', manufacturer: '', hsnCode: '', expiryDate: '', quantity: '1', freeQuantity: '0', mrp: '', rate: '', sellingPrice: '', discount: '0', gst: '5' });
+const emptyItem = () => ({ productName: '', packing: '', batchNumber: '', manufacturer: '', hsnCode: '', expiryDate: '', quantity: '1', freeQuantity: '0', mrp: '', rate: '', netRate: '', sellingPrice: '', discount: '0', gst: '5', amount: '' });
 const money = (value) => `₹${Number(value || 0).toFixed(2)}`;
 
-const MedicineNameCell = ({ value, onChange, onPick }) => {
+const MedicineNameCell = ({ value, onChange, onPick, inputId, invalid }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [open, setOpen] = useState(false);
   const timerRef = useRef(null);
@@ -43,7 +43,8 @@ const MedicineNameCell = ({ value, onChange, onPick }) => {
       onFocus={() => { if (suggestions.length) setOpen(true); }}
       onBlur={() => setTimeout(() => setOpen(false), 150)}
       placeholder="Medicine name — type to search stock"
-      className="w-full min-w-[200px] rounded-md border border-teal-400 bg-teal-50/50 px-2 py-2 text-sm outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+      id={inputId}
+      className={`w-full min-w-[200px] rounded-md border px-2 py-2 text-sm outline-none focus:ring-2 ${invalid ? 'border-red-500 bg-red-50/40 focus:border-red-500 focus:ring-red-200' : 'border-teal-400 bg-teal-50/50 focus:border-teal-600 focus:ring-teal-100'}`}
     />
     {open && suggestions.length > 0 && (
       <ul className="absolute left-0 right-0 z-50 mt-1 max-h-56 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-xl">
@@ -74,6 +75,14 @@ const PurchaseBillEntry = () => {
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
+  const [errors, setErrors] = useState({});
+
+  const clearError = (key) => setErrors(prev => {
+    if (!prev[key]) return prev;
+    const next = { ...prev };
+    delete next[key];
+    return next;
+  });
 
   useEffect(() => {
     api.get('/medicines/suppliers').then(res => setSuppliers(res.data || [])).catch(() => {});
@@ -114,23 +123,38 @@ const PurchaseBillEntry = () => {
             freeQuantity: String(item.freeQuantity ?? 0),
             mrp: String(item.mrp ?? 0),
             rate: String(item.rate ?? 0),
-            sellingPrice: String(item.sellingPrice ?? item.rate ?? 0),
+            netRate: String(item.netRate ?? item.rate ?? ''),
+            sellingPrice: '',
             discount: String(item.discount ?? 0),
-            gst: String(item.gst ?? 5)
+            gst: String(item.gst ?? 5),
+            amount: item.amount != null && Number(item.amount) > 0 ? String(item.amount) : ''
           }));
           setItems(scannedItems);
         }
+        setErrors({});
         alert('✨ AI Scanner: Purchase bill parsed and auto-filled successfully!');
       }
     } catch (error) {
       console.error(error);
-      alert('AI Scanner Error: ' + (error.response?.data?.message || error.message));
+      const serverMessage = error.response?.data?.message || '';
+      if (serverMessage.includes('high demand') || serverMessage.includes('UNAVAILABLE') || serverMessage.includes('503')) {
+        alert('AI Scanner: Google AI service abhi busy hai (high demand). Kuch seconds ruk kar dobara try karein.');
+      } else if (serverMessage.includes('parse bill text')) {
+        alert('AI Scanner: Bill ki photo clear nahi hai — dobara acchi photo/PDF try karein.');
+      } else {
+        alert('AI Scanner Error: ' + (serverMessage || error.message));
+      }
     } finally {
       setScanning(false);
     }
   };
 
   const totals = useMemo(() => items.reduce((result, item) => {
+    const printedAmount = Number(item.amount || 0);
+    if (printedAmount > 0) {
+      result.subtotal += printedAmount;
+      return result;
+    }
     const gross = Number(item.quantity || 0) * Number(item.rate || 0);
     const discount = gross * Number(item.discount || 0) / 100;
     const taxable = gross - discount;
@@ -144,23 +168,55 @@ const PurchaseBillEntry = () => {
   const roundOff = Math.round(beforeRound) - beforeRound;
   const grandTotal = beforeRound + roundOff;
 
-  const setItem = (index, field, value) => setItems(prev => prev.map((item, itemIndex) => {
-    if (itemIndex !== index) return item;
-    const next = { ...item, [field]: value };
-    if (field === 'rate' && !item.sellingPrice) next.sellingPrice = value;
-    return next;
-  }));
+  const setItem = (index, field, value) => {
+    clearError(`row${index}.${field}`);
+    setItems(prev => prev.map((item, itemIndex) => {
+      if (itemIndex !== index) return item;
+      return { ...item, [field]: value };
+    }));
+  };
 
   const lineTotal = (item) => {
+    const printedAmount = Number(item.amount || 0);
+    if (printedAmount > 0) return printedAmount;
     const taxable = Number(item.quantity || 0) * Number(item.rate || 0) * (1 - Number(item.discount || 0) / 100);
     return taxable + (taxable * Number(item.gst || 0) / 100);
   };
 
+  const focusError = (key) => {
+    const el = document.getElementById(`field-${key}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.focus();
+    }
+  };
+
+  const validateAndFocus = () => {
+    const errs = {};
+    if (!bill.supplierName.trim()) errs.supplierName = true;
+    if (!bill.invoiceNumber.trim()) errs.invoiceNumber = true;
+    if (!bill.invoiceDate) errs.invoiceDate = true;
+    items.forEach((item, index) => {
+      if (!item.productName.trim()) errs[`row${index}.productName`] = true;
+      if (!item.batchNumber.trim()) errs[`row${index}.batchNumber`] = true;
+      if (!item.expiryDate) errs[`row${index}.expiryDate`] = true;
+      if (!item.quantity) errs[`row${index}.quantity`] = true;
+      if (item.mrp === '') errs[`row${index}.mrp`] = true;
+      if (item.rate === '') errs[`row${index}.rate`] = true;
+    });
+    setErrors(errs);
+    const order = [
+      'supplierName', 'invoiceNumber', 'invoiceDate',
+      ...items.map((_, i) => [`row${i}.productName`, `row${i}.batchNumber`, `row${i}.expiryDate`, `row${i}.quantity`, `row${i}.mrp`, `row${i}.rate`]).flat()
+    ];
+    const first = order.find(key => errs[key]);
+    if (first) { focusError(first); return false; }
+    return true;
+  };
+
   const submit = async (event) => {
     event.preventDefault();
-    if (!bill.supplierName.trim() || !bill.invoiceNumber.trim() || !bill.invoiceDate) return alert('Supplier name, invoice number aur invoice date bharna zaroori hai.');
-    const missingRow = items.findIndex(item => !item.productName.trim() || !item.batchNumber.trim() || !item.expiryDate || !item.quantity || item.mrp === '' || item.rate === '');
-    if (missingRow !== -1) return alert(`Medicine row ${missingRow + 1} mein required details bhar dijiye.`);
+    if (!validateAndFocus()) return alert('Kuch required fields khali hain — red box bharein.');
     setSaving(true);
     try {
       const data = new FormData();
@@ -169,6 +225,7 @@ const PurchaseBillEntry = () => {
       if (bill.billFile) data.append('billImage', bill.billFile);
       await api.post('/medicines/purchase-bills', data, { headers: { 'Content-Type': 'multipart/form-data' } });
       alert('Purchase bill save ho gaya aur medicines inventory mein add ho gayi.');
+      setErrors({});
       setBill({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', billFile: null });
       setItems([emptyItem()]);
       const input = document.getElementById('purchase-bill-file');
@@ -179,6 +236,8 @@ const PurchaseBillEntry = () => {
   };
 
   const inputClass = 'w-full min-w-[90px] rounded-md border border-slate-300 px-2 py-2 text-sm outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-100';
+  const errorClass = 'border-red-500 bg-red-50/40 focus:border-red-500 focus:ring-red-200';
+  const fieldClass = (key, base = inputClass) => errors[key] ? base.replace('border-slate-300', 'border-red-500').replace('focus:border-teal-500 focus:ring-teal-100', 'focus:border-red-500 focus:ring-red-200').replace('focus:ring-teal-100', 'focus:ring-red-200') + ' bg-red-50/40' : base;
   const labelClass = 'mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500';
 
   return <div className="min-h-screen bg-slate-50 p-4 md:p-6">
@@ -224,12 +283,12 @@ const PurchaseBillEntry = () => {
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
         <h2 className="mb-4 font-bold text-slate-800">Invoice Details</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div><label className={labelClass}>Supplier / Party Name *</label><input required list="known-suppliers" value={bill.supplierName} onChange={e => setBill({ ...bill, supplierName: e.target.value })} placeholder="Rosa Medical Agencies" className={inputClass} />
+          <div><label className={labelClass}>Supplier / Party Name *</label><input id="field-supplierName" required list="known-suppliers" value={bill.supplierName} onChange={e => { clearError('supplierName'); setBill({ ...bill, supplierName: e.target.value }); }} placeholder="Rosa Medical Agencies" className={fieldClass('supplierName')} />
             <datalist id="known-suppliers">{suppliers.map(s => <option key={s} value={s} />)}</datalist>
           </div>
           <div><label className={labelClass}>Supplier GSTIN</label><input value={bill.supplierGstin} onChange={e => setBill({ ...bill, supplierGstin: e.target.value })} placeholder="06ABCDE1234F1Z5" className={inputClass} /></div>
-          <div><label className={labelClass}>Invoice No. *</label><input required value={bill.invoiceNumber} onChange={e => setBill({ ...bill, invoiceNumber: e.target.value })} placeholder="C-09141" className={inputClass} /></div>
-          <div><label className={labelClass}>Invoice Date *</label><input required type="date" value={bill.invoiceDate} onChange={e => setBill({ ...bill, invoiceDate: e.target.value })} className={inputClass} /></div>
+          <div><label className={labelClass}>Invoice No. *</label><input id="field-invoiceNumber" required value={bill.invoiceNumber} onChange={e => { clearError('invoiceNumber'); setBill({ ...bill, invoiceNumber: e.target.value }); }} placeholder="C-09141" className={fieldClass('invoiceNumber')} /></div>
+          <div><label className={labelClass}>Invoice Date *</label><input id="field-invoiceDate" required type="date" value={bill.invoiceDate} onChange={e => { clearError('invoiceDate'); setBill({ ...bill, invoiceDate: e.target.value }); }} className={fieldClass('invoiceDate')} /></div>
           <div><label className={labelClass}>Bill Type</label><select value={bill.billType} onChange={e => setBill({ ...bill, billType: e.target.value })} className={inputClass}><option>Credit</option><option>Cash</option><option>GST Invoice</option></select></div>
           <div><label className={labelClass}>Payment Mode</label><select value={bill.paymentMode} onChange={e => setBill({ ...bill, paymentMode: e.target.value })} className={inputClass}><option>Credit</option><option>Cash</option><option>UPI</option><option>Bank Transfer</option></select></div>
           <div className="lg:col-span-2"><label className={labelClass}>Bill Photo / PDF</label><input id="purchase-bill-file" type="file" accept="image/*,.pdf" onChange={e => setBill({ ...bill, billFile: e.target.files?.[0] || null })} className="block w-full rounded-md border border-slate-300 p-1.5 text-sm file:mr-3 file:rounded file:border-0 file:bg-teal-50 file:px-3 file:py-1.5 file:font-semibold file:text-teal-700" /></div>
@@ -297,9 +356,11 @@ const PurchaseBillEntry = () => {
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-200 p-4 md:px-5"><div><h2 className="font-bold text-slate-800">Medicines</h2><p className="text-xs text-slate-500">Free quantity bhi inventory stock mein add hogi.</p></div><button type="button" onClick={() => setItems([...items, emptyItem()])} className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700">+ Add Medicine</button></div>
-        <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{['Medicine Name *', 'Packing', 'Batch *', 'Mfr.', 'HSN', 'Expiry *', 'Qty *', 'Free', 'MRP *', 'Rate *', 'Sale Price', 'Disc %', 'GST %', 'Amount', ''].map(title => <th key={title} className="whitespace-nowrap px-2 py-3 font-bold">{title}</th>)}</tr></thead><tbody>
+        <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{['Medicine Name *', 'Packing', 'Batch *', 'Mfr.', 'HSN', 'Expiry *', 'Qty *', 'Free', 'MRP *', 'Rate *', 'Net Rate', 'Sale Price', 'Disc %', 'GST %', 'Amount', ''].map(title => <th key={title} className="whitespace-nowrap px-2 py-3 font-bold">{title}</th>)}</tr></thead><tbody>
           {items.map((item, index) => <tr key={index} className="border-t border-slate-100 align-top">
             <td className="p-2"><MedicineNameCell
+              inputId={`field-row${index}-productName`}
+              invalid={!!errors[`row${index}.productName`]}
               value={item.productName}
               onChange={val => setItem(index, 'productName', val)}
               onPick={(med) => setItems(prev => prev.map((it, idx) => {
@@ -312,16 +373,16 @@ const PurchaseBillEntry = () => {
                   hsnCode: med.hsnCode || it.hsnCode,
                   gst: med.gst != null ? String(med.gst) : it.gst,
                   mrp: med.mrp != null ? String(med.mrp) : it.mrp,
-                  sellingPrice: (med.sellingPrice != null && med.sellingPrice) ? String(med.sellingPrice) : (med.mrp ? String(med.mrp) : it.sellingPrice)
+                  sellingPrice: it.sellingPrice || ''
                 };
               }))}
             /></td>
             <td className="p-2"><input value={item.packing} onChange={e => setItem(index, 'packing', e.target.value)} placeholder="10 tab" className={inputClass} /></td>
-            <td className="p-2"><input value={item.batchNumber} onChange={e => setItem(index, 'batchNumber', e.target.value)} placeholder="Batch" className={inputClass} /></td>
+            <td className="p-2"><input id={`field-row${index}-batchNumber`} value={item.batchNumber} onChange={e => setItem(index, 'batchNumber', e.target.value)} placeholder="Batch" className={fieldClass(`row${index}.batchNumber`)} /></td>
             <td className="p-2"><input value={item.manufacturer} onChange={e => setItem(index, 'manufacturer', e.target.value)} placeholder="Mfr" className={inputClass} /></td>
             <td className="p-2"><input value={item.hsnCode} onChange={e => setItem(index, 'hsnCode', e.target.value)} placeholder="3004" className={inputClass} /></td>
-            <td className="p-2"><input type="date" value={item.expiryDate} onChange={e => setItem(index, 'expiryDate', e.target.value)} className={inputClass} /></td>
-            {['quantity', 'freeQuantity', 'mrp', 'rate', 'sellingPrice', 'discount', 'gst'].map(field => <td key={field} className="p-2"><input type="number" min="0" step="0.01" value={item[field]} onChange={e => setItem(index, field, e.target.value)} className={inputClass} /></td>)}
+            <td className="p-2"><input id={`field-row${index}-expiryDate`} type="date" value={item.expiryDate} onChange={e => setItem(index, 'expiryDate', e.target.value)} className={fieldClass(`row${index}.expiryDate`)} /></td>
+            {['quantity', 'freeQuantity', 'mrp', 'rate', 'netRate', 'sellingPrice', 'discount', 'gst'].map(field => <td key={field} className="p-2"><input id={`field-row${index}-${field}`} type="number" min="0" step="0.01" value={item[field]} onChange={e => setItem(index, field, e.target.value)} className={fieldClass(`row${index}.${field}`)} /></td>)}
             <td className="whitespace-nowrap p-2 pt-3 font-bold text-slate-700">{money(lineTotal(item))}</td>
             <td className="p-2"><button type="button" disabled={items.length === 1} onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="rounded p-2 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-300" title="Remove medicine">✕</button></td>
           </tr>)}
