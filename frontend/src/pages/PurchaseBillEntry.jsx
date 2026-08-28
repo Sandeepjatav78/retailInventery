@@ -150,11 +150,6 @@ const PurchaseBillEntry = () => {
   };
 
   const totals = useMemo(() => items.reduce((result, item) => {
-    const printedAmount = Number(item.amount || 0);
-    if (printedAmount > 0) {
-      result.subtotal += printedAmount;
-      return result;
-    }
     const gross = Number(item.quantity || 0) * Number(item.rate || 0);
     const discount = gross * Number(item.discount || 0) / 100;
     const taxable = gross - discount;
@@ -177,8 +172,6 @@ const PurchaseBillEntry = () => {
   };
 
   const lineTotal = (item) => {
-    const printedAmount = Number(item.amount || 0);
-    if (printedAmount > 0) return printedAmount;
     const taxable = Number(item.quantity || 0) * Number(item.rate || 0) * (1 - Number(item.discount || 0) / 100);
     return taxable + (taxable * Number(item.gst || 0) / 100);
   };

@@ -648,23 +648,13 @@ const createPurchaseBill = async (req, res) => {
       return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, amount: Number(lineAmount.toFixed(2)), taxableAmount, discountAmount, gstAmount, _manualAmount: manualAmount > 0 };
     });
 
-    const hasManualAmounts = validItems.some(item => item._manualAmount);
     let subtotal, discountTotal, gstTotal, roundOff, grandTotal;
-    if (hasManualAmounts) {
-      // User-typed amounts win: totals = sum of entered line amounts (no GST/discount recompute)
-      subtotal = validItems.reduce((sum, item) => sum + item.amount, 0);
-      discountTotal = 0;
-      gstTotal = 0;
-      roundOff = 0;
-      grandTotal = Number(subtotal.toFixed(2));
-    } else {
-      subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
-      discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
-      gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
-      const preRoundTotal = subtotal + gstTotal;
-      roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
-      grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
-    }
+    subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
+    discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
+    gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
+    const preRoundTotal = subtotal + gstTotal;
+    roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
+    grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
 
     let rawPaymentStatus = String(req.body.paymentStatus || 'Credit').trim();
     let amountPaid = Number(req.body.amountPaid || 0);
@@ -778,22 +768,13 @@ const updatePurchaseBill = async (req, res) => {
       return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, amount: Number(lineAmount.toFixed(2)), taxableAmount, discountAmount, gstAmount, _manualAmount: manualAmount > 0 };
     });
 
-    const hasManualAmounts = validItems.some(item => item._manualAmount);
     let subtotal, discountTotal, gstTotal, roundOff, grandTotal;
-    if (hasManualAmounts) {
-      subtotal = validItems.reduce((sum, item) => sum + item.amount, 0);
-      discountTotal = 0;
-      gstTotal = 0;
-      roundOff = 0;
-      grandTotal = Number(subtotal.toFixed(2));
-    } else {
-      subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
-      discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
-      gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
-      const preRoundTotal = subtotal + gstTotal;
-      roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
-      grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
-    }
+    subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
+    discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
+    gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
+    const preRoundTotal = subtotal + gstTotal;
+    roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
+    grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
 
     // Revert OLD stock first (so edited/deleted lines don't leave phantom stock)
     for (const oldItem of existingBill.items || []) {
