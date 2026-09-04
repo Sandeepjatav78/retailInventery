@@ -29,6 +29,7 @@ const PurchaseBillSchema = new mongoose.Schema({
   items: { type: [PurchaseBillItemSchema], required: true },
   subtotal: { type: Number, required: true },
   discountTotal: { type: Number, default: 0 },
+  additionalDiscount: { type: Number, default: 0 },
   gstTotal: { type: Number, default: 0 },
   roundOff: { type: Number, default: 0 },
   grandTotal: { type: Number, required: true },

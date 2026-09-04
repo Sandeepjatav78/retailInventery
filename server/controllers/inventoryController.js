@@ -653,8 +653,10 @@ const createPurchaseBill = async (req, res) => {
     discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
     gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
     const preRoundTotal = subtotal + gstTotal;
-    roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
-    grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
+    const additionalDiscount = Math.max(0, Math.min(number(req.body.additionalDiscount), preRoundTotal));
+    const afterAdditionalDiscount = preRoundTotal - additionalDiscount;
+    roundOff = Number((Math.round(afterAdditionalDiscount) - afterAdditionalDiscount).toFixed(2));
+    grandTotal = Number((afterAdditionalDiscount + roundOff).toFixed(2));
 
     let rawPaymentStatus = String(req.body.paymentStatus || 'Credit').trim();
     let amountPaid = Number(req.body.amountPaid || 0);
@@ -705,6 +707,7 @@ const createPurchaseBill = async (req, res) => {
       items: validItems.map(({ taxableAmount, discountAmount, gstAmount, _manualAmount, ...item }) => item),
       subtotal: Number(subtotal.toFixed(2)),
       discountTotal: Number(discountTotal.toFixed(2)),
+      additionalDiscount: Number(additionalDiscount.toFixed(2)),
       gstTotal: Number(gstTotal.toFixed(2)),
       roundOff,
       grandTotal,
@@ -773,8 +776,10 @@ const updatePurchaseBill = async (req, res) => {
     discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
     gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
     const preRoundTotal = subtotal + gstTotal;
-    roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
-    grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
+    const additionalDiscount = Math.max(0, Math.min(number(req.body.additionalDiscount), preRoundTotal));
+    const afterAdditionalDiscount = preRoundTotal - additionalDiscount;
+    roundOff = Number((Math.round(afterAdditionalDiscount) - afterAdditionalDiscount).toFixed(2));
+    grandTotal = Number((afterAdditionalDiscount + roundOff).toFixed(2));
 
     // Revert OLD stock first (so edited/deleted lines don't leave phantom stock)
     for (const oldItem of existingBill.items || []) {
@@ -818,6 +823,7 @@ const updatePurchaseBill = async (req, res) => {
     existingBill.items = validItems.map(({ taxableAmount, discountAmount, gstAmount, _manualAmount, ...item }) => item);
     existingBill.subtotal = Number(subtotal.toFixed(2));
     existingBill.discountTotal = Number(discountTotal.toFixed(2));
+    existingBill.additionalDiscount = Number(additionalDiscount.toFixed(2));
     existingBill.gstTotal = Number(gstTotal.toFixed(2));
     existingBill.roundOff = roundOff;
     existingBill.grandTotal = grandTotal;
@@ -1012,6 +1018,7 @@ Analyze this invoice image and extract all details into a strict JSON object wit
   "billType": "Credit or Cash or GST Invoice",
   "paymentMode": "Credit or Cash",
   "notes": "Any transport or invoice notes",
+  "additionalDiscount": 0,
   "items": [
     {
       "productName": "Name of medicine / item e.g. ARISTO POVIDON 10 LOTION",
@@ -1043,6 +1050,10 @@ QUANTITY & FREE ITEMS RULES (CRITICAL — READ CAREFULLY):
 - "amount" = final line amount EXACTLY as printed on the bill. NEVER recalculate it — trust the printed value. If no printed amount, calculate: quantity × rate × (1 − discount/100) × (1 + gst/100).
 - "sellingPrice" = the price this pharmacy should sell at. If the bill does not show a selling price, use rate.
 
+DISCOUNT EXTRACTION RULES (IMPORTANT — read carefully, this is commonly missed):
+- "discount" (per item, inside "items") is the PERCENTAGE discount for that line, taken from a column labelled "Disc", "Disc%", "Sch%", "Discount %" etc. in the items table. Read the printed number exactly (e.g. column shows "10" -> discount: 10). Do NOT leave it at 0 just because it is easy to miss — scan every row's discount column carefully. Only use 0 if the bill truly has no discount column or the cell is blank/dash.
+- "additionalDiscount" (top-level, NOT inside items) is a LUMP-SUM discount amount printed in the bill's TOTALS/SUMMARY section at the BOTTOM of the invoice — separate from the per-item Disc% column. Look for lines like "Discount", "Less: Discount", "Scheme Discount", "Cash Discount", "Trade Discount", "Additional Discount" near the Subtotal/Total/Grand Total area. Extract that as a positive rupee amount (e.g. if it shows "Discount: -150.00" or "(-) 150.00", output additionalDiscount: 150). If no such bottom-level discount line exists, output additionalDiscount: 0.
+
 HSN EXTRACTION RULES (IMPORTANT):
 - Look for a column with header "HSN", "HSN Code", "SAC", "HSN/SAC" in the items table.
 - Each item row has its OWN hsnCode from that column — copy it exactly (usually 4 to 8 digits).
@@ -1056,7 +1067,7 @@ DATE RULES:
 - Text dates like "MAR 28", "MARCH 2028" -> 2028-03-31.
 
 NUMBER RULES:
-- All numbers (mrp, rate, sellingPrice, discount, gst, quantity, freeQuantity, amount) must be JSON numbers, never strings.
+- All numbers (mrp, rate, sellingPrice, discount, gst, quantity, freeQuantity, amount, additionalDiscount) must be JSON numbers, never strings.
 - If a value is missing or illegible, use 0 for numbers and "" for text.
 
 Return ONLY raw valid JSON with no markdown tags or conversational text.`;

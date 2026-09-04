@@ -66,7 +66,8 @@ const PurchaseBillHistory = () => {
       invoiceDate: bill.invoiceDate ? String(bill.invoiceDate).slice(0, 10) : '',
       billType: bill.billType || 'Credit',
       paymentMode: bill.paymentMode || 'Credit',
-      notes: bill.notes || ''
+      notes: bill.notes || '',
+      additionalDiscount: String(bill.additionalDiscount ?? '0')
     });
     setEditItems((bill.items || []).map(item => ({
       productName: item.productName || '',
@@ -149,9 +150,11 @@ const PurchaseBillHistory = () => {
       return result;
     }, { subtotal: 0, discount: 0, gst: 0 });
   }, [editItems]);
-  const editBeforeRound = editTotals.subtotal + editTotals.gst;
-  const editRoundOff = Math.round(editBeforeRound) - editBeforeRound;
-  const editGrandTotal = editBeforeRound + editRoundOff;
+  const editPreRoundTotal = editTotals.subtotal + editTotals.gst;
+  const editAdditionalDiscount = Math.max(0, Math.min(Number(editForm?.additionalDiscount || 0), editPreRoundTotal));
+  const editAfterAdditionalDiscount = editPreRoundTotal - editAdditionalDiscount;
+  const editRoundOff = Math.round(editAfterAdditionalDiscount) - editAfterAdditionalDiscount;
+  const editGrandTotal = editAfterAdditionalDiscount + editRoundOff;
 
   const handleSaveEdit = async (e) => {
     e.preventDefault();
@@ -342,7 +345,8 @@ const PurchaseBillHistory = () => {
                             </div>
                             <div className="bg-white rounded-xl border border-slate-200 p-3 grid grid-cols-2 gap-2">
                               <div><span className="text-slate-400 block font-bold uppercase text-[10px]">Subtotal</span><span className="font-bold text-slate-700">{money(bill.subtotal)}</span></div>
-                              <div><span className="text-slate-400 block font-bold uppercase text-[10px]">Discount</span><span className="font-bold text-red-600">- {money(bill.discountTotal)}</span></div>
+                              <div><span className="text-slate-400 block font-bold uppercase text-[10px]">Item Discount</span><span className="font-bold text-red-600">- {money(bill.discountTotal)}</span></div>
+                              <div><span className="text-slate-400 block font-bold uppercase text-[10px]">Extra Bill Discount</span><span className="font-bold text-amber-600">- {money(bill.additionalDiscount)}</span></div>
                               <div><span className="text-slate-400 block font-bold uppercase text-[10px]">GST</span><span className="font-bold text-slate-700">{money(bill.gstTotal)}</span></div>
                               <div><span className="text-slate-400 block font-bold uppercase text-[10px]">Round Off</span><span className="font-bold text-slate-700">{money(bill.roundOff)}</span></div>
                             </div>
@@ -456,6 +460,10 @@ const PurchaseBillHistory = () => {
                   <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Payment Mode</label>
                   <select value={editForm.paymentMode} onChange={e => setEditForm({ ...editForm, paymentMode: e.target.value })} className="w-full rounded-md border border-slate-300 px-2 py-2 text-sm outline-none focus:border-teal-500 bg-white"><option>Credit</option><option>Cash</option><option>UPI</option><option>Bank Transfer</option></select>
                 </div>
+                <div>
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-amber-600">Extra Bill Discount (₹)</label>
+                  <input type="number" min="0" step="0.01" value={editForm.additionalDiscount} onChange={e => setEditForm({ ...editForm, additionalDiscount: e.target.value })} className="w-full rounded-md border border-amber-300 bg-amber-50/40 px-2 py-2 text-sm font-bold text-amber-800 outline-none focus:border-amber-500" />
+                </div>
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Notes</label>
                   <input value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} className="w-full rounded-md border border-slate-300 px-2 py-2 text-sm outline-none focus:border-teal-500" />
@@ -505,7 +513,7 @@ const PurchaseBillHistory = () => {
               {/* TOTALS + SAVE */}
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl bg-slate-50 border border-slate-200 p-4">
                 <div className="text-xs font-semibold text-slate-600 space-y-1">
-                  <div>Subtotal: <b>{money(editTotals.subtotal)}</b> · Discount: <b className="text-red-600">- {money(editTotals.discount)}</b> · GST: <b>{money(editTotals.gst)}</b> · Round: <b>{money(editRoundOff)}</b></div>
+                  <div>Subtotal: <b>{money(editTotals.subtotal)}</b> · Item Discount: <b className="text-red-600">- {money(editTotals.discount)}</b> · Extra Discount: <b className="text-amber-600">- {money(editAdditionalDiscount)}</b> · GST: <b>{money(editTotals.gst)}</b> · Round: <b>{money(editRoundOff)}</b></div>
                   <div className="text-sm font-extrabold text-slate-800">Grand Total: <span className="text-teal-700">{money(editGrandTotal)}</span> <span className="font-semibold text-slate-400">(purana total: {money(editBill.grandTotal)})</span></div>
                 </div>
                 <div className="flex gap-2">

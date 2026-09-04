@@ -53,7 +53,8 @@ const emptyBill = () => ({
   paymentStatus: 'Credit',
   amountPaid: '0',
   paymentRemarks: '',
-  notes: ''
+  notes: '',
+  additionalDiscount: '0'
 });
 
 export default function App() {
@@ -196,7 +197,10 @@ export default function App() {
           paymentStatus: prev.paymentStatus || 'Credit',
           amountPaid: prev.amountPaid || '0',
           paymentRemarks: prev.paymentRemarks || '',
-          notes: extracted.notes || ''
+          notes: extracted.notes || '',
+          additionalDiscount: extracted.additionalDiscount && Number(extracted.additionalDiscount) > 0
+            ? String(extracted.additionalDiscount)
+            : (prev.additionalDiscount || '0')
         }));
 
         let scannedItems = [];
@@ -323,7 +327,10 @@ export default function App() {
     if (manualAmount > 0) return manualAmount;
     const qty = Number(item.quantity || 0);
     const rate = Number(item.rate || 0);
-    return qty * rate;
+    const discount = Number(item.discount || 0);
+    const gst = Number(item.gst || 0);
+    const taxable = qty * rate * (1 - discount / 100);
+    return taxable + (taxable * gst / 100);
   };
 
   const totalBlockingMissing = useMemo(
@@ -331,7 +338,9 @@ export default function App() {
     [items]
   );
 
-  const grandTotal = items.reduce((sum, item) => sum + lineTotal(item), 0);
+  const itemsTotal = items.reduce((sum, item) => sum + lineTotal(item), 0);
+  const additionalDiscountValue = Math.max(0, Math.min(Number(bill.additionalDiscount || 0), itemsTotal));
+  const grandTotal = itemsTotal - additionalDiscountValue;
 
   // --- 3. START MANUAL ENTRY WITHOUT PHOTO ---
   const startManualEntry = () => {
@@ -679,6 +688,15 @@ export default function App() {
               placeholder="Transport, scheme or any note"
             />
 
+            <Text style={[styles.label, { color: '#b45309' }]}>Extra Bill Discount (₹) — bill ke niche wala lump-sum discount</Text>
+            <TextInput
+              style={[styles.input, styles.inputWarn]}
+              keyboardType="numeric"
+              value={bill.additionalDiscount}
+              onChangeText={(text) => setBill({ ...bill, additionalDiscount: text })}
+              placeholder="0"
+            />
+
             {/* STEP 2: REVIEW & EDIT MEDICINES */}
             <View style={styles.rowHeader}>
               <View style={styles.stepHeader}>
@@ -834,6 +852,16 @@ export default function App() {
                           />
                         </View>
                         <View style={{ flex: 1, marginRight: 6 }}>
+                          <Text style={styles.label}>Disc %</Text>
+                          <TextInput
+                            style={[styles.input, Number(item.discount || 0) > 0 && styles.inputFree]}
+                            keyboardType="numeric"
+                            value={item.discount}
+                            onChangeText={(val) => updateItem(idx, 'discount', val)}
+                            placeholder="0"
+                          />
+                        </View>
+                        <View style={{ flex: 1 }}>
                           <Text style={styles.label}>GST %</Text>
                           <TextInput
                             style={styles.input}
@@ -842,15 +870,14 @@ export default function App() {
                             onChangeText={(val) => updateItem(idx, 'gst', val)}
                           />
                         </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.label}>Pack</Text>
-                          <TextInput
-                            style={styles.input}
-                            value={item.packing}
-                            onChangeText={(val) => updateItem(idx, 'packing', val)}
-                          />
-                        </View>
                       </View>
+
+                      <Text style={styles.label}>Pack</Text>
+                      <TextInput
+                        style={styles.input}
+                        value={item.packing}
+                        onChangeText={(val) => updateItem(idx, 'packing', val)}
+                      />
 
                       <Text style={styles.label}>Manufacturer</Text>
                       <TextInput
@@ -893,6 +920,12 @@ export default function App() {
                 <Text style={styles.saveSummaryLabel}>Items</Text>
                 <Text style={styles.saveSummaryValue}>{items.length}</Text>
               </View>
+              {additionalDiscountValue > 0 && (
+                <View style={styles.saveSummaryItem}>
+                  <Text style={styles.saveSummaryLabel}>Extra Disc.</Text>
+                  <Text style={[styles.saveSummaryValue, { color: '#b45309' }]}>- {money(additionalDiscountValue)}</Text>
+                </View>
+              )}
               <View style={styles.saveSummaryItem}>
                 <Text style={styles.saveSummaryLabel}>Grand Total</Text>
                 <Text style={styles.saveSummaryValue}>{money(grandTotal)}</Text>

@@ -70,7 +70,7 @@ const MedicineNameCell = ({ value, onChange, onPick, inputId, invalid }) => {
 };
 
 const PurchaseBillEntry = () => {
-  const [bill, setBill] = useState({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', billFile: null });
+  const [bill, setBill] = useState({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFile: null });
   const [items, setItems] = useState([emptyItem()]);
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -108,6 +108,7 @@ const PurchaseBillEntry = () => {
           billType: extracted.billType || prev.billType,
           paymentMode: extracted.paymentMode || prev.paymentMode,
           notes: extracted.notes || prev.notes,
+          additionalDiscount: extracted.additionalDiscount != null && Number(extracted.additionalDiscount) > 0 ? String(extracted.additionalDiscount) : prev.additionalDiscount,
           billFile: file
         }));
 
@@ -159,9 +160,11 @@ const PurchaseBillEntry = () => {
     result.gst += gst;
     return result;
   }, { subtotal: 0, discount: 0, gst: 0 }), [items]);
-  const beforeRound = totals.subtotal + totals.gst;
-  const roundOff = Math.round(beforeRound) - beforeRound;
-  const grandTotal = beforeRound + roundOff;
+  const preRoundTotal = totals.subtotal + totals.gst;
+  const additionalDiscount = Math.max(0, Math.min(Number(bill.additionalDiscount || 0), preRoundTotal));
+  const afterAdditionalDiscount = preRoundTotal - additionalDiscount;
+  const roundOff = Math.round(afterAdditionalDiscount) - afterAdditionalDiscount;
+  const grandTotal = afterAdditionalDiscount + roundOff;
 
   const setItem = (index, field, value) => {
     clearError(`row${index}.${field}`);
@@ -219,7 +222,7 @@ const PurchaseBillEntry = () => {
       await api.post('/medicines/purchase-bills', data, { headers: { 'Content-Type': 'multipart/form-data' } });
       alert('Purchase bill save ho gaya aur medicines inventory mein add ho gayi.');
       setErrors({});
-      setBill({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', billFile: null });
+      setBill({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFile: null });
       setItems([emptyItem()]);
       const input = document.getElementById('purchase-bill-file');
       if (input) input.value = '';
@@ -382,7 +385,19 @@ const PurchaseBillEntry = () => {
         </tbody></table></div>
       </section>
 
-      <section className="ml-auto max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="space-y-2 text-sm text-slate-600"><div className="flex justify-between"><span>Taxable subtotal</span><b>{money(totals.subtotal)}</b></div><div className="flex justify-between"><span>Total discount</span><b>- {money(totals.discount)}</b></div><div className="flex justify-between"><span>Total GST</span><b>{money(totals.gst)}</b></div><div className="flex justify-between"><span>Round off</span><b>{money(roundOff)}</b></div><div className="mt-3 flex justify-between border-t border-slate-200 pt-3 text-lg font-extrabold text-slate-800"><span>Grand Total</span><span>{money(grandTotal)}</span></div></div><button disabled={saving} type="submit" className="mt-5 w-full rounded-lg bg-teal-600 py-3 font-bold text-white hover:bg-teal-700 disabled:bg-teal-300">{saving ? 'Saving bill...' : 'Save Bill & Add Stock'}</button></section>
+      <section className="ml-auto max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="space-y-2 text-sm text-slate-600"><div className="flex justify-between"><span>Taxable subtotal</span><b>{money(totals.subtotal)}</b></div><div className="flex justify-between"><span>Item-level discount</span><b>- {money(totals.discount)}</b></div><div className="flex justify-between"><span>Total GST</span><b>{money(totals.gst)}</b></div>
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
+          <div><span className="block font-semibold text-amber-800">Extra Bill Discount (₹)</span><span className="block text-xs text-amber-600">Bill ke niche wala lump-sum discount — AI se auto-fill ho sakta hai, ya yahan khud dalein.</span></div>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={bill.additionalDiscount}
+            onChange={e => setBill({ ...bill, additionalDiscount: e.target.value })}
+            className="w-28 rounded-md border border-amber-300 bg-white px-2 py-1.5 text-right text-sm font-bold text-amber-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+          />
+        </div>
+        <div className="flex justify-between"><span>Round off</span><b>{money(roundOff)}</b></div><div className="mt-3 flex justify-between border-t border-slate-200 pt-3 text-lg font-extrabold text-slate-800"><span>Grand Total</span><span>{money(grandTotal)}</span></div></div><button disabled={saving} type="submit" className="mt-5 w-full rounded-lg bg-teal-600 py-3 font-bold text-white hover:bg-teal-700 disabled:bg-teal-300">{saving ? 'Saving bill...' : 'Save Bill & Add Stock'}</button></section>
     </form>
   </div>;
 };
