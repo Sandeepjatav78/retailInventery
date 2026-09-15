@@ -126,35 +126,36 @@ const PurchaseBillHistory = () => {
     return true;
   };
 
-  const editLineTotal = (item) => {
-    const printedAmount = Number(item.amount || 0);
-    if (printedAmount > 0) return printedAmount;
-    const taxable = Number(item.quantity || 0) * Number(item.rate || 0) * (1 - Number(item.discount || 0) / 100);
-    return taxable + (taxable * Number(item.gst || 0) / 100);
-  };
+  const editPriceAmount = (item) => Number(item.quantity || 0) * Number(item.rate || 0);
 
   const editTotals = useMemo(() => {
-    return editItems.reduce((result, item) => {
-      const printedAmount = Number(item.amount || 0);
-      if (printedAmount > 0) {
-        result.subtotal += printedAmount;
-        return result;
-      }
+    const rows = editItems.map(item => {
       const gross = Number(item.quantity || 0) * Number(item.rate || 0);
       const discount = gross * Number(item.discount || 0) / 100;
       const taxable = gross - discount;
-      const gst = taxable * Number(item.gst || 0) / 100;
-      result.subtotal += taxable;
-      result.discount += discount;
-      result.gst += gst;
-      return result;
-    }, { subtotal: 0, discount: 0, gst: 0 });
-  }, [editItems]);
-  const editPreRoundTotal = editTotals.subtotal + editTotals.gst;
-  const editAdditionalDiscount = Math.max(0, Math.min(Number(editForm?.additionalDiscount || 0), editPreRoundTotal));
-  const editAfterAdditionalDiscount = editPreRoundTotal - editAdditionalDiscount;
-  const editRoundOff = Math.round(editAfterAdditionalDiscount) - editAfterAdditionalDiscount;
-  const editGrandTotal = editAfterAdditionalDiscount + editRoundOff;
+      return { taxable, gstRate: Number(item.gst || 0) };
+    });
+    const subtotal = editItems.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.rate || 0), 0);
+    const discountTotal = editItems.reduce((sum, item) => {
+      const gross = Number(item.quantity || 0) * Number(item.rate || 0);
+      return sum + gross * Number(item.discount || 0) / 100;
+    }, 0);
+    const taxableTotal = rows.reduce((sum, row) => sum + row.taxable, 0);
+    // Extra bill discount is deducted proportionally before GST, same as item-level discount.
+    const extraDiscount = Math.max(0, Math.min(Number(editForm?.additionalDiscount || 0), taxableTotal));
+    const gstTotal = taxableTotal > 0
+      ? rows.reduce((sum, row) => {
+          const share = row.taxable / taxableTotal;
+          const taxableAfterExtraDiscount = row.taxable - extraDiscount * share;
+          return sum + taxableAfterExtraDiscount * row.gstRate / 100;
+        }, 0)
+      : 0;
+    return { subtotal, discount: discountTotal, gst: gstTotal, additionalDiscount: extraDiscount };
+  }, [editItems, editForm?.additionalDiscount]);
+  const editAdditionalDiscount = editTotals.additionalDiscount;
+  const editPreRoundTotal = editTotals.subtotal - editTotals.discount - editAdditionalDiscount + editTotals.gst;
+  const editRoundOff = Math.round(editPreRoundTotal) - editPreRoundTotal;
+  const editGrandTotal = editPreRoundTotal + editRoundOff;
 
   const handleSaveEdit = async (e) => {
     e.preventDefault();
@@ -303,13 +304,13 @@ const PurchaseBillHistory = () => {
                       <td className="px-4 py-3 text-center">{statusBadge(bill)}</td>
                       <td className="px-4 py-3 text-center font-bold text-slate-600">{(bill.items || []).length}</td>
                       <td className="px-4 py-3 text-center">
-                        {bill.billImage ? (
+                        {(bill.billImages?.length > 0 || bill.billImage) ? (
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); setImageBill(bill); }}
                             className="px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 text-xs font-bold transition-colors"
                           >
-                            🖼 View
+                            🖼 View{bill.billImages?.length > 1 ? ` (${bill.billImages.length})` : ''}
                           </button>
                         ) : <span className="text-slate-300">-</span>}
                       </td>
@@ -486,8 +487,7 @@ const PurchaseBillHistory = () => {
                       <th className="px-2 py-2 text-right">Sale Price</th>
                       <th className="px-2 py-2 text-right">Disc %</th>
                       <th className="px-2 py-2 text-right">GST %</th>
-                      <th className="px-2 py-2 text-right">Amount</th>
-                      <th className="px-2 py-2 text-right">Total</th>
+                      <th className="px-2 py-2 text-right">Price</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -500,8 +500,7 @@ const PurchaseBillHistory = () => {
                         {['quantity', 'freeQuantity', 'mrp', 'rate', 'netRate', 'sellingPrice', 'discount', 'gst'].map(field => (
                           <td key={field} className="px-2 py-1.5"><input id={`edit-field-row${index}-${field}`} type="number" min="0" step="0.01" value={item[field]} onChange={e => setEditItem(index, field, e.target.value)} className={`w-full min-w-[70px] rounded border px-2 py-1.5 outline-none focus:ring-2 ${editErrCls(`row${index}.${field}`, 'border-slate-300 focus:border-teal-500')}`} /></td>
                         ))}
-                        <td className="px-2 py-1.5"><input type="number" min="0" step="0.01" value={item.amount} onChange={e => setEditItem(index, 'amount', e.target.value)} placeholder="auto" className="w-full min-w-[70px] rounded border border-slate-300 px-2 py-1.5 outline-none focus:border-teal-500" /></td>
-                        <td className="whitespace-nowrap px-2 py-1.5 font-bold text-slate-700">{money(editLineTotal(item))}</td>
+                        <td className="whitespace-nowrap px-2 py-1.5 font-bold text-slate-700">{money(editPriceAmount(item))}</td>
                         <td className="px-2 py-1.5"><button type="button" disabled={editItems.length === 1} onClick={() => setEditItems(editItems.filter((_, i) => i !== index))} className="rounded p-1.5 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-300" title="Remove">✕</button></td>
                       </tr>
                     ))}
@@ -532,18 +531,27 @@ const PurchaseBillHistory = () => {
           <div className="bg-white rounded-2xl max-w-2xl w-full p-4 shadow-2xl space-y-3 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div>
-                <h3 className="font-extrabold text-slate-800">🖼 Bill Photo — {imageBill.supplierName} ({imageBill.invoiceNumber})</h3>
+                <h3 className="font-extrabold text-slate-800">
+                  🖼 Bill Photo{(imageBill.billImages?.length > 1) ? `s (${imageBill.billImages.length} pages)` : ''} — {imageBill.supplierName} ({imageBill.invoiceNumber})
+                </h3>
                 <p className="text-xs text-slate-500 mt-0.5">{dateFmt(imageBill.invoiceDate)} · Total {money(imageBill.grandTotal)}</p>
               </div>
               <button onClick={() => setImageBill(null)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
             </div>
-            {imageBill.billImage.endsWith('.pdf') ? (
-              <a href={imageBill.billImage} target="_blank" rel="noreferrer" className="block text-center py-8 rounded-xl bg-slate-50 border border-slate-200 font-bold text-indigo-700 hover:bg-indigo-50">
-                📄 PDF file hai — nayi tab me kholne ke liye click karein
-              </a>
-            ) : (
-              <img src={imageBill.billImage} alt="Purchase bill" className="w-full rounded-xl border border-slate-200" />
-            )}
+            <div className="space-y-3">
+              {(imageBill.billImages?.length > 0 ? imageBill.billImages : [imageBill.billImage]).filter(Boolean).map((url, idx, arr) => (
+                <div key={idx}>
+                  {arr.length > 1 && <p className="text-xs font-bold text-slate-400 mb-1">Page {idx + 1} of {arr.length}</p>}
+                  {url.endsWith('.pdf') ? (
+                    <a href={url} target="_blank" rel="noreferrer" className="block text-center py-8 rounded-xl bg-slate-50 border border-slate-200 font-bold text-indigo-700 hover:bg-indigo-50">
+                      📄 PDF file hai — nayi tab me kholne ke liye click karein
+                    </a>
+                  ) : (
+                    <img src={url} alt={`Purchase bill page ${idx + 1}`} className="w-full rounded-xl border border-slate-200" />
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

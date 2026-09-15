@@ -28,10 +28,13 @@ const allowedOrigins = new Set([
   ...parseOrigins(process.env.FRONTEND_URL),
 ]);
 
+const isLocalhostOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
+
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow non-browser requests (no Origin header) and explicitly whitelisted frontends.
-    if (!origin || allowedOrigins.has(origin)) {
+    // Allow non-browser requests (no Origin header), explicitly whitelisted frontends,
+    // and any localhost port (Vite auto-increments when 5173 is taken).
+    if (!origin || allowedOrigins.has(origin) || isLocalhostOrigin(origin)) {
       return callback(null, true);
     }
     return callback(new Error(`CORS blocked for origin: ${origin}`));

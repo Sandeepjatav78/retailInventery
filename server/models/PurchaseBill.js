@@ -26,6 +26,7 @@ const PurchaseBillSchema = new mongoose.Schema({
   paymentMode: { type: String, default: 'Credit' },
   notes: { type: String },
   billImage: { type: String },
+  billImages: { type: [String], default: [] },
   items: { type: [PurchaseBillItemSchema], required: true },
   subtotal: { type: Number, required: true },
   discountTotal: { type: Number, default: 0 },

@@ -42,10 +42,10 @@ router.get('/purchase-returns', authorizeRoles('staff'), inventoryController.get
 // 2. POST Methods
 router.post('/', authorizeRoles('admin'), upload.single('billImage'), inventoryController.addMedicine);
 router.post('/kachi', authorizeRoles('admin'), upload.single('billImage'), inventoryController.addKachiEntry);
-router.post('/purchase-bills', authorizeRoles('admin'), upload.single('billImage'), inventoryController.createPurchaseBill);
-router.put('/purchase-bills/:id', authorizeRoles('admin'), upload.single('billImage'), inventoryController.updatePurchaseBill);
+router.post('/purchase-bills', authorizeRoles('admin'), upload.array('billImages', 10), inventoryController.createPurchaseBill);
+router.put('/purchase-bills/:id', authorizeRoles('admin'), upload.array('billImages', 10), inventoryController.updatePurchaseBill);
 router.post('/purchase-bills/:id/pay', authorizeRoles('admin'), inventoryController.recordSupplierPayment);
-router.post('/scan-bill', authorizeRoles('admin', 'staff'), upload.single('billImage'), inventoryController.scanPurchaseBill);
+router.post('/scan-bill', authorizeRoles('admin', 'staff'), upload.array('billImages', 10), inventoryController.scanPurchaseBill);
 router.post('/purchase-returns', authorizeRoles('staff'), inventoryController.createPurchaseReturn);
 router.post('/dose', inventoryController.sellLooseMedicine);
 router.post('/dose/quick', inventoryController.addQuickEntry);

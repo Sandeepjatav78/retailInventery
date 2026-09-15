@@ -623,7 +623,7 @@ const createPurchaseBill = async (req, res) => {
     if (duplicate) return res.status(409).json({ message: 'This supplier invoice is already saved' });
 
     const number = (value, fallback = 0) => value === '' || value === null || value === undefined ? fallback : Number(value);
-    const validItems = items.map((item, index) => {
+    const preItems = items.map((item, index) => {
       const productName = String(item.productName || '').trim();
       const batchNumber = String(item.batchNumber || '').trim();
       const expiryDate = item.expiryDate;
@@ -641,22 +641,28 @@ const createPurchaseBill = async (req, res) => {
       const gross = quantity * rate;
       const discountAmount = gross * (discount / 100);
       const taxableAmount = gross - discountAmount;
-      const gstAmount = taxableAmount * (gst / 100);
-      const computedAmount = taxableAmount + gstAmount;
-      const manualAmount = Number(item.amount || 0);
-      const lineAmount = manualAmount > 0 ? manualAmount : Number(computedAmount.toFixed(2));
-      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, amount: Number(lineAmount.toFixed(2)), taxableAmount, discountAmount, gstAmount, _manualAmount: manualAmount > 0 };
+      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, gross, discountAmount, taxableAmount };
     });
 
-    let subtotal, discountTotal, gstTotal, roundOff, grandTotal;
-    subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
-    discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
+    const subtotal = preItems.reduce((sum, item) => sum + item.gross, 0);
+    const discountTotal = preItems.reduce((sum, item) => sum + item.discountAmount, 0);
+    const taxableTotal = preItems.reduce((sum, item) => sum + item.taxableAmount, 0);
+    // Extra bill discount is deducted (proportionally per item) from the taxable
+    // amount BEFORE GST is computed, same as the item-level discount already is.
+    const additionalDiscount = Math.max(0, Math.min(number(req.body.additionalDiscount), taxableTotal));
+    const validItems = preItems.map(({ gross, taxableAmount, discountAmount, ...item }) => {
+      const share = taxableTotal > 0 ? taxableAmount / taxableTotal : 0;
+      const taxableAfterExtraDiscount = taxableAmount - additionalDiscount * share;
+      const gstAmount = taxableAfterExtraDiscount * (item.gst / 100);
+      const lineAmount = Number((taxableAmount + gstAmount).toFixed(2));
+      return { ...item, amount: lineAmount, taxableAmount, discountAmount, gstAmount };
+    });
+
+    let gstTotal, roundOff, grandTotal;
     gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
-    const preRoundTotal = subtotal + gstTotal;
-    const additionalDiscount = Math.max(0, Math.min(number(req.body.additionalDiscount), preRoundTotal));
-    const afterAdditionalDiscount = preRoundTotal - additionalDiscount;
-    roundOff = Number((Math.round(afterAdditionalDiscount) - afterAdditionalDiscount).toFixed(2));
-    grandTotal = Number((afterAdditionalDiscount + roundOff).toFixed(2));
+    const preRoundTotal = subtotal - discountTotal - additionalDiscount + gstTotal;
+    roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
+    grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
 
     let rawPaymentStatus = String(req.body.paymentStatus || 'Credit').trim();
     let amountPaid = Number(req.body.amountPaid || 0);
@@ -682,10 +688,13 @@ const createPurchaseBill = async (req, res) => {
       });
     }
 
+    const billImagePaths = Array.isArray(req.files) ? req.files.map(f => f.path) : [];
+    const primaryBillImage = billImagePaths[0] || null;
+
     for (const item of validItems) {
       const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
       const stockAdded = item.quantity + item.freeQuantity;
-      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: req.file?.path || null };
+      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: primaryBillImage };
       if (existing) {
         existing.quantity = Number(existing.quantity || 0) + stockAdded;
         Object.assign(existing, medicineData);
@@ -703,8 +712,9 @@ const createPurchaseBill = async (req, res) => {
       billType: String(req.body.billType || 'Credit'),
       paymentMode: String(req.body.paymentMode || 'Credit'),
       notes: String(req.body.notes || '').trim(),
-      billImage: req.file?.path || null,
-      items: validItems.map(({ taxableAmount, discountAmount, gstAmount, _manualAmount, ...item }) => item),
+      billImage: primaryBillImage,
+      billImages: billImagePaths,
+      items: validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item),
       subtotal: Number(subtotal.toFixed(2)),
       discountTotal: Number(discountTotal.toFixed(2)),
       additionalDiscount: Number(additionalDiscount.toFixed(2)),
@@ -746,7 +756,7 @@ const updatePurchaseBill = async (req, res) => {
     if (duplicate) return res.status(409).json({ message: 'Is supplier ki ye invoice already kisi aur bill me save hai' });
 
     const number = (value, fallback = 0) => value === '' || value === null || value === undefined ? fallback : Number(value);
-    const validItems = items.map((item, index) => {
+    const preItems = items.map((item, index) => {
       const productName = String(item.productName || '').trim();
       const batchNumber = String(item.batchNumber || '').trim();
       const expiryDate = item.expiryDate;
@@ -764,22 +774,28 @@ const updatePurchaseBill = async (req, res) => {
       const gross = quantity * rate;
       const discountAmount = gross * (discount / 100);
       const taxableAmount = gross - discountAmount;
-      const gstAmount = taxableAmount * (gst / 100);
-      const computedAmount = taxableAmount + gstAmount;
-      const manualAmount = Number(item.amount || 0);
-      const lineAmount = manualAmount > 0 ? manualAmount : Number(computedAmount.toFixed(2));
-      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, amount: Number(lineAmount.toFixed(2)), taxableAmount, discountAmount, gstAmount, _manualAmount: manualAmount > 0 };
+      return { productName, packing: String(item.packing || '').trim(), batchNumber, manufacturer: String(item.manufacturer || '').trim(), hsnCode: String(item.hsnCode || '').trim(), expiryDate, quantity, freeQuantity, mrp, rate, netRate, sellingPrice, discount, gst, gross, discountAmount, taxableAmount };
     });
 
-    let subtotal, discountTotal, gstTotal, roundOff, grandTotal;
-    subtotal = validItems.reduce((sum, item) => sum + item.taxableAmount, 0);
-    discountTotal = validItems.reduce((sum, item) => sum + item.discountAmount, 0);
+    const subtotal = preItems.reduce((sum, item) => sum + item.gross, 0);
+    const discountTotal = preItems.reduce((sum, item) => sum + item.discountAmount, 0);
+    const taxableTotal = preItems.reduce((sum, item) => sum + item.taxableAmount, 0);
+    // Extra bill discount is deducted (proportionally per item) from the taxable
+    // amount BEFORE GST is computed, same as the item-level discount already is.
+    const additionalDiscount = Math.max(0, Math.min(number(req.body.additionalDiscount), taxableTotal));
+    const validItems = preItems.map(({ gross, taxableAmount, discountAmount, ...item }) => {
+      const share = taxableTotal > 0 ? taxableAmount / taxableTotal : 0;
+      const taxableAfterExtraDiscount = taxableAmount - additionalDiscount * share;
+      const gstAmount = taxableAfterExtraDiscount * (item.gst / 100);
+      const lineAmount = Number((taxableAmount + gstAmount).toFixed(2));
+      return { ...item, amount: lineAmount, taxableAmount, discountAmount, gstAmount };
+    });
+
+    let gstTotal, roundOff, grandTotal;
     gstTotal = validItems.reduce((sum, item) => sum + item.gstAmount, 0);
-    const preRoundTotal = subtotal + gstTotal;
-    const additionalDiscount = Math.max(0, Math.min(number(req.body.additionalDiscount), preRoundTotal));
-    const afterAdditionalDiscount = preRoundTotal - additionalDiscount;
-    roundOff = Number((Math.round(afterAdditionalDiscount) - afterAdditionalDiscount).toFixed(2));
-    grandTotal = Number((afterAdditionalDiscount + roundOff).toFixed(2));
+    const preRoundTotal = subtotal - discountTotal - additionalDiscount + gstTotal;
+    roundOff = Number((Math.round(preRoundTotal) - preRoundTotal).toFixed(2));
+    grandTotal = Number((preRoundTotal + roundOff).toFixed(2));
 
     // Revert OLD stock first (so edited/deleted lines don't leave phantom stock)
     for (const oldItem of existingBill.items || []) {
@@ -791,11 +807,15 @@ const updatePurchaseBill = async (req, res) => {
       else await med.save();
     }
 
+    const newBillImagePaths = Array.isArray(req.files) ? req.files.map(f => f.path) : [];
+    const updatedBillImages = newBillImagePaths.length > 0 ? newBillImagePaths : (existingBill.billImages && existingBill.billImages.length > 0 ? existingBill.billImages : (existingBill.billImage ? [existingBill.billImage] : []));
+    const updatedPrimaryBillImage = updatedBillImages[0] || null;
+
     // Apply NEW stock
     for (const item of validItems) {
       const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
       const stockAdded = item.quantity + item.freeQuantity;
-      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: req.file?.path || existingBill.billImage || null };
+      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: updatedPrimaryBillImage };
       if (existing) {
         existing.quantity = Number(existing.quantity || 0) + stockAdded;
         Object.assign(existing, medicineData);
@@ -819,8 +839,9 @@ const updatePurchaseBill = async (req, res) => {
     existingBill.billType = String(req.body.billType || 'Credit');
     existingBill.paymentMode = String(req.body.paymentMode || 'Credit');
     existingBill.notes = String(req.body.notes || '').trim();
-    existingBill.billImage = req.file?.path || existingBill.billImage || null;
-    existingBill.items = validItems.map(({ taxableAmount, discountAmount, gstAmount, _manualAmount, ...item }) => item);
+    existingBill.billImage = updatedPrimaryBillImage;
+    existingBill.billImages = updatedBillImages;
+    existingBill.items = validItems.map(({ taxableAmount, discountAmount, gstAmount, ...item }) => item);
     existingBill.subtotal = Number(subtotal.toFixed(2));
     existingBill.discountTotal = Number(discountTotal.toFixed(2));
     existingBill.additionalDiscount = Number(additionalDiscount.toFixed(2));
@@ -980,35 +1001,46 @@ const scanPurchaseBill = async (req, res) => {
       return res.status(500).json({ message: 'GEMINI_API_KEY is not configured in server environment' });
     }
 
-    let mimeType = 'image/jpeg';
-    let base64Data = '';
-
-    const bodyBase64 = req.body.imageBase64 || req.body.base64 || req.body.image;
-    if (bodyBase64) {
-      base64Data = bodyBase64.replace(/^data:image\/\w+;base64,/, '');
-      if (req.body.mimeType) mimeType = req.body.mimeType;
-    } else if (req.file) {
-      mimeType = req.file.mimetype || 'image/jpeg';
-      if (req.file.buffer) {
-        base64Data = req.file.buffer.toString('base64');
-      } else if (req.file.path && req.file.path.startsWith('http')) {
-        const imgRes = await fetch(req.file.path);
+    const readFileAsBase64 = async (file) => {
+      let mimeType = file.mimetype || 'image/jpeg';
+      let data = '';
+      if (file.buffer) {
+        data = file.buffer.toString('base64');
+      } else if (file.path && file.path.startsWith('http')) {
+        const imgRes = await fetch(file.path);
         const arrayBuf = await imgRes.arrayBuffer();
-        base64Data = Buffer.from(arrayBuf).toString('base64');
+        data = Buffer.from(arrayBuf).toString('base64');
         const contentType = imgRes.headers.get('content-type');
         if (contentType) mimeType = contentType;
-      } else if (req.file.path) {
+      } else if (file.path) {
         const fs = require('fs');
-        base64Data = fs.readFileSync(req.file.path).toString('base64');
+        data = fs.readFileSync(file.path).toString('base64');
       }
+      return { mimeType, data };
+    };
+
+    let pages = [];
+    const bodyBase64 = req.body.imageBase64 || req.body.base64 || req.body.image;
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      pages = await Promise.all(req.files.map(readFileAsBase64));
+    } else if (bodyBase64) {
+      pages = [{
+        mimeType: req.body.mimeType || 'image/jpeg',
+        data: bodyBase64.replace(/^data:image\/\w+;base64,/, '')
+      }];
+    } else if (req.file) {
+      pages = [await readFileAsBase64(req.file)];
     }
 
-    if (!base64Data) {
+    if (pages.length === 0) {
       return res.status(400).json({ message: 'Bill image (file or base64) is required for AI scanning' });
     }
 
     const prompt = `You are an expert OCR parser for Indian pharmacy purchase bills and GST tax invoices.
-Analyze this invoice image and extract all details into a strict JSON object with this format:
+${pages.length > 1
+  ? `You have been given ${pages.length} images which are MULTIPLE PAGES / PHOTOS of the SAME single invoice (e.g. a long bill photographed in parts, or a multi-page GST invoice). Treat them as one continuous document: merge every item row from every page into ONE combined "items" array (preserve the order pages were given in), and do not duplicate a row that appears on two overlapping photos. Header fields (supplier, invoice number, invoice date, GSTIN, additionalDiscount, etc.) usually appear once — take them from whichever page shows them (commonly the first page for header info, and the last page for the totals/discount section).`
+  : ''}
+Analyze this invoice image${pages.length > 1 ? 's' : ''} and extract all details into a strict JSON object with this format:
 
 {
   "supplierName": "Name of supplier or vendor issuing the bill",
@@ -1079,7 +1111,7 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
       {
         role: 'user',
         parts: [
-          { inlineData: { mimeType, data: base64Data } },
+          ...pages.map(page => ({ inlineData: { mimeType: page.mimeType, data: page.data } })),
           { text: prompt }
         ]
       }

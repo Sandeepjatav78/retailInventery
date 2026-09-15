@@ -70,7 +70,7 @@ const MedicineNameCell = ({ value, onChange, onPick, inputId, invalid }) => {
 };
 
 const PurchaseBillEntry = () => {
-  const [bill, setBill] = useState({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFile: null });
+  const [bill, setBill] = useState({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
   const [items, setItems] = useState([emptyItem()]);
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -88,12 +88,25 @@ const PurchaseBillEntry = () => {
     api.get('/medicines/suppliers').then(res => setSuppliers(res.data || [])).catch(() => {});
   }, []);
 
-  const handleScanBill = async (file) => {
-    if (!file) return;
+  const addBillPages = (fileListRaw, autoScan = true) => {
+    const newFiles = Array.from(fileListRaw || []);
+    if (newFiles.length === 0) return;
+    const combined = [...bill.billFiles, ...newFiles];
+    setBill(prev => ({ ...prev, billFiles: combined }));
+    if (autoScan) handleScanBill(combined);
+  };
+
+  const removeBillPage = (index) => {
+    setBill(prev => ({ ...prev, billFiles: prev.billFiles.filter((_, i) => i !== index) }));
+  };
+
+  const handleScanBill = async (files) => {
+    const fileList = Array.isArray(files) ? files : (files ? [files] : []);
+    if (fileList.length === 0) return;
     setScanning(true);
     try {
       const formData = new FormData();
-      formData.append('billImage', file);
+      fileList.forEach(file => formData.append('billImages', file));
       const res = await api.post('/medicines/scan-bill', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
@@ -109,7 +122,7 @@ const PurchaseBillEntry = () => {
           paymentMode: extracted.paymentMode || prev.paymentMode,
           notes: extracted.notes || prev.notes,
           additionalDiscount: extracted.additionalDiscount != null && Number(extracted.additionalDiscount) > 0 ? String(extracted.additionalDiscount) : prev.additionalDiscount,
-          billFile: file
+          billFiles: fileList
         }));
 
         if (Array.isArray(extracted.items) && extracted.items.length > 0) {
@@ -150,21 +163,35 @@ const PurchaseBillEntry = () => {
     }
   };
 
-  const totals = useMemo(() => items.reduce((result, item) => {
-    const gross = Number(item.quantity || 0) * Number(item.rate || 0);
-    const discount = gross * Number(item.discount || 0) / 100;
-    const taxable = gross - discount;
-    const gst = taxable * Number(item.gst || 0) / 100;
-    result.subtotal += taxable;
-    result.discount += discount;
-    result.gst += gst;
-    return result;
-  }, { subtotal: 0, discount: 0, gst: 0 }), [items]);
-  const preRoundTotal = totals.subtotal + totals.gst;
-  const additionalDiscount = Math.max(0, Math.min(Number(bill.additionalDiscount || 0), preRoundTotal));
-  const afterAdditionalDiscount = preRoundTotal - additionalDiscount;
-  const roundOff = Math.round(afterAdditionalDiscount) - afterAdditionalDiscount;
-  const grandTotal = afterAdditionalDiscount + roundOff;
+  const totals = useMemo(() => {
+    const rows = items.map(item => {
+      const gross = Number(item.quantity || 0) * Number(item.rate || 0);
+      const discount = gross * Number(item.discount || 0) / 100;
+      const taxable = gross - discount;
+      return { taxable, gstRate: Number(item.gst || 0) };
+    });
+    const subtotal = items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.rate || 0), 0);
+    const discountTotal = items.reduce((sum, item) => {
+      const gross = Number(item.quantity || 0) * Number(item.rate || 0);
+      return sum + gross * Number(item.discount || 0) / 100;
+    }, 0);
+    const taxableTotal = rows.reduce((sum, row) => sum + row.taxable, 0);
+    // Extra bill discount is deducted from each item's taxable amount (proportionally)
+    // BEFORE GST is calculated, same as the item-level discount already is.
+    const extraDiscount = Math.max(0, Math.min(Number(bill.additionalDiscount || 0), taxableTotal));
+    const gstTotal = taxableTotal > 0
+      ? rows.reduce((sum, row) => {
+          const share = row.taxable / taxableTotal;
+          const taxableAfterExtraDiscount = row.taxable - extraDiscount * share;
+          return sum + taxableAfterExtraDiscount * row.gstRate / 100;
+        }, 0)
+      : 0;
+    return { subtotal, discount: discountTotal, gst: gstTotal, additionalDiscount: extraDiscount };
+  }, [items, bill.additionalDiscount]);
+  const additionalDiscount = totals.additionalDiscount;
+  const preRoundTotal = totals.subtotal - totals.discount - additionalDiscount + totals.gst;
+  const roundOff = Math.round(preRoundTotal) - preRoundTotal;
+  const grandTotal = preRoundTotal + roundOff;
 
   const setItem = (index, field, value) => {
     clearError(`row${index}.${field}`);
@@ -174,10 +201,7 @@ const PurchaseBillEntry = () => {
     }));
   };
 
-  const lineTotal = (item) => {
-    const taxable = Number(item.quantity || 0) * Number(item.rate || 0) * (1 - Number(item.discount || 0) / 100);
-    return taxable + (taxable * Number(item.gst || 0) / 100);
-  };
+  const priceAmount = (item) => Number(item.quantity || 0) * Number(item.rate || 0);
 
   const focusError = (key) => {
     const el = document.getElementById(`field-${key}`);
@@ -216,16 +240,14 @@ const PurchaseBillEntry = () => {
     setSaving(true);
     try {
       const data = new FormData();
-      Object.entries(bill).forEach(([key, value]) => { if (key !== 'billFile') data.append(key, value); });
+      Object.entries(bill).forEach(([key, value]) => { if (key !== 'billFiles') data.append(key, value); });
       data.append('items', JSON.stringify(items));
-      if (bill.billFile) data.append('billImage', bill.billFile);
+      bill.billFiles.forEach(file => data.append('billImages', file));
       await api.post('/medicines/purchase-bills', data, { headers: { 'Content-Type': 'multipart/form-data' } });
       alert('Purchase bill save ho gaya aur medicines inventory mein add ho gayi.');
       setErrors({});
-      setBill({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFile: null });
+      setBill({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
       setItems([emptyItem()]);
-      const input = document.getElementById('purchase-bill-file');
-      if (input) input.value = '';
     } catch (error) {
       alert(error.response?.data?.message || 'Purchase bill save nahi ho saka.');
     } finally { setSaving(false); }
@@ -244,36 +266,69 @@ const PurchaseBillEntry = () => {
       </div>
 
       {/* --- AI BILL AUTO-SCANNER BANNER --- */}
-      <div className="bg-gradient-to-r from-purple-700 to-indigo-800 p-4 rounded-xl text-white shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
-        <div>
-          <h2 className="font-extrabold text-lg flex items-center gap-2">
-            📸 AI Purchase Bill Auto-Scanner
-          </h2>
-          <p className="text-xs text-purple-100 mt-0.5">
-            Bill ki photo snap karein ya file upload karein — AI automatically supplier, invoice no. aur saare medicine items fill kar dega!
-          </p>
+      <div className="bg-gradient-to-r from-purple-700 to-indigo-800 p-4 rounded-xl text-white shadow-sm">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+          <div>
+            <h2 className="font-extrabold text-lg flex items-center gap-2">
+              📸 AI Purchase Bill Auto-Scanner
+            </h2>
+            <p className="text-xs text-purple-100 mt-0.5">
+              Bill multiple pages ki ho to sab photos ek ek karke add karein — AI sabko combine karke supplier, invoice no. aur saare medicine items ek saath fill kar dega!
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <label className={`cursor-pointer px-4 py-2.5 rounded-lg font-bold text-sm shadow transition-all flex items-center gap-2 ${scanning ? 'bg-purple-300 text-purple-900 cursor-not-allowed' : 'bg-white text-purple-800 hover:bg-purple-50'}`}>
+              {scanning ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-purple-800 border-t-transparent rounded-full animate-spin"></span>
+                  Scanning...
+                </>
+              ) : (
+                <>📷 {bill.billFiles.length > 0 ? 'Add Another Page' : 'Take Photo / Scan Bill'}</>
+              )}
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                capture="environment"
+                disabled={scanning}
+                onChange={(e) => { addBillPages(e.target.files, true); e.target.value = ''; }}
+                className="hidden"
+              />
+            </label>
+            <label className={`cursor-pointer px-4 py-2.5 rounded-lg font-bold text-sm shadow transition-all flex items-center gap-2 border border-white/40 ${scanning ? 'bg-purple-300 text-purple-900 cursor-not-allowed' : 'bg-purple-800/40 text-white hover:bg-purple-800/60'}`}>
+              📁 Upload Files
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                multiple
+                disabled={scanning}
+                onChange={(e) => { addBillPages(e.target.files, true); e.target.value = ''; }}
+                className="hidden"
+              />
+            </label>
+          </div>
         </div>
-        <label className={`cursor-pointer px-5 py-2.5 rounded-lg font-bold text-sm shadow transition-all flex items-center gap-2 ${scanning ? 'bg-purple-300 text-purple-900 cursor-not-allowed' : 'bg-white text-purple-800 hover:bg-purple-50'}`}>
-          {scanning ? (
-            <>
-              <span className="w-4 h-4 border-2 border-purple-800 border-t-transparent rounded-full animate-spin"></span>
-              Scanning Bill with AI...
-            </>
-          ) : (
-            <>📷 Take Photo / Scan Bill Image</>
-          )}
-          <input
-            type="file"
-            accept="image/*,.pdf"
-            capture="environment"
-            disabled={scanning}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) handleScanBill(file);
-            }}
-            className="hidden"
-          />
-        </label>
+
+        {bill.billFiles.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2 border-t border-white/20 pt-3">
+            {bill.billFiles.map((file, idx) => (
+              <div key={idx} className="relative w-16 h-16 rounded-md overflow-hidden border-2 border-white/60 bg-purple-900/40 shrink-0">
+                {file.type === 'application/pdf' ? (
+                  <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-white text-center px-1">PDF pg {idx + 1}</div>
+                ) : (
+                  <img src={URL.createObjectURL(file)} alt={`Page ${idx + 1}`} className="w-full h-full object-cover" />
+                )}
+                <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-[9px] text-center text-white font-bold">Pg {idx + 1}</span>
+                <button
+                  type="button"
+                  onClick={() => removeBillPage(idx)}
+                  className="absolute top-0 right-0 bg-red-600 text-white w-4 h-4 flex items-center justify-center text-[10px] font-bold rounded-bl"
+                  title="Remove this page"
+                >✕</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
@@ -287,8 +342,13 @@ const PurchaseBillEntry = () => {
           <div><label className={labelClass}>Invoice Date *</label><input id="field-invoiceDate" required type="date" value={bill.invoiceDate} onChange={e => { clearError('invoiceDate'); setBill({ ...bill, invoiceDate: e.target.value }); }} className={fieldClass('invoiceDate')} /></div>
           <div><label className={labelClass}>Bill Type</label><select value={bill.billType} onChange={e => setBill({ ...bill, billType: e.target.value })} className={inputClass}><option>Credit</option><option>Cash</option><option>GST Invoice</option></select></div>
           <div><label className={labelClass}>Payment Mode</label><select value={bill.paymentMode} onChange={e => setBill({ ...bill, paymentMode: e.target.value })} className={inputClass}><option>Credit</option><option>Cash</option><option>UPI</option><option>Bank Transfer</option></select></div>
-          <div className="lg:col-span-2"><label className={labelClass}>Bill Photo / PDF</label><input id="purchase-bill-file" type="file" accept="image/*,.pdf" onChange={e => setBill({ ...bill, billFile: e.target.files?.[0] || null })} className="block w-full rounded-md border border-slate-300 p-1.5 text-sm file:mr-3 file:rounded file:border-0 file:bg-teal-50 file:px-3 file:py-1.5 file:font-semibold file:text-teal-700" /></div>
-          
+          <div className="lg:col-span-2 flex items-end">
+            <p className="text-xs text-slate-500">
+              Bill ki photos upar "AI Purchase Bill Auto-Scanner" mein add karein
+              {bill.billFiles.length > 0 ? ` — ${bill.billFiles.length} page${bill.billFiles.length > 1 ? 's' : ''} attached.` : '.'}
+            </p>
+          </div>
+
           {/* --- PAYMENT STATUS & LEDGER SECTION --- */}
           <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4 sm:col-span-2 lg:col-span-4 mt-1">
             <h3 className="text-xs font-extrabold text-teal-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
@@ -352,7 +412,7 @@ const PurchaseBillEntry = () => {
 
       <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-200 p-4 md:px-5"><div><h2 className="font-bold text-slate-800">Medicines</h2><p className="text-xs text-slate-500">Free quantity bhi inventory stock mein add hogi.</p></div><button type="button" onClick={() => setItems([...items, emptyItem()])} className="rounded-lg bg-teal-600 px-4 py-2 text-sm font-bold text-white hover:bg-teal-700">+ Add Medicine</button></div>
-        <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{['Medicine Name *', 'Packing', 'Batch *', 'Mfr.', 'HSN', 'Expiry *', 'Qty *', 'Free', 'MRP *', 'Rate *', 'Net Rate', 'Sale Price', 'Disc %', 'GST %', 'Amount', ''].map(title => <th key={title} className="whitespace-nowrap px-2 py-3 font-bold">{title}</th>)}</tr></thead><tbody>
+        <div className="overflow-x-auto"><table className="min-w-[1450px] w-full text-sm"><thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500"><tr>{['Medicine Name *', 'Packing', 'Batch *', 'Mfr.', 'HSN', 'Expiry *', 'Qty *', 'Free', 'MRP *', 'Rate *', 'Net Rate', 'Sale Price', 'Disc %', 'GST %', 'Price', ''].map(title => <th key={title} className="whitespace-nowrap px-2 py-3 font-bold">{title}</th>)}</tr></thead><tbody>
           {items.map((item, index) => <tr key={index} className="border-t border-slate-100 align-top">
             <td className="p-2"><MedicineNameCell
               inputId={`field-row${index}-productName`}
@@ -379,15 +439,15 @@ const PurchaseBillEntry = () => {
             <td className="p-2"><input value={item.hsnCode} onChange={e => setItem(index, 'hsnCode', e.target.value)} placeholder="3004" className={inputClass} /></td>
             <td className="p-2"><input id={`field-row${index}-expiryDate`} type="date" value={item.expiryDate} onChange={e => setItem(index, 'expiryDate', e.target.value)} className={fieldClass(`row${index}.expiryDate`)} /></td>
             {['quantity', 'freeQuantity', 'mrp', 'rate', 'netRate', 'sellingPrice', 'discount', 'gst'].map(field => <td key={field} className="p-2"><input id={`field-row${index}-${field}`} type="number" min="0" step="0.01" value={item[field]} onChange={e => setItem(index, field, e.target.value)} className={fieldClass(`row${index}.${field}`)} /></td>)}
-            <td className="whitespace-nowrap p-2 pt-3 font-bold text-slate-700">{money(lineTotal(item))}</td>
+            <td className="whitespace-nowrap p-2 pt-3 font-bold text-slate-700">{money(priceAmount(item))}</td>
             <td className="p-2"><button type="button" disabled={items.length === 1} onClick={() => setItems(items.filter((_, itemIndex) => itemIndex !== index))} className="rounded p-2 text-red-500 hover:bg-red-50 disabled:cursor-not-allowed disabled:text-slate-300" title="Remove medicine">✕</button></td>
           </tr>)}
         </tbody></table></div>
       </section>
 
-      <section className="ml-auto max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="space-y-2 text-sm text-slate-600"><div className="flex justify-between"><span>Taxable subtotal</span><b>{money(totals.subtotal)}</b></div><div className="flex justify-between"><span>Item-level discount</span><b>- {money(totals.discount)}</b></div><div className="flex justify-between"><span>Total GST</span><b>{money(totals.gst)}</b></div>
+      <section className="ml-auto max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><div className="space-y-2 text-sm text-slate-600"><div className="flex justify-between"><span>Subtotal</span><b>{money(totals.subtotal)}</b></div><div className="flex justify-between"><span>Item-level discount</span><b>- {money(totals.discount)}</b></div>
         <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2">
-          <div><span className="block font-semibold text-amber-800">Extra Bill Discount (₹)</span><span className="block text-xs text-amber-600">Bill ke niche wala lump-sum discount — AI se auto-fill ho sakta hai, ya yahan khud dalein.</span></div>
+          <div><span className="block font-semibold text-amber-800">Extra Bill Discount (₹)</span><span className="block text-xs text-amber-600">Bill ke niche wala lump-sum discount — GST se pehle minus hota hai. AI se auto-fill ho sakta hai, ya yahan khud dalein.</span></div>
           <input
             type="number"
             min="0"
@@ -397,6 +457,7 @@ const PurchaseBillEntry = () => {
             className="w-28 rounded-md border border-amber-300 bg-white px-2 py-1.5 text-right text-sm font-bold text-amber-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
           />
         </div>
+        <div className="flex justify-between"><span>Total GST</span><b>{money(totals.gst)}</b></div>
         <div className="flex justify-between"><span>Round off</span><b>{money(roundOff)}</b></div><div className="mt-3 flex justify-between border-t border-slate-200 pt-3 text-lg font-extrabold text-slate-800"><span>Grand Total</span><span>{money(grandTotal)}</span></div></div><button disabled={saving} type="submit" className="mt-5 w-full rounded-lg bg-teal-600 py-3 font-bold text-white hover:bg-teal-700 disabled:bg-teal-300">{saving ? 'Saving bill...' : 'Save Bill & Add Stock'}</button></section>
     </form>
   </div>;
