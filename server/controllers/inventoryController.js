@@ -897,6 +897,32 @@ const getPurchaseBills = async (req, res) => {
   }
 };
 
+// ADMIN: Delete a purchase bill and revert the stock it had added.
+const deletePurchaseBill = async (req, res) => {
+  try {
+    const billId = req.params.id;
+    const bill = await PurchaseBill.findById(billId);
+    if (!bill) return res.status(404).json({ message: 'Purchase bill nahi mili.' });
+
+    for (const item of bill.items || []) {
+      const med = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
+      if (!med) continue;
+      const revertQty = Number(item.quantity || 0) + Number(item.freeQuantity || 0);
+      med.quantity = Math.max(0, Number(med.quantity || 0) - revertQty);
+      if (med.quantity === 0) await Medicine.deleteOne({ _id: med._id });
+      else await med.save();
+    }
+
+    await PurchaseBill.deleteOne({ _id: billId });
+
+    AuditLog.create({ action: 'DELETE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: billId, message: `Purchase invoice ${bill.invoiceNumber} deleted`, details: { supplierName: bill.supplierName, invoiceNumber: bill.invoiceNumber, grandTotal: bill.grandTotal }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (DELETE_PURCHASE_BILL):', err.message));
+    return res.json({ message: 'Purchase bill delete ho gayi aur stock adjust ho gaya.' });
+  } catch (err) {
+    console.error('[Error] deletePurchaseBill:', err.message);
+    return res.status(500).json({ message: 'Bill delete nahi ho saki.' });
+  }
+};
+
 // Clean & normalize items extracted by the AI scanner:
 // - merge pure-FREE lines into their parent item's freeQuantity
 // - merge exact duplicates (same name + batch)
@@ -1470,5 +1496,5 @@ module.exports = {
   getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
   getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
   sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
-  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment, updatePurchaseBill
+  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment, updatePurchaseBill, deletePurchaseBill
 };

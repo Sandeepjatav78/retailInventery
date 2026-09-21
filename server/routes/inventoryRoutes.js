@@ -44,6 +44,7 @@ router.post('/', authorizeRoles('admin'), upload.single('billImage'), inventoryC
 router.post('/kachi', authorizeRoles('admin'), upload.single('billImage'), inventoryController.addKachiEntry);
 router.post('/purchase-bills', authorizeRoles('admin'), upload.array('billImages', 10), inventoryController.createPurchaseBill);
 router.put('/purchase-bills/:id', authorizeRoles('admin'), upload.array('billImages', 10), inventoryController.updatePurchaseBill);
+router.delete('/purchase-bills/:id', authorizeRoles('admin'), inventoryController.deletePurchaseBill);
 router.post('/purchase-bills/:id/pay', authorizeRoles('admin'), inventoryController.recordSupplierPayment);
 router.post('/scan-bill', authorizeRoles('admin', 'staff'), upload.array('billImages', 10), inventoryController.scanPurchaseBill);
 router.post('/purchase-returns', authorizeRoles('staff'), inventoryController.createPurchaseReturn);

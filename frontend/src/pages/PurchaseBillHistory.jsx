@@ -3,6 +3,9 @@ import api from '../api/axios';
 
 const money = (val) => `₹${Number(val || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const dateFmt = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+const toInputDate = (d) => d.toISOString().slice(0, 10);
+const monthStart = () => { const d = new Date(); d.setDate(1); return toInputDate(d); };
+const today = () => toInputDate(new Date());
 
 const PurchaseBillHistory = () => {
   const [bills, setBills] = useState([]);
@@ -10,18 +13,20 @@ const PurchaseBillHistory = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('ALL');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [from, setFrom] = useState(monthStart());
+  const [to, setTo] = useState(today());
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [limit] = useState(25);
+  const [limit] = useState(200);
   const [expandedId, setExpandedId] = useState(null);
   const [imageBill, setImageBill] = useState(null);
   const [editBill, setEditBill] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [editItems, setEditItems] = useState([]);
+  const [editFiles, setEditFiles] = useState([]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [editErrors, setEditErrors] = useState({});
+  const [deletingId, setDeletingId] = useState(null);
 
   const emptyEditItem = () => ({ productName: '', packing: '', batchNumber: '', manufacturer: '', hsnCode: '', expiryDate: '', quantity: '1', freeQuantity: '0', mrp: '', rate: '', netRate: '', sellingPrice: '', discount: '0', gst: '5', amount: '' });
 
@@ -87,6 +92,7 @@ const PurchaseBillHistory = () => {
       amount: String(item.amount ?? '')
     })));
     setEditErrors({});
+    setEditFiles([]);
     setEditBill(bill);
   };
 
@@ -166,6 +172,7 @@ const PurchaseBillHistory = () => {
       const data = new FormData();
       Object.entries(editForm).forEach(([key, value]) => data.append(key, value));
       data.append('items', JSON.stringify(editItems));
+      editFiles.forEach(file => data.append('billImages', file));
       await api.put(`/medicines/purchase-bills/${editBill._id}`, data, { headers: { 'Content-Type': 'multipart/form-data' } });
       alert('✅ Purchase bill update ho gayi aur inventory stock adjust ho gaya.');
       setEditBill(null);
@@ -174,6 +181,21 @@ const PurchaseBillHistory = () => {
       alert(err.response?.data?.message || 'Bill update nahi ho saki.');
     } finally {
       setSavingEdit(false);
+    }
+  };
+
+  const handleDeleteBill = async (bill) => {
+    if (!window.confirm(`Kya aap "${bill.supplierName}" (Invoice: ${bill.invoiceNumber}) ki bill delete karna chahte hain? Iska stock bhi wapas ghat jayega. Ye action undo nahi ho sakta.`)) return;
+    setDeletingId(bill._id);
+    try {
+      await api.delete(`/medicines/purchase-bills/${bill._id}`);
+      alert('🗑️ Purchase bill delete ho gayi.');
+      if (expandedId === bill._id) setExpandedId(null);
+      fetchBills();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Bill delete nahi ho saki.');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -281,14 +303,15 @@ const PurchaseBillHistory = () => {
                 <th className="px-4 py-3 text-center">Items</th>
                 <th className="px-4 py-3 text-center">Photo</th>
                 <th className="px-4 py-3 text-center">Edit</th>
+                <th className="px-4 py-3 text-center">Delete</th>
                 <th className="px-4 py-3 text-center">Details</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
               {loading ? (
-                <tr><td colSpan="11" className="text-center py-10 text-slate-400 italic">Loading bills...</td></tr>
+                <tr><td colSpan="12" className="text-center py-10 text-slate-400 italic">Loading bills...</td></tr>
               ) : bills.length === 0 ? (
-                <tr><td colSpan="11" className="text-center py-10 text-slate-400 italic">Koi bill nahi mili. Filter change karke try karein.</td></tr>
+                <tr><td colSpan="12" className="text-center py-10 text-slate-400 italic">Koi bill nahi mili. Filter change karke try karein.</td></tr>
               ) : bills.map((bill) => {
                 const due = Number(bill.balanceDue ?? Math.max(0, (bill.grandTotal || 0) - (bill.amountPaid || 0)));
                 const expanded = expandedId === bill._id;
@@ -326,6 +349,16 @@ const PurchaseBillHistory = () => {
                       <td className="px-4 py-3 text-center">
                         <button
                           type="button"
+                          disabled={deletingId === bill._id}
+                          onClick={(e) => { e.stopPropagation(); handleDeleteBill(bill); }}
+                          className="px-2.5 py-1.5 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 text-xs font-bold transition-colors disabled:opacity-50"
+                        >
+                          {deletingId === bill._id ? '⏳...' : '🗑️ Delete'}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button
+                          type="button"
                           onClick={(e) => { e.stopPropagation(); setExpandedId(expanded ? null : bill._id); }}
                           className="px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 text-xs font-bold transition-colors"
                         >
@@ -335,7 +368,7 @@ const PurchaseBillHistory = () => {
                     </tr>
                     {expanded && (
                       <tr className="bg-slate-50/60">
-                        <td colSpan="11" className="px-4 py-4">
+                        <td colSpan="12" className="px-4 py-4">
                           <div className="grid md:grid-cols-2 gap-4 mb-3 text-xs">
                             <div className="bg-white rounded-xl border border-slate-200 p-3 grid grid-cols-2 gap-2">
                               <div><span className="text-slate-400 block font-bold uppercase text-[10px]">Bill Type</span><span className="font-bold text-slate-700">{bill.billType || '-'}</span></div>
@@ -357,6 +390,7 @@ const PurchaseBillHistory = () => {
                               <thead className="bg-slate-100 text-slate-500 uppercase tracking-wider font-extrabold text-[10px]">
                                 <tr>
                                   <th className="px-3 py-2">Medicine</th>
+                                  <th className="px-3 py-2">HSN</th>
                                   <th className="px-3 py-2">Batch</th>
                                   <th className="px-3 py-2">Expiry</th>
                                   <th className="px-3 py-2 text-right">Qty</th>
@@ -373,6 +407,7 @@ const PurchaseBillHistory = () => {
                                 {(bill.items || []).map((item, i) => (
                                   <tr key={i}>
                                     <td className="px-3 py-2 font-bold text-slate-800">{item.productName}{item.packing ? <span className="text-slate-400 font-medium"> ({item.packing})</span> : ''}</td>
+                                    <td className="px-3 py-2">{item.hsnCode || '-'}</td>
                                     <td className="px-3 py-2">{item.batchNumber || '-'}</td>
                                     <td className="px-3 py-2 whitespace-nowrap">{dateFmt(item.expiryDate)}</td>
                                     <td className="px-3 py-2 text-right font-bold">{item.quantity}</td>
@@ -469,6 +504,23 @@ const PurchaseBillHistory = () => {
                   <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Notes</label>
                   <input value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} className="w-full rounded-md border border-slate-300 px-2 py-2 text-sm outline-none focus:border-teal-500" />
                 </div>
+                <div className="sm:col-span-2 lg:col-span-4">
+                  <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-500">Bill Photo / PDF</label>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    multiple
+                    onChange={e => setEditFiles(Array.from(e.target.files || []))}
+                    className="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs outline-none focus:border-teal-500 bg-white file:mr-3 file:px-3 file:py-1.5 file:rounded-md file:border-0 file:bg-teal-50 file:text-teal-700 file:font-bold file:text-xs"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    {editFiles.length > 0
+                      ? `${editFiles.length} nayi file(s) select hui — save karne par purani photo/PDF replace ho jayegi.`
+                      : ((editBill?.billImages?.length || (editBill?.billImage ? 1 : 0)) > 0
+                        ? `Abhi ${editBill.billImages?.length || 1} file(s) lagi hain. Nayi file chunein sirf tabhi jab replace karna ho.`
+                        : 'Koi photo/PDF nahi lagi hai. Yahan se image ya PDF upload kar sakte hain.')}
+                  </p>
+                </div>
               </div>
 
               {/* ITEMS */}
@@ -477,6 +529,7 @@ const PurchaseBillHistory = () => {
                   <thead className="bg-slate-100 text-slate-500 uppercase tracking-wider font-extrabold text-[10px]">
                     <tr>
                       <th className="px-2 py-2">Medicine *</th>
+                      <th className="px-2 py-2">HSN</th>
                       <th className="px-2 py-2">Batch *</th>
                       <th className="px-2 py-2">Expiry *</th>
                       <th className="px-2 py-2 text-right">Qty *</th>
@@ -495,6 +548,7 @@ const PurchaseBillHistory = () => {
                     {editItems.map((item, index) => (
                       <tr key={index}>
                         <td className="px-2 py-1.5"><input id={`edit-field-row${index}-productName`} value={item.productName} onChange={e => setEditItem(index, 'productName', e.target.value)} placeholder="Medicine name" className={`w-full min-w-[130px] rounded border px-2 py-1.5 outline-none focus:ring-2 ${editErrCls(`row${index}.productName`, 'border-slate-300 focus:border-teal-500')}`} /></td>
+                        <td className="px-2 py-1.5"><input id={`edit-field-row${index}-hsnCode`} value={item.hsnCode} onChange={e => setEditItem(index, 'hsnCode', e.target.value)} placeholder="HSN" className="w-full min-w-[80px] rounded border border-slate-300 px-2 py-1.5 outline-none focus:ring-2 focus:border-teal-500" /></td>
                         <td className="px-2 py-1.5"><input id={`edit-field-row${index}-batchNumber`} value={item.batchNumber} onChange={e => setEditItem(index, 'batchNumber', e.target.value)} placeholder="Batch" className={`w-full min-w-[90px] rounded border px-2 py-1.5 outline-none focus:ring-2 ${editErrCls(`row${index}.batchNumber`, 'border-slate-300 focus:border-teal-500')}`} /></td>
                         <td className="px-2 py-1.5"><input id={`edit-field-row${index}-expiryDate`} type="date" value={item.expiryDate} onChange={e => setEditItem(index, 'expiryDate', e.target.value)} className={`w-full min-w-[110px] rounded border px-2 py-1.5 outline-none focus:ring-2 ${editErrCls(`row${index}.expiryDate`, 'border-slate-300 focus:border-teal-500')}`} /></td>
                         {['quantity', 'freeQuantity', 'mrp', 'rate', 'netRate', 'sellingPrice', 'discount', 'gst'].map(field => (
