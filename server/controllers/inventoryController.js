@@ -4,6 +4,7 @@ const PendingDose = require('../models/PendingDose');
 const AuditLog = require('../models/AuditLog');
 const PurchaseReturn = require('../models/PurchaseReturn');
 const PurchaseBill = require('../models/PurchaseBill');
+const cloudinary = require('cloudinary').v2;
 
 // 1. GET ALL MEDICINES
 const getMedicines = async (req, res) => {
@@ -1027,21 +1028,40 @@ const scanPurchaseBill = async (req, res) => {
       return res.status(500).json({ message: 'GEMINI_API_KEY is not configured in server environment' });
     }
 
+    // Gemini only accepts image/* or application/pdf as inlineData mimeType. Cloudinary
+    // sometimes serves a PDF URL with a generic/incorrect Content-Type header, so we trust
+    // the mimetype multer captured from the browser upload first, and only fall back to the
+    // fetched header (or the file extension) when that original mimetype isn't usable.
+    const isUsableMime = (m) => !!m && (m.startsWith('image/') || m === 'application/pdf');
+    const guessFromPath = (path) => (String(path || '').toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg');
+
     const readFileAsBase64 = async (file) => {
-      let mimeType = file.mimetype || 'image/jpeg';
+      let mimeType = isUsableMime(file.mimetype) ? file.mimetype : null;
       let data = '';
       if (file.buffer) {
         data = file.buffer.toString('base64');
       } else if (file.path && file.path.startsWith('http')) {
-        const imgRes = await fetch(file.path);
+        let imgRes = await fetch(file.path);
+        // Cloudinary blocks direct/public delivery of PDFs (and other "restricted media
+        // types") with a 401 placeholder by default. When that happens, fall back to a
+        // signed Admin API download URL (using the public_id multer-storage-cloudinary
+        // saved as file.filename), which is allowed to fetch the real bytes.
+        if (!imgRes.ok && file.filename) {
+          const format = (file.path.split('.').pop() || 'pdf').split('?')[0];
+          const downloadUrl = cloudinary.utils.private_download_url(file.filename, format, { resource_type: 'image', type: 'upload' });
+          imgRes = await fetch(downloadUrl);
+        }
         const arrayBuf = await imgRes.arrayBuffer();
         data = Buffer.from(arrayBuf).toString('base64');
-        const contentType = imgRes.headers.get('content-type');
-        if (contentType) mimeType = contentType;
+        if (!mimeType) {
+          const contentType = imgRes.headers.get('content-type');
+          mimeType = isUsableMime(contentType) ? contentType : guessFromPath(file.path);
+        }
       } else if (file.path) {
         const fs = require('fs');
         data = fs.readFileSync(file.path).toString('base64');
       }
+      if (!mimeType) mimeType = guessFromPath(file.path) || 'image/jpeg';
       return { mimeType, data };
     };
 
@@ -1197,6 +1217,9 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
     }
     if (code === 429 || code === 503 || statusText.includes('UNAVAILABLE')) {
       return res.status(503).json({ message: 'AI Bill Scanning: Google AI service is busy right now (high demand). Please wait a moment and try again.' });
+    }
+    if (code === 400 || statusText.includes('INVALID_ARGUMENT')) {
+      return res.status(400).json({ message: 'AI Scanner ye file read nahi kar paaya (corrupt ya bahut badi PDF/image ho sakti hai). Kripya dusri photo/PDF try karein ya PDF ko photo se replace karke dekhein.' });
     }
     return res.status(500).json({ message: 'AI Bill Scanning failed: ' + (err.message || 'Unknown error') });
   }

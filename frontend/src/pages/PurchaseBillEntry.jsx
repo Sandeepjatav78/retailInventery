@@ -288,18 +288,18 @@ const PurchaseBillEntry = () => {
               )}
               <input
                 type="file"
-                accept="image/*,.pdf"
-                capture="environment"
+                accept="image/*,application/pdf,.pdf"
+                multiple
                 disabled={scanning}
                 onChange={(e) => { addBillPages(e.target.files, true); e.target.value = ''; }}
                 className="hidden"
               />
             </label>
             <label className={`cursor-pointer px-4 py-2.5 rounded-lg font-bold text-sm shadow transition-all flex items-center gap-2 border border-white/40 ${scanning ? 'bg-purple-300 text-purple-900 cursor-not-allowed' : 'bg-purple-800/40 text-white hover:bg-purple-800/60'}`}>
-              📁 Upload Files
+              📁 Upload PDF / Files
               <input
                 type="file"
-                accept="image/*,.pdf"
+                accept="image/*,application/pdf,.pdf"
                 multiple
                 disabled={scanning}
                 onChange={(e) => { addBillPages(e.target.files, true); e.target.value = ''; }}
