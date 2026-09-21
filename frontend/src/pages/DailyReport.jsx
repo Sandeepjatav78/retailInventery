@@ -211,7 +211,7 @@ const DailyReport = () => {
         phone: t.customerDetails?.phone || '', 
         doctor: t.customerDetails?.doctor || 'Self', 
         mode: t.paymentMode, 
-        isDuplicate: true, 
+        isDuplicate: userRole !== 'staff',
         grandTotal: t.totalAmount, 
         doseAmount: doseAmount, 
         customDate: saleDate.toISOString().split('T')[0], 
