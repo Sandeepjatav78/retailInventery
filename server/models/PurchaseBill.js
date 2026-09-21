@@ -11,6 +11,7 @@ const PurchaseBillItemSchema = new mongoose.Schema({
   freeQuantity: { type: Number, default: 0 },
   mrp: { type: Number, required: true },
   rate: { type: Number, required: true },
+  netRate: { type: Number },
   sellingPrice: { type: Number, required: true },
   discount: { type: Number, default: 0 },
   gst: { type: Number, default: 0 },
