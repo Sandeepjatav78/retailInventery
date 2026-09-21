@@ -880,7 +880,7 @@ const getPurchaseBills = async (req, res) => {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
     const [bills, total] = await Promise.all([
-      PurchaseBill.find(filter).sort({ createdAt: -1, invoiceDate: -1 }).skip((pageNum - 1) * limitNum).limit(limitNum).lean(),
+      PurchaseBill.find(filter).sort({ invoiceDate: -1, createdAt: -1 }).skip((pageNum - 1) * limitNum).limit(limitNum).lean(),
       PurchaseBill.countDocuments(filter)
     ]);
     const summary = bills.reduce((acc, b) => {
