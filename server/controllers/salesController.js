@@ -3,6 +3,7 @@ const Medicine = require('../models/Medicine');
 const Counter = require('../models/Counter');
 const AuditLog = require('../models/AuditLog');
 const Credit = require('../models/Credit');
+const { classifyMedicinesWithAI, SCHEDULE_CATEGORIES } = require('../utils/scheduleDetector');
 
 // Invoice formatting configuration
 const INVOICE_PREFIX = 'RP-';
@@ -205,11 +206,27 @@ exports.createSale = async (req, res) => {
     // --- 🔍 STOCK & PURCHASE DATE VALIDATION ---
     const saleDate = customDate ? new Date(customDate) : new Date();
 
+    // Collected while we already look up each medicine below, so the schedule
+    // register doesn't need an extra DB pass.
+    const scheduleMap = new Map();
+    // Medicines never AI-classified before (new stock, or added pre-feature) —
+    // classified for real right here, at bill-cut time, so the register is
+    // always accurate. Once checked, a medicine is cached forever (fast path).
+    const pendingScheduleCheck = [];
+
     for (const item of sanitizedItems) {
       if (!item.medicineId) continue; // Manual items not linked to stock
 
       const med = await Medicine.findById(item.medicineId);
       if (!med) continue; // If medicine record missing, skip stock logic
+
+      if (med.scheduleAiChecked) {
+        if (med.scheduleCategory && med.scheduleCategory !== 'None') {
+          scheduleMap.set(String(item.medicineId), med.scheduleCategory);
+        }
+      } else {
+        pendingScheduleCheck.push({ medicineId: String(item.medicineId), productName: med.productName });
+      }
 
       // Check purchase date restriction: item cannot be sold before purchase date
       const purchaseDate = med.purchaseDate ? new Date(med.purchaseDate) : (med.createdAt ? new Date(med.createdAt) : null);
@@ -240,6 +257,39 @@ exports.createSale = async (req, res) => {
       }
     }
 
+    // Classify any never-checked medicine in THIS bill via Gemini right now,
+    // in one batched call, and cache the result on the Medicine record. Never
+    // blocks/fails the sale if the AI call errors — it just retries next sale.
+    if (pendingScheduleCheck.length > 0) {
+      try {
+        const uniqueNames = [...new Set(pendingScheduleCheck.map((p) => p.productName))];
+        const aiMap = await classifyMedicinesWithAI(uniqueNames);
+        const writes = pendingScheduleCheck.map((pending) => {
+          const result = aiMap.get(String(pending.productName || '').trim());
+          const category = result?.category || 'None';
+          if (category !== 'None') scheduleMap.set(pending.medicineId, category);
+          return {
+            updateOne: {
+              filter: { _id: pending.medicineId },
+              update: { $set: { scheduleCategory: category, scheduleAiChecked: true } }
+            }
+          };
+        });
+        if (writes.length) await Medicine.bulkWrite(writes);
+      } catch (scheduleErr) {
+        console.error('[Warn] Schedule AI classification failed during sale (sale continues):', scheduleErr.message);
+      }
+    }
+
+    // Tag each item with its drug schedule (snapshot) and flag the whole sale
+    // so it surfaces in the schedule ledger.
+    let hasScheduleDrug = false;
+    const scheduledItems = enrichedItems.map((item) => {
+      const category = item.medicineId ? scheduleMap.get(String(item.medicineId)) : undefined;
+      if (category) hasScheduleDrug = true;
+      return { ...item, scheduleCategory: category || 'None' };
+    });
+
     // 1. Create Sale Record
     const newSale = new Sale({
       invoiceNo: finalInvoiceNo,
@@ -248,7 +298,8 @@ exports.createSale = async (req, res) => {
         phone: customerPhone || String(customerDetails?.phone || '').trim(),
         doctor: String(customerDetails?.doctor || '').trim()
       },
-      items: enrichedItems,
+      items: scheduledItems,
+      hasScheduleDrug,
       totalAmount: safeNumber(totalAmount),
       paymentMode,
       isBillRequired: isBillRequired,
@@ -418,6 +469,55 @@ exports.getAllSales = async (req, res) => {
   }
 };
 
+// --- 3B. SCHEDULE DRUG LEDGER (G / H / H1 / X) ---
+// Every bill that contains at least one scheduled medicine.
+exports.getScheduleLedger = async (req, res) => {
+  try {
+    const { start, end, search, category } = req.query;
+    const userRole = req.user?.role || 'staff';
+    const conditions = [{ hasScheduleDrug: true }];
+
+    // Same rule as the main sales report: staff only see bills billed as staff,
+    // never admin's bills mixed in.
+    if (userRole === 'staff') {
+      conditions.push({ createdBy: 'staff' });
+    }
+
+    if (search) {
+      conditions.push({
+        $or: [
+          { invoiceNo: { $regex: search, $options: 'i' } },
+          { 'customerDetails.name': { $regex: search, $options: 'i' } },
+          { 'items.name': { $regex: search, $options: 'i' } }
+        ]
+      });
+    }
+
+    if (start && end) {
+      const startDate = new Date(start); startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(end); endDate.setHours(23, 59, 59, 999);
+      conditions.push({ date: { $gte: startDate, $lte: endDate } });
+    }
+
+    if (SCHEDULE_CATEGORIES.includes(category) && category !== 'None') {
+      conditions.push({ 'items.scheduleCategory': category });
+    }
+
+    const sales = await Sale.find({ $and: conditions }).sort({ date: -1 }).limit(2000).lean();
+
+    // Attach just the scheduled items per bill for a compact ledger view,
+    // while still returning the full sale (for printing/opening the bill).
+    const transactions = sales.map((sale) => ({
+      ...sale,
+      scheduledItems: (sale.items || []).filter((i) => i.scheduleCategory && i.scheduleCategory !== 'None')
+    }));
+
+    res.json({ success: true, transactions, total: transactions.length });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to load schedule ledger', error: err.message });
+  }
+};
+
 // --- 4. DELETE SALE & RESTORE STOCK ---
 exports.deleteSale = async (req, res) => {
     try {
@@ -471,14 +571,55 @@ exports.updateSale = async (req, res) => {
             }
         }
 
-        // 2. Deduct New Stock
+        // 2. Deduct New Stock (and re-check each item's drug schedule for the schedule ledger)
+        const updatePendingScheduleCheck = []; // items whose medicine was never AI-classified yet
+        const updatedMeds = [];
         for (const item of updatedSaleData.items) {
             if (item.medicineId) {
-                await Medicine.findByIdAndUpdate(item.medicineId, { 
-                    $inc: { quantity: -item.quantity } 
-                });
+                const med = await Medicine.findByIdAndUpdate(item.medicineId, {
+                    $inc: { quantity: -item.quantity }
+                }, { new: true });
+                updatedMeds.push({ item, med });
+                if (med && !med.scheduleAiChecked) {
+                    updatePendingScheduleCheck.push({ medicineId: String(item.medicineId), productName: med.productName });
+                }
+            } else {
+                updatedMeds.push({ item, med: null });
+                item.scheduleCategory = item.scheduleCategory || 'None';
             }
         }
+
+        // Batch-classify any never-checked medicine right now, same as on a fresh sale.
+        const updateScheduleMap = new Map();
+        if (updatePendingScheduleCheck.length > 0) {
+            try {
+                const uniqueNames = [...new Set(updatePendingScheduleCheck.map((p) => p.productName))];
+                const aiMap = await classifyMedicinesWithAI(uniqueNames);
+                const writes = updatePendingScheduleCheck.map((pending) => {
+                    const result = aiMap.get(String(pending.productName || '').trim());
+                    const category = result?.category || 'None';
+                    updateScheduleMap.set(pending.medicineId, category);
+                    return {
+                        updateOne: {
+                            filter: { _id: pending.medicineId },
+                            update: { $set: { scheduleCategory: category, scheduleAiChecked: true } }
+                        }
+                    };
+                });
+                if (writes.length) await Medicine.bulkWrite(writes);
+            } catch (scheduleErr) {
+                console.error('[Warn] Schedule AI classification failed during sale update (update continues):', scheduleErr.message);
+            }
+        }
+
+        let hasScheduleDrug = false;
+        for (const { item, med } of updatedMeds) {
+            if (!item.medicineId) continue;
+            const category = updateScheduleMap.get(String(item.medicineId)) ?? (med?.scheduleCategory && med.scheduleCategory !== 'None' ? med.scheduleCategory : 'None');
+            item.scheduleCategory = category;
+            if (category !== 'None') hasScheduleDrug = true;
+        }
+        updatedSaleData.hasScheduleDrug = hasScheduleDrug;
 
         // 3. Save Changes
         const finalSale = await Sale.findByIdAndUpdate(id, updatedSaleData, { new: true });

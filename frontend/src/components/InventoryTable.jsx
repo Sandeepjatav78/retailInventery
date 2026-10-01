@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import api from '../api/axios';
 import * as XLSX from 'xlsx';
+import { fetchScheduleCategories, SCHEDULE_BADGE_STYLES, DEFAULT_SCHEDULE_BADGE_STYLE } from '../utils/scheduleCategories';
 
-const InventoryTable = ({ meds, onDelete, userRole }) => {
+const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDetecting }) => {
   const [editId, setEditId] = useState(null);
   const [editFormData, setEditFormData] = useState({});
   const [newBillFile, setNewBillFile] = useState(null);
@@ -12,6 +13,15 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
   const [expiryFilter, setExpiryFilter] = useState('');
   const [minQtyFilter, setMinQtyFilter] = useState('');
   const [maxQtyFilter, setMaxQtyFilter] = useState('');
+  const [scheduleCategories, setScheduleCategories] = useState(['None', 'G', 'H', 'H1', 'X']);
+  const [scheduleInfo, setScheduleInfo] = useState({});
+
+  useEffect(() => {
+    fetchScheduleCategories(api).then(({ categories, info }) => {
+      setScheduleCategories(categories);
+      setScheduleInfo(info);
+    });
+  }, []);
 
   const hasCompleteInventoryData = (med) => {
       const requiredFields = [
@@ -206,6 +216,12 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
 
   const isFilterActive = searchTerm || stockFilter !== 'all' || expiryFilter || minQtyFilter || maxQtyFilter;
 
+  const scheduleBadge = (cat) => {
+    if (!cat || cat === 'None') return <span className="text-gray-300 text-xs">-</span>;
+    const style = SCHEDULE_BADGE_STYLES[cat] || DEFAULT_SCHEDULE_BADGE_STYLE;
+    return <span title={scheduleInfo[cat] || ''} className={`${style} border px-2 py-0.5 rounded text-[10px] font-bold`}>{cat}</span>;
+  };
+
   // Reusable Classes
   const thClass = "px-3 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider bg-gray-50 border-b border-gray-200";
   const tdClass = "px-3 py-4 whitespace-nowrap text-sm text-gray-700 border-b border-gray-100";
@@ -237,6 +253,16 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
             </div>
             
             <div className="flex gap-3">
+                {userRole === 'admin' && onAutoDetectSchedule && (
+                    <button
+                        onClick={onAutoDetectSchedule}
+                        disabled={autoDetecting}
+                        className="bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2 disabled:opacity-60"
+                        title="Use Google Gemini AI to classify every untagged medicine's full A-Z drug schedule and tag it (review after)"
+                    >
+                        {autoDetecting ? '⏳ AI Scanning...' : '💊 AI Schedule Check'}
+                    </button>
+                )}
                 <button onClick={handleExport} className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors flex items-center gap-2">
                     📊 Export Excel
                 </button>
@@ -311,6 +337,7 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
                     <th className={`${thClass} text-green-700`}>S.Price</th>
                     <th className={`${thClass} text-indigo-700`}>D.Price</th>
                     <th className={thClass}>GST%</th>
+                    <th className={`${thClass} text-center`} title="Drug Schedule (H1/H)">Sch.</th>
                     {showCP && <th className={`${thClass} text-[#59677d]`}>CP</th>}
                     <th className={thClass}>Bill Upload</th>
                     <th className={`${thClass} text-center`}>Action</th>
@@ -347,6 +374,13 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
                             <option value="18">18%</option>
                             <option value="28">28%</option>
                             <option value="40">40%</option>
+                        </select>
+                    </td>
+                    <td className={tdClass}>
+                        <select name="scheduleCategory" title="Drug Schedule (A-Z)" value={editFormData.scheduleCategory || 'None'} onChange={handleEditFormChange} className={`${inputEditClass} w-20`}>
+                            {scheduleCategories.map((cat) => (
+                                <option key={cat} value={cat} title={scheduleInfo[cat] || ''}>{cat}</option>
+                            ))}
                         </select>
                     </td>
                     {showCP && (
@@ -388,6 +422,7 @@ const InventoryTable = ({ meds, onDelete, userRole }) => {
                     <td className={tdClass}>
                         <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs font-semibold border border-indigo-100">{m.gst}%</span>
                     </td>
+                    <td className={`${tdClass} text-center`}>{scheduleBadge(m.scheduleCategory)}</td>
                     {showCP && <td className={`${tdClass} font-bold text-[#59677d]`}>₹{m.costPrice}</td>}
                     <td className={tdClass}>
                         {m.billImage ? (

@@ -16,6 +16,7 @@ router.post('/', salesController.createSale);
 
 // 3. Get Sales Report & Manage Bills
 router.get('/filter', salesController.getAllSales);
+router.get('/schedule-ledger', salesController.getScheduleLedger);
 router.put('/:id', salesController.updateSale);
 router.delete('/:id', salesController.deleteSale);
 

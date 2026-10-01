@@ -104,6 +104,13 @@ const Sidebar = () => {
                 </li>
             )}
 
+            {/* Schedule Drug (G/H/H1/X) Ledger: staff-only (their own billing register) */}
+            {userRole === 'staff' && (
+                <li>
+                    <Link to="/schedule-ledger" className={getLinkClass('/schedule-ledger')}>💊 Schedule Ledger</Link>
+                </li>
+            )}
+
         </ul>
       </div>
 

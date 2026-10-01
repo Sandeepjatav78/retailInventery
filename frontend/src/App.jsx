@@ -10,11 +10,13 @@ import KachiEntry from './pages/KachiEntry';
 import PurchaseBillEntry from './pages/PurchaseBillEntry';
 import PurchaseBillHistory from './pages/PurchaseBillHistory';
 import SupplierLedger from './pages/SupplierLedger';
+import ScheduleLedger from './pages/ScheduleLedger';
 import PriceChecker from './components/PriceChecker';
 import DoctorPriceChecker from './components/DoctorPriceChecker';
 import Login from './pages/Login'; 
 import PrivateRoute from './components/PrivateRoute'; 
 import SessionWatcher from './components/SessionWatcher';
+import ShoppingListWidget from './components/ShoppingListWidget';
 
 function App() {
   return (
@@ -40,9 +42,11 @@ function App() {
                     <Route path="/doctor-price" element={<DoctorPriceChecker />} />
                     <Route path="/reports" element={<DailyReport />} />
                     <Route path="/credits" element={<CreditLedger />} />
+                    <Route path="/schedule-ledger" element={<ScheduleLedger />} />
                     <Route path="/purchase-returns" element={<PurchaseReturn />} />
                   </Routes>
                 </main>
+                <ShoppingListWidget />
               </div>
             </PrivateRoute>
           } />

@@ -5,6 +5,45 @@ const AuditLog = require('../models/AuditLog');
 const PurchaseReturn = require('../models/PurchaseReturn');
 const PurchaseBill = require('../models/PurchaseBill');
 const cloudinary = require('cloudinary').v2;
+const { classifyMedicinesWithAI, SCHEDULE_CATEGORIES, SCHEDULE_INFO } = require('../utils/scheduleDetector');
+
+// Lets the frontend build its "Sch." dropdown / ledger filter from one
+// source of truth instead of hardcoding the A-Z list in multiple places.
+const getScheduleCategories = (_req, res) => {
+  res.json({ categories: SCHEDULE_CATEGORIES, info: SCHEDULE_INFO });
+};
+
+// Self-heals the Schedule H1/H register with zero manual effort: every time
+// the inventory list is loaded, a small batch of medicines that have never
+// been AI-classified gets classified right here and cached on the Medicine
+// record. Over a handful of page loads the whole catalog (old + new stock)
+// converges to fully tagged, without anyone ever clicking a button. Once a
+// medicine is tagged it's skipped forever (fast no-op path).
+const AUTO_TAG_BATCH_SIZE = 10;
+const backgroundAutoTagSchedule = async () => {
+  try {
+    const untagged = await Medicine.find({
+      $or: [{ scheduleAiChecked: { $ne: true } }, { scheduleAiChecked: { $exists: false } }]
+    }).select('productName').limit(AUTO_TAG_BATCH_SIZE);
+
+    if (untagged.length === 0) return;
+
+    const aiMap = await classifyMedicinesWithAI(untagged.map((m) => m.productName));
+    const writes = untagged.map((med) => {
+      const result = aiMap.get(String(med.productName || '').trim());
+      return {
+        updateOne: {
+          filter: { _id: med._id },
+          update: { $set: { scheduleCategory: result?.category || 'None', scheduleAiChecked: true } }
+        }
+      };
+    });
+    if (writes.length) await Medicine.bulkWrite(writes);
+  } catch (err) {
+    // Never let this block the inventory list from loading.
+    console.error('[Warn] Background schedule auto-tag failed (will retry next load):', err.message);
+  }
+};
 
 // 1. GET ALL MEDICINES
 const getMedicines = async (req, res) => {
@@ -18,6 +57,8 @@ const getMedicines = async (req, res) => {
           ]
         }
       : { isKachiEntry: { $ne: true } };
+
+    await backgroundAutoTagSchedule();
 
     const meds = await Medicine.find(query).sort({ productName: 1 });
     res.json(meds);
@@ -132,6 +173,18 @@ const addMedicine = async (req, res) => {
       billImage: req.file ? req.file.path : null
     };
 
+    if (req.body.scheduleCategory) {
+      // Caller (e.g. admin edit) explicitly picked a schedule — respect it, no AI needed.
+      medData.scheduleCategory = req.body.scheduleCategory;
+      medData.scheduleAiChecked = true;
+    } else {
+      // AI-classify this single new medicine (Gemini, with keyword fallback baked in).
+      const aiMap = await classifyMedicinesWithAI([req.body.productName]);
+      const result = aiMap.get(String(req.body.productName || '').trim());
+      medData.scheduleCategory = result?.category || 'None';
+      medData.scheduleAiChecked = true;
+    }
+
     const normalizedName = String(medData.productName || '').trim();
     const normalizedBatch = String(medData.batchNumber || '').trim();
 
@@ -198,6 +251,62 @@ const addMedicine = async (req, res) => {
     res.status(500).json({ message: `Server Error: ${err.message}` });
   }
 };
+
+// 3B. AUTO-DETECT SCHEDULE (H / H1) — runs every not-yet-checked medicine
+// (old stock AND anything created before this feature existed) through
+// Gemini in batches, tags None/H/H1, and marks it scheduleAiChecked so it's
+// never re-classified again unless the admin edits it. Covers old + new
+// medicines alike, as requested.
+const autoDetectScheduleH1 = async (req, res) => {
+  try {
+    const candidates = await Medicine.find({
+      $or: [{ scheduleAiChecked: { $ne: true } }, { scheduleAiChecked: { $exists: false } }]
+    }).select('productName');
+
+    if (candidates.length === 0) {
+      return res.json({ success: true, taggedCount: 0, byCategory: {}, tagged: [] });
+    }
+
+    const BATCH_SIZE = 40; // keep each Gemini prompt a reasonable size
+    const tagged = [];
+    const byCategory = {};
+
+    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+      const batch = candidates.slice(i, i + BATCH_SIZE);
+      const aiMap = await classifyMedicinesWithAI(batch.map((m) => m.productName));
+
+      const writes = batch.map((med) => {
+        const result = aiMap.get(String(med.productName || '').trim());
+        const category = result?.category || 'None';
+        byCategory[category] = (byCategory[category] || 0) + 1;
+        tagged.push({ id: med._id, productName: med.productName, category, confidence: result?.confidence });
+        return {
+          updateOne: {
+            filter: { _id: med._id },
+            update: { $set: { scheduleCategory: category, scheduleAiChecked: true } }
+          }
+        };
+      });
+
+      if (writes.length) await Medicine.bulkWrite(writes);
+    }
+
+    AuditLog.create({
+      action: 'AUTO_TAG_SCHEDULE',
+      entityType: 'Medicine',
+      entityId: 'bulk',
+      message: `AI-classified ${tagged.length} medicine(s) for drug schedule — ${Object.entries(byCategory).filter(([, n]) => n > 0).map(([cat, n]) => `${cat}: ${n}`).join(', ')}`,
+      details: { count: tagged.length, byCategory },
+      userRole: req.user?.role || 'admin'
+    }).catch(err => console.error('Audit log error (AUTO_TAG_SCHEDULE):', err.message));
+
+    res.json({ success: true, taggedCount: tagged.length, byCategory, tagged });
+  } catch (err) {
+    console.error('[Error] autoDetectScheduleH1:', err.message);
+    res.status(500).json({ success: false, message: 'Auto-detect failed', error: err.message });
+  }
+};
+
 // 4. UPDATE MEDICINE (Fixed Logic)
 const updateMedicine = async (req, res) => {
   try {
@@ -218,6 +327,12 @@ const updateMedicine = async (req, res) => {
       packSize: safeNumber(req.body.packSize), // <--- FIX FOR PACK SIZE
       gst: safeNumber(req.body.gst),
     };
+
+    // An explicit schedule value from the edit form counts as a confirmed,
+    // manual decision — stop the AI auto-tagger from ever touching it again.
+    if (req.body.scheduleCategory !== undefined && req.body.scheduleCategory !== '') {
+      updateData.scheduleAiChecked = true;
+    }
 
     // Remove undefined keys so we don't accidentally unset fields
     Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
@@ -609,6 +724,34 @@ const getPurchaseReturns = async (req, res) => {
 };
 
 // ADMIN: Save one complete supplier invoice and add all of its medicines to stock.
+// Lightweight check used by the frontend to warn the user (before they fill the
+// whole form) that a bill with this supplier + invoice number is already saved.
+const checkDuplicateBill = async (req, res) => {
+  try {
+    const supplierName = String(req.query.supplierName || '').trim();
+    const invoiceNumber = String(req.query.invoiceNumber || '').trim();
+    if (!supplierName || !invoiceNumber) return res.json({ duplicate: false });
+
+    const duplicate = await PurchaseBill.findOne({
+      supplierName: new RegExp(`^${supplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      invoiceNumber
+    }).lean();
+
+    return res.json({
+      duplicate: !!duplicate,
+      bill: duplicate ? {
+        invoiceNumber: duplicate.invoiceNumber,
+        invoiceDate: duplicate.invoiceDate,
+        grandTotal: duplicate.grandTotal,
+        supplierName: duplicate.supplierName
+      } : null
+    });
+  } catch (err) {
+    console.error('[Error] checkDuplicateBill:', err.message);
+    return res.status(500).json({ message: 'Could not check duplicate bill' });
+  }
+};
+
 const createPurchaseBill = async (req, res) => {
   try {
     const supplierName = String(req.body.supplierName || '').trim();
@@ -692,8 +835,19 @@ const createPurchaseBill = async (req, res) => {
     const billImagePaths = Array.isArray(req.files) ? req.files.map(f => f.path) : [];
     const primaryBillImage = billImagePaths[0] || null;
 
+    // Look up which items are brand-new medicines first, so their schedule
+    // (H/H1/None) can be AI-classified in ONE batched Gemini call instead of
+    // one call per item.
+    const existingByItem = new Map();
     for (const item of validItems) {
       const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
+      existingByItem.set(item, existing);
+    }
+    const newItemNames = validItems.filter((item) => !existingByItem.get(item)).map((item) => item.productName);
+    const newItemScheduleMap = newItemNames.length ? await classifyMedicinesWithAI(newItemNames) : new Map();
+
+    for (const item of validItems) {
+      const existing = existingByItem.get(item);
       const stockAdded = item.quantity + item.freeQuantity;
       const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: primaryBillImage };
       if (existing) {
@@ -701,7 +855,8 @@ const createPurchaseBill = async (req, res) => {
         Object.assign(existing, medicineData);
         await existing.save();
       } else {
-        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stockAdded, packSize: 1, ...medicineData });
+        const scheduleResult = newItemScheduleMap.get(String(item.productName || '').trim());
+        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stockAdded, packSize: 1, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData });
       }
     }
 
@@ -812,9 +967,17 @@ const updatePurchaseBill = async (req, res) => {
     const updatedBillImages = newBillImagePaths.length > 0 ? newBillImagePaths : (existingBill.billImages && existingBill.billImages.length > 0 ? existingBill.billImages : (existingBill.billImage ? [existingBill.billImage] : []));
     const updatedPrimaryBillImage = updatedBillImages[0] || null;
 
-    // Apply NEW stock
+    // Apply NEW stock (batch AI-classify schedule for brand-new items first)
+    const existingByUpdateItem = new Map();
     for (const item of validItems) {
       const existing = await Medicine.findOne({ productName: { $regex: `^${item.productName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }, batchNumber: { $regex: `^${item.batchNumber.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } });
+      existingByUpdateItem.set(item, existing);
+    }
+    const newUpdateItemNames = validItems.filter((item) => !existingByUpdateItem.get(item)).map((item) => item.productName);
+    const newUpdateScheduleMap = newUpdateItemNames.length ? await classifyMedicinesWithAI(newUpdateItemNames) : new Map();
+
+    for (const item of validItems) {
+      const existing = existingByUpdateItem.get(item);
       const stockAdded = item.quantity + item.freeQuantity;
       const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: updatedPrimaryBillImage };
       if (existing) {
@@ -822,7 +985,8 @@ const updatePurchaseBill = async (req, res) => {
         Object.assign(existing, medicineData);
         await existing.save();
       } else {
-        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stockAdded, packSize: 1, ...medicineData });
+        const scheduleResult = newUpdateScheduleMap.get(String(item.productName || '').trim());
+        await Medicine.create({ productName: item.productName, batchNumber: item.batchNumber, quantity: stockAdded, packSize: 1, scheduleCategory: scheduleResult?.category || 'None', scheduleAiChecked: true, ...medicineData });
       }
     }
 
@@ -1519,5 +1683,6 @@ module.exports = {
   getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
   getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
   sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
-  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment, updatePurchaseBill, deletePurchaseBill
+  getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment, updatePurchaseBill, deletePurchaseBill, checkDuplicateBill,
+  autoDetectScheduleH1, getScheduleCategories
 };

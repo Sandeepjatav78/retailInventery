@@ -76,6 +76,7 @@ const PurchaseBillEntry = () => {
   const [scanning, setScanning] = useState(false);
   const [suppliers, setSuppliers] = useState([]);
   const [errors, setErrors] = useState({});
+  const [duplicateWarning, setDuplicateWarning] = useState(null);
 
   const clearError = (key) => setErrors(prev => {
     if (!prev[key]) return prev;
@@ -87,6 +88,27 @@ const PurchaseBillEntry = () => {
   useEffect(() => {
     api.get('/medicines/suppliers').then(res => setSuppliers(res.data || [])).catch(() => {});
   }, []);
+
+  // Warn (non-blocking) as soon as supplier + invoice number match an already-saved bill —
+  // so the user knows before typing out the whole bill, not only when they hit Save.
+  useEffect(() => {
+    const supplierName = bill.supplierName.trim();
+    const invoiceNumber = bill.invoiceNumber.trim();
+    if (!supplierName || !invoiceNumber) { setDuplicateWarning(null); return; }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.get('/medicines/purchase-bills/check-duplicate', { params: { supplierName, invoiceNumber } });
+        if (res.data?.duplicate) {
+          const dup = res.data.bill;
+          const dateStr = dup?.invoiceDate ? new Date(dup.invoiceDate).toLocaleDateString('en-IN') : '';
+          setDuplicateWarning(`⚠️ "${supplierName}" ka invoice #${invoiceNumber} pehle se saved hai${dateStr ? ` (${dateStr})` : ''}${dup?.grandTotal ? `, amount ₹${Number(dup.grandTotal).toFixed(2)}` : ''}. Dubara save karne se duplicate ban sakta hai.`);
+        } else {
+          setDuplicateWarning(null);
+        }
+      } catch { /* silently ignore — this is just an advisory check */ }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [bill.supplierName, bill.invoiceNumber]);
 
   const addBillPages = (fileListRaw, autoScan = true) => {
     const newFiles = Array.from(fileListRaw || []);
@@ -246,6 +268,7 @@ const PurchaseBillEntry = () => {
       await api.post('/medicines/purchase-bills', data, { headers: { 'Content-Type': 'multipart/form-data' } });
       alert('Purchase bill save ho gaya aur medicines inventory mein add ho gayi.');
       setErrors({});
+      setDuplicateWarning(null);
       setBill({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
       setItems([emptyItem()]);
     } catch (error) {
@@ -333,6 +356,11 @@ const PurchaseBillEntry = () => {
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-5">
         <h2 className="mb-4 font-bold text-slate-800">Invoice Details</h2>
+        {duplicateWarning && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+            <span>{duplicateWarning}</span>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div><label className={labelClass}>Supplier / Party Name *</label><input id="field-supplierName" required list="known-suppliers" value={bill.supplierName} onChange={e => { clearError('supplierName'); setBill({ ...bill, supplierName: e.target.value }); }} placeholder="Rosa Medical Agencies" className={fieldClass('supplierName')} />
             <datalist id="known-suppliers">{suppliers.map(s => <option key={s} value={s} />)}</datalist>

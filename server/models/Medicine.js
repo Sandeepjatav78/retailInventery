@@ -25,12 +25,24 @@ const MedicineSchema = new mongoose.Schema({
   purchaseDate: { type: Date },
   billImage: { type: String },
   isKachiEntry: { type: Boolean, default: false },
-  canShowInAdminInventory: { type: Boolean, default: true }
+  canShowInAdminInventory: { type: Boolean, default: true },
+
+  // Drug schedule (India, Drugs & Cosmetics Rules / NDPS Act — full A-Z set).
+  // 'None' = not a scheduled/regulated item (or not yet tagged).
+  scheduleCategory: {
+    type: String,
+    enum: ['None', 'A', 'B', 'C', 'C1', 'D', 'E1', 'F', 'F1', 'G', 'H', 'H1', 'J', 'N', 'O', 'P', 'P1', 'R', 'R1', 'S', 'T', 'U', 'X', 'Z'],
+    default: 'None'
+  },
+  // true once scheduleCategory has been set by the AI classifier or confirmed
+  // manually by an admin — prevents re-running AI classification every sale.
+  scheduleAiChecked: { type: Boolean, default: false }
 }, { timestamps: true });
 
 // Helpful indexes for search & alerts
 MedicineSchema.index({ productName: 1 });
 MedicineSchema.index({ batchNumber: 1 });
 MedicineSchema.index({ expiryDate: 1 });
+MedicineSchema.index({ scheduleCategory: 1 });
 
 module.exports = mongoose.model('Medicine', MedicineSchema);

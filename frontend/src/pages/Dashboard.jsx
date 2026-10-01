@@ -9,6 +9,7 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const userRole = localStorage.getItem("userRole");
   const [meds, setMeds] = useState(() => getCachedMedicines());
+  const [autoDetecting, setAutoDetecting] = useState(false);
 
   const fetchMeds = async () => {
     try {
@@ -46,6 +47,25 @@ const Dashboard = () => {
     }
   };
 
+  const handleAutoDetectSchedule = async () => {
+    if (!window.confirm('AI (Google Gemini) se sabhi untagged medicines (purani + nayi) ka full A-Z Drug Schedule check karayein? Bulk list ke liye ismein kuch samay lag sakta hai.')) return;
+    setAutoDetecting(true);
+    try {
+      const res = await api.post('/medicines/auto-detect-schedule');
+      const { taggedCount = 0, byCategory = {} } = res.data || {};
+      const breakdown = Object.entries(byCategory).filter(([, n]) => n > 0).map(([cat, n]) => `${cat}: ${n}`).join(', ');
+      alert(taggedCount > 0
+        ? `✅ AI ne ${taggedCount} medicine(s) check kiye — ${breakdown}. Kripya "Sch." column mein list check karke zarurat ho to correct karein.`
+        : 'Sabhi medicines pehle se hi check/tagged hain.');
+      await fetchMeds();
+    } catch (error) {
+      console.error(error);
+      alert('Auto-detect failed');
+    } finally {
+      setAutoDetecting(false);
+    }
+  };
+
   const handleDelete = async (id) => {
     try {
       await api.delete(`/medicines/${id}`);
@@ -68,6 +88,8 @@ const Dashboard = () => {
           userRole={userRole}
           onUpdate={handleUpdate}
           onDelete={handleDelete}
+          onAutoDetectSchedule={handleAutoDetectSchedule}
+          autoDetecting={autoDetecting}
         />
       </div>
     </div>
