@@ -790,7 +790,7 @@ exports.returnSaleItems = async (req, res) => {
 // maxAmount, from valid stock. Two steps: /auto-bill/preview builds a plan
 // (nothing saved), /auto-bill/commit re-validates that plan against live stock
 // and saves it with real sequential invoice numbers in time order.
-const AUTO_BILL_MAX_COUNT = 200;
+const AUTO_BILL_MAX_COUNT = 500;
 const AUTO_BILL_MAX_ITEMS = 6;
 const AUTO_BILL_MAX_QTY_PER_LINE = 3;
 
@@ -865,60 +865,94 @@ const buildRandomBill = (pool, stockLeft, minAmount, maxAmount) => {
   return null;
 };
 
+// One bill-day: its date + how many bills, with the IST time window clipped
+// so a bill is never stamped in the future.
+const parseAutoBillDay = (day, startTime, endTime, now) => {
+  const date = String(day?.date || '').slice(0, 10);
+  const count = Math.floor(Number(day?.count));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Har row me valid date chahiye.' };
+  if (!Number.isFinite(count) || count < 1) return { error: `${date}: bills ki ginti kam se kam 1 honi chahiye.` };
+
+  const windowStart = new Date(`${date}T${startTime}:00.000${IST_OFFSET}`);
+  let windowEnd = new Date(`${date}T${endTime}:59.999${IST_OFFSET}`);
+  if (windowStart.getTime() > now.getTime()) return { error: `${date}: future date/time ke bills nahi ban sakte.` };
+  if (windowEnd.getTime() > now.getTime()) windowEnd = now;
+  if (windowEnd.getTime() <= windowStart.getTime()) return { error: `${date}: end time, start time ke baad hona chahiye.` };
+  return { date, count, windowStart, windowEnd };
+};
+
 const parseAutoBillRequest = (body = {}) => {
-  const date = String(body.date || '').slice(0, 10);
-  const count = Math.floor(Number(body.count));
   const minAmount = Number(body.minAmount);
   const maxAmount = Number(body.maxAmount);
   const startTime = /^\d{2}:\d{2}$/.test(String(body.startTime || '')) ? body.startTime : '09:00';
   const endTime = /^\d{2}:\d{2}$/.test(String(body.endTime || '')) ? body.endTime : '21:00';
   const paymentMode = body.paymentMode === 'Online' ? 'Online' : 'Cash';
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Valid bill date chahiye.' };
-  if (!Number.isFinite(count) || count < 1 || count > AUTO_BILL_MAX_COUNT) return { error: `Bills ki ginti 1 se ${AUTO_BILL_MAX_COUNT} ke beech honi chahiye.` };
   if (!Number.isFinite(minAmount) || !Number.isFinite(maxAmount) || minAmount <= 0 || maxAmount < minAmount) return { error: 'Amount range sahi bharein (min > 0 aur max ≥ min).' };
 
-  const windowStart = new Date(`${date}T${startTime}:00.000${IST_OFFSET}`);
-  let windowEnd = new Date(`${date}T${endTime}:59.999${IST_OFFSET}`);
+  const rawDays = Array.isArray(body.days) && body.days.length ? body.days : [{ date: body.date, count: body.count }];
   const now = new Date();
-  if (windowStart.getTime() > now.getTime()) return { error: 'Future date/time ke bills nahi ban sakte.' };
-  if (windowEnd.getTime() > now.getTime()) windowEnd = now; // today: never stamp a bill in the future
-  if (windowEnd.getTime() <= windowStart.getTime()) return { error: 'End time, start time ke baad hona chahiye.' };
+  const days = [];
+  const seen = new Set();
+  for (const raw of rawDays) {
+    const day = parseAutoBillDay(raw, startTime, endTime, now);
+    if (day.error) return { error: day.error };
+    if (seen.has(day.date)) return { error: `${day.date} do baar likha hai — ek date ek hi baar rakhein.` };
+    seen.add(day.date);
+    days.push(day);
+  }
+  const total = days.reduce((sum, day) => sum + day.count, 0);
+  if (total > AUTO_BILL_MAX_COUNT) return { error: `Ek baar me maximum ${AUTO_BILL_MAX_COUNT} bills ban sakte hain (abhi ${total}).` };
 
-  return { date, count, minAmount, maxAmount, paymentMode, windowStart, windowEnd };
+  days.sort((a, b) => a.windowStart - b.windowStart);
+  return { days, minAmount, maxAmount, paymentMode };
 };
 
 exports.previewAutoBills = async (req, res) => {
   try {
     const params = parseAutoBillRequest(req.body);
     if (params.error) return res.status(400).json({ message: params.error });
-    const { count, minAmount, maxAmount, paymentMode, windowStart, windowEnd } = params;
+    const { days, minAmount, maxAmount, paymentMode } = params;
 
+    // Eligibility is checked against the latest bill date in the plan, so no
+    // item that expires partway through the selected days gets used.
+    const latestEnd = days[days.length - 1].windowEnd;
     const candidates = await Medicine.find({ quantity: { $gte: 1 }, sellingPrice: { $gt: 0 }, isKachiEntry: { $ne: true } }).lean();
-    const pool = candidates.filter((med) => isAutoBillable(med, windowEnd));
+    const pool = candidates.filter((med) => isAutoBillable(med, latestEnd));
     const skippedUnchecked = candidates.filter((med) => !med.scheduleAiChecked).length;
 
     if (pool.length === 0) {
       return res.status(400).json({ message: 'Auto bill ke liye koi valid stock nahi mila (HSN, expiry aur schedule check zaroori hai).', skippedUnchecked });
     }
 
+    // One shared stock counter across all days, so the whole plan never oversells.
     const stockLeft = new Map(pool.map((med) => [String(med._id), Math.floor(Number(med.quantity || 0))]));
     const bills = [];
-    for (let i = 0; i < count; i++) {
-      const bill = buildRandomBill(pool, stockLeft, minAmount, maxAmount);
-      if (!bill) break;
-      bills.push(bill);
+    const daySummary = [];
+    for (const day of days) {
+      const dayBills = [];
+      for (let i = 0; i < day.count; i++) {
+        const bill = buildRandomBill(pool, stockLeft, minAmount, maxAmount);
+        if (!bill) break;
+        dayBills.push(bill);
+      }
+      const span = day.windowEnd.getTime() - day.windowStart.getTime();
+      const times = dayBills.map(() => new Date(day.windowStart.getTime() + Math.floor(Math.random() * span))).sort((a, b) => a - b);
+      dayBills.forEach((bill, idx) => { bill.date = times[idx]; });
+      bills.push(...dayBills);
+      daySummary.push({
+        date: day.date,
+        requested: day.count,
+        generated: dayBills.length,
+        total: roundMoney(dayBills.reduce((sum, bill) => sum + bill.totalAmount, 0))
+      });
     }
-
-    const span = windowEnd.getTime() - windowStart.getTime();
-    const times = bills.map(() => new Date(windowStart.getTime() + Math.floor(Math.random() * span))).sort((a, b) => a - b);
-    bills.forEach((bill, idx) => { bill.date = times[idx]; });
 
     return res.json({
       success: true,
       paymentMode,
       bills,
-      requested: count,
+      days: daySummary,
+      requested: days.reduce((sum, day) => sum + day.count, 0),
       generated: bills.length,
       grandTotal: roundMoney(bills.reduce((sum, bill) => sum + bill.totalAmount, 0)),
       eligibleItems: pool.length,
