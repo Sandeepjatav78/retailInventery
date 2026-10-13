@@ -70,7 +70,8 @@ const MedicineNameCell = ({ value, onChange, onPick, inputId, invalid }) => {
 };
 
 const PurchaseBillEntry = () => {
-  const [bill, setBill] = useState({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
+  const initialBill = () => ({ supplierName: '', supplierGstin: '', supplierPhone: '', supplierAddress: '', supplierCity: '', supplierState: '', supplierPincode: '', supplierContactPerson: '', supplierEmail: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
+  const [bill, setBill] = useState(initialBill);
   const [items, setItems] = useState([emptyItem()]);
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -138,6 +139,13 @@ const PurchaseBillEntry = () => {
           ...prev,
           supplierName: extracted.supplierName || prev.supplierName,
           supplierGstin: extracted.supplierGstin || prev.supplierGstin,
+          supplierPhone: extracted.supplierPhone || prev.supplierPhone,
+          supplierAddress: extracted.supplierAddress || prev.supplierAddress,
+          supplierCity: extracted.supplierCity || prev.supplierCity,
+          supplierState: extracted.supplierState || prev.supplierState,
+          supplierPincode: extracted.supplierPincode || prev.supplierPincode,
+          supplierContactPerson: extracted.supplierContactPerson || prev.supplierContactPerson,
+          supplierEmail: extracted.supplierEmail || prev.supplierEmail,
           invoiceNumber: extracted.invoiceNumber || prev.invoiceNumber,
           invoiceDate: extracted.invoiceDate || prev.invoiceDate,
           billType: extracted.billType || prev.billType,
@@ -269,7 +277,7 @@ const PurchaseBillEntry = () => {
       alert('Purchase bill save ho gaya aur medicines inventory mein add ho gayi.');
       setErrors({});
       setDuplicateWarning(null);
-      setBill({ supplierName: '', supplierGstin: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
+      setBill(initialBill());
       setItems([emptyItem()]);
     } catch (error) {
       alert(error.response?.data?.message || 'Purchase bill save nahi ho saka.');

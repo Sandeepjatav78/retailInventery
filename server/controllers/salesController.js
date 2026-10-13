@@ -18,6 +18,19 @@ const normalizePhone = (phone = '') => {
 
 const normalizeCustomerName = (name = '') => String(name).trim();
 
+// Bill days must be interpreted in the pharmacy's local timezone (IST, +05:30)
+// no matter where the server runs (Vercel runs in UTC). Without an explicit
+// offset "2026-10-24" becomes UTC midnight, so the 24th's range leaks into the
+// 25th's early-morning bills (e.g. a 12:30 AM bill showing under the 24th).
+const IST_OFFSET = '+05:30';
+const buildDateRange = (start, end) => {
+  if (!start || !end) return null;
+  const startDate = new Date(`${String(start).slice(0, 10)}T00:00:00.000${IST_OFFSET}`);
+  const endDate = new Date(`${String(end).slice(0, 10)}T23:59:59.999${IST_OFFSET}`);
+  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return null;
+  return { startDate, endDate };
+};
+
 const buildMedicineKey = (item = {}) => {
   const medicineId = String(item.medicineId || '').trim();
   if (medicineId) return `id:${medicineId}`;
@@ -209,6 +222,9 @@ exports.createSale = async (req, res) => {
     // Collected while we already look up each medicine below, so the schedule
     // register doesn't need an extra DB pass.
     const scheduleMap = new Map();
+    // medicineId -> purchase (supplier) invoice number, snapshotted onto the
+    // sale so a bill can always be traced back to the stock it was billed from.
+    const purchaseInvoiceMap = new Map();
     // Medicines never AI-classified before (new stock, or added pre-feature) —
     // classified for real right here, at bill-cut time, so the register is
     // always accurate. Once checked, a medicine is cached forever (fast path).
@@ -228,18 +244,24 @@ exports.createSale = async (req, res) => {
         pendingScheduleCheck.push({ medicineId: String(item.medicineId), productName: med.productName });
       }
 
-      // Check purchase date restriction: item cannot be sold before purchase date
-      const purchaseDate = med.purchaseDate ? new Date(med.purchaseDate) : (med.createdAt ? new Date(med.createdAt) : null);
-      if (purchaseDate) {
-        const pDateOnly = new Date(purchaseDate.getFullYear(), purchaseDate.getMonth(), purchaseDate.getDate());
-        const sDateOnly = new Date(saleDate.getFullYear(), saleDate.getMonth(), saleDate.getDate());
-        if (sDateOnly < pDateOnly) {
-          const formattedPDate = purchaseDate.toLocaleDateString('en-IN');
+      // Remember which purchase invoice this stock came from so the sale bill
+      // can show it (useful when an item is sold before its purchase is entered).
+      if (med.purchaseInvoiceNo) purchaseInvoiceMap.set(String(item.medicineId), med.purchaseInvoiceNo);
+
+      // 🔥 EXPIRED MEDICINE BLOCK — an item is valid through the END of its
+      // expiry month, and cannot be billed after that.
+      const expiry = med.expiryDate ? new Date(med.expiryDate) : null;
+      if (expiry && !Number.isNaN(expiry.getTime())) {
+        const expiryMonthEnd = new Date(expiry.getFullYear(), expiry.getMonth() + 1, 0, 23, 59, 59, 999);
+        if (saleDate.getTime() > expiryMonthEnd.getTime()) {
           return res.status(400).json({
-            message: `Item '${med.productName}' cannot be sold before its purchase date (${formattedPDate}).`
+            message: `Item '${med.productName}' is EXPIRED (${expiry.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}) and cannot be sold.`
           });
         }
       }
+
+      // NOTE: selling before the purchase date is intentionally allowed now —
+      // the purchase invoice number is captured above for traceability.
 
       if (userRole === 'staff' && med.isKachiEntry) {
         return res.status(403).json({
@@ -287,7 +309,8 @@ exports.createSale = async (req, res) => {
     const scheduledItems = enrichedItems.map((item) => {
       const category = item.medicineId ? scheduleMap.get(String(item.medicineId)) : undefined;
       if (category) hasScheduleDrug = true;
-      return { ...item, scheduleCategory: category || 'None' };
+      const purchaseInvoiceNo = item.medicineId ? purchaseInvoiceMap.get(String(item.medicineId)) : undefined;
+      return { ...item, scheduleCategory: category || 'None', purchaseInvoiceNo: purchaseInvoiceNo || item.purchaseInvoiceNo || undefined };
     });
 
     // 1. Create Sale Record
@@ -427,9 +450,8 @@ exports.getAllSales = async (req, res) => {
     }
     // --- 📅 DATE FILTER LOGIC ---
     else if (start && end) {
-      let startDate = new Date(start); startDate.setHours(0, 0, 0, 0);
-      let endDate = new Date(end); endDate.setHours(23, 59, 59, 999);
-      conditions.push({ date: { $gte: startDate, $lte: endDate } });
+      const range = buildDateRange(start, end);
+      if (range) conditions.push({ date: { $gte: range.startDate, $lte: range.endDate } });
     }
 
     // --- 💳 PAYMENT MODE FILTER LOGIC ---
@@ -494,9 +516,8 @@ exports.getScheduleLedger = async (req, res) => {
     }
 
     if (start && end) {
-      const startDate = new Date(start); startDate.setHours(0, 0, 0, 0);
-      const endDate = new Date(end); endDate.setHours(23, 59, 59, 999);
-      conditions.push({ date: { $gte: startDate, $lte: endDate } });
+      const range = buildDateRange(start, end);
+      if (range) conditions.push({ date: { $gte: range.startDate, $lte: range.endDate } });
     }
 
     if (SCHEDULE_CATEGORIES.includes(category) && category !== 'None') {

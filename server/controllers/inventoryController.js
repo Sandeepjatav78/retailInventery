@@ -4,8 +4,87 @@ const PendingDose = require('../models/PendingDose');
 const AuditLog = require('../models/AuditLog');
 const PurchaseReturn = require('../models/PurchaseReturn');
 const PurchaseBill = require('../models/PurchaseBill');
+const Supplier = require('../models/Supplier');
 const cloudinary = require('cloudinary').v2;
 const { classifyMedicinesWithAI, SCHEDULE_CATEGORIES, SCHEDULE_INFO } = require('../utils/scheduleDetector');
+
+// --- SHARED HELPERS (supplier matching / ledger) ---
+const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Lower + strip anything that isn't a letter/digit, so "ROSA MEDICAL AGNCY",
+// "rosa medical agency", and "ROSA-MEDICAL. AGENCY" all match each other.
+const normalizeForMatch = (value = '') => String(value).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const levenshtein = (a, b) => {
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+};
+
+// 0..1 similarity; 1 = identical after normalization.
+const similarityRatio = (a, b) => {
+  const na = normalizeForMatch(a);
+  const nb = normalizeForMatch(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  const maxLen = Math.max(na.length, nb.length);
+  return 1 - levenshtein(na, nb) / maxLen;
+};
+
+const allKnownSupplierNames = async () => {
+  const fromBills = await PurchaseBill.distinct('supplierName', { supplierName: { $ne: '', $exists: true } });
+  const fromMeds = await Medicine.distinct('partyName', { partyName: { $exists: true, $nin: ['', null] } });
+  return [...new Set([...fromBills, ...fromMeds].map((n) => String(n).trim()).filter(Boolean))];
+};
+
+const saveSupplierBillBasics = async (name, gstin = '', details = {}) => {
+  const cleanName = String(name || '').trim();
+  if (!cleanName) return;
+  const profileFields = ['phone', 'address', 'city', 'state', 'pincode', 'contactPerson', 'email'];
+  const profile = {};
+  profileFields.forEach((field) => {
+    const value = String(details[field] || '').trim();
+    if (value) profile[field] = value;
+  });
+  if (String(gstin || '').trim()) profile.gstin = String(gstin).trim();
+  await Supplier.findOneAndUpdate(
+    { normalizedName: normalizeForMatch(cleanName) },
+    {
+      $setOnInsert: { name: cleanName, normalizedName: normalizeForMatch(cleanName) },
+      ...(Object.keys(profile).length ? { $set: profile } : {})
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+};
+
+// Returns { similarTo, ratio } when the given party name is almost certainly a
+// typo of an existing party (unless the caller explicitly opted in to a new party).
+const ensureNoTypoSupplier = async (supplierName, allowNew = false) => {
+  if (allowNew === 'true') return null;
+  const nameStr = String(supplierName || '').trim();
+  if (!nameStr) return null;
+  const candidates = await allKnownSupplierNames();
+  let best = null;
+  for (const candidate of candidates) {
+    if (candidate.toLowerCase() === nameStr.toLowerCase()) return null; // exact party already exists
+    const ratio = similarityRatio(nameStr, candidate);
+    // Require the same first character to cut down false positives on short names.
+    if (ratio >= 0.78 && (candidate[0] || '').toLowerCase() === (nameStr[0] || '').toLowerCase() && (!best || ratio > best.ratio)) {
+      best = { similarTo: candidate, ratio: ratio };
+    }
+  }
+  return best;
+};
 
 // Lets the frontend build its "Sch." dropdown / ledger filter from one
 // source of truth instead of hardcoding the A-Z list in multiple places.
@@ -208,6 +287,7 @@ const addMedicine = async (req, res) => {
       existingMed.expiryDate = medData.expiryDate || existingMed.expiryDate;
       existingMed.partyName = medData.partyName || existingMed.partyName;
       existingMed.purchaseDate = medData.purchaseDate || existingMed.purchaseDate;
+      existingMed.purchaseInvoiceNo = medData.purchaseInvoiceNo || existingMed.purchaseInvoiceNo;
       if (medData.billImage) {
         existingMed.billImage = medData.billImage;
       }
@@ -766,6 +846,16 @@ const createPurchaseBill = async (req, res) => {
     const duplicate = await PurchaseBill.findOne({ supplierName: new RegExp(`^${supplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), invoiceNumber });
     if (duplicate) return res.status(409).json({ message: 'This supplier invoice is already saved' });
 
+    const typoCheck = await ensureNoTypoSupplier(supplierName, String(req.body.confirmNewSupplier || ''));
+    if (typoCheck) {
+      return res.status(409).json({
+        message: `Party '${supplierName}' ledger me pehle se '${typoCheck.similarTo}' naam se hai (${typoCheck.ratio * 100 | 0}% match). Kya ye wahi party hai? Yadi hain to correct name use karein, warna naya ledger banane ki confirm karein.`,
+        similarTo: typoCheck.similarTo,
+        ratio: Math.round(typoCheck.ratio * 100),
+        confirmable: true
+      });
+    }
+
     const number = (value, fallback = 0) => value === '' || value === null || value === undefined ? fallback : Number(value);
     const preItems = items.map((item, index) => {
       const productName = String(item.productName || '').trim();
@@ -849,7 +939,7 @@ const createPurchaseBill = async (req, res) => {
     for (const item of validItems) {
       const existing = existingByItem.get(item);
       const stockAdded = item.quantity + item.freeQuantity;
-      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: primaryBillImage };
+      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: primaryBillImage };
       if (existing) {
         existing.quantity = Number(existing.quantity || 0) + stockAdded;
         Object.assign(existing, medicineData);
@@ -883,6 +973,15 @@ const createPurchaseBill = async (req, res) => {
       paymentRemarks,
       paymentHistory,
       createdBy: req.user?.role || 'admin'
+    });
+    await saveSupplierBillBasics(supplierName, req.body.supplierGstin, {
+      phone: req.body.supplierPhone,
+      address: req.body.supplierAddress,
+      city: req.body.supplierCity,
+      state: req.body.supplierState,
+      pincode: req.body.supplierPincode,
+      contactPerson: req.body.supplierContactPerson,
+      email: req.body.supplierEmail
     });
 
     AuditLog.create({ action: 'CREATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: bill._id.toString(), message: `Purchase invoice ${invoiceNumber} saved`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal, balanceDue, paymentStatus }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (CREATE_PURCHASE_BILL):', err.message));
@@ -979,7 +1078,7 @@ const updatePurchaseBill = async (req, res) => {
     for (const item of validItems) {
       const existing = existingByUpdateItem.get(item);
       const stockAdded = item.quantity + item.freeQuantity;
-      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, billImage: updatedPrimaryBillImage };
+      const medicineData = { mrp: item.mrp, sellingPrice: item.sellingPrice, doctorPrice: item.sellingPrice, costPrice: item.netRate || item.rate, gst: item.gst, hsnCode: item.hsnCode, expiryDate: item.expiryDate, partyName: supplierName, purchaseDate: invoiceDate, purchaseInvoiceNo: invoiceNumber, billImage: updatedPrimaryBillImage };
       if (existing) {
         existing.quantity = Number(existing.quantity || 0) + stockAdded;
         Object.assign(existing, medicineData);
@@ -1255,6 +1354,13 @@ Analyze this invoice image${pages.length > 1 ? 's' : ''} and extract all details
 {
   "supplierName": "Name of supplier or vendor issuing the bill",
   "supplierGstin": "GSTIN number of the supplier",
+  "supplierPhone": "Supplier phone/mobile number if printed, otherwise empty string",
+  "supplierAddress": "Supplier address if printed, otherwise empty string",
+  "supplierCity": "Supplier city if printed, otherwise empty string",
+  "supplierState": "Supplier state if printed, otherwise empty string",
+  "supplierPincode": "Supplier pincode if printed, otherwise empty string",
+  "supplierContactPerson": "Supplier contact person if printed, otherwise empty string",
+  "supplierEmail": "Supplier email if printed, otherwise empty string",
   "invoiceNumber": "Invoice or Bill Number e.g. A001437",
   "invoiceDate": "YYYY-MM-DD date format e.g. 2026-07-24",
   "billType": "Credit or Cash or GST Invoice",
@@ -1443,6 +1549,14 @@ const getSupplierLedger = async (req, res) => {
 
     const suppliersList = Object.values(supplierMap).sort((a, b) => b.balanceDue - a.balanceDue);
 
+    // Attach full party profile (address/phone/bank etc.) to each supplier row.
+    const profiles = await Supplier.find().lean();
+    const profileMap = new Map(profiles.map((s) => [s.normalizedName, s]));
+    const suppliersWithProfiles = suppliersList.map((s) => ({
+      ...s,
+      profile: profileMap.get(normalizeForMatch(s.supplierName)) || null
+    }));
+
     return res.json({
       summary: {
         totalPurchased: Number(totalPurchased.toFixed(2)),
@@ -1450,12 +1564,175 @@ const getSupplierLedger = async (req, res) => {
         totalCreditDue: Number(totalCreditDue.toFixed(2)),
         supplierCount: suppliersList.length
       },
-      suppliers: suppliersList,
+      suppliers: suppliersWithProfiles,
       bills
     });
   } catch (err) {
     console.error('[Error] getSupplierLedger:', err.message);
     return res.status(500).json({ message: 'Could not load supplier ledger' });
+  }
+};
+
+// ADMIN: Full party profile of a single supplier (name + extended details)
+const getSupplierDetails = async (req, res) => {
+  try {
+    const name = decodeURIComponent(req.params.name).trim();
+    if (!name) return res.status(400).json({ message: 'Party name is required' });
+    const supplier = await Supplier.findOne({ normalizedName: normalizeForMatch(name) }).lean();
+    return res.json({ success: true, supplier: supplier || null });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ADMIN: Save/update full party profile (creates the Supplier doc on first save)
+const updateSupplierDetails = async (req, res) => {
+  try {
+    const name = decodeURIComponent(req.params.name).trim();
+    if (!name) return res.status(400).json({ message: 'Party name is required' });
+
+    const stringFields = ['gstin', 'phone', 'altPhone', 'email', 'contactPerson', 'address', 'city', 'state', 'pincode', 'bankName', 'accountNumber', 'ifsc', 'upiId', 'drugLicenseNo', 'notes'];
+    const data = { name, normalizedName: normalizeForMatch(name) };
+    stringFields.forEach((field) => {
+      if (req.body[field] !== undefined && req.body[field] !== null) {
+        data[field] = String(req.body[field]).trim();
+      }
+    });
+
+    const supplier = await Supplier.findOneAndUpdate(
+      { normalizedName: normalizeForMatch(name) },
+      { $set: data },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    return res.json({ success: true, message: `${name} ki details save ho gayin`, supplier });
+  } catch (err) {
+    if (err.code === 11000) return res.status(409).json({ message: 'Ye party name already exist karta hai' });
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ADMIN: Bulk payment — pay a lump-sum amount across a party's open bills
+// (oldest invoice first; optionally restricted to selected billIds).
+const paySupplierParty = async (req, res) => {
+  try {
+    const supplierName = String(req.body.supplierName || '').trim();
+    const paymentAmount = Number(req.body.amount || 0);
+    const paymentMode = String(req.body.paymentMode || 'Cash').trim();
+    const remark = String(req.body.remark || '').trim();
+    const paymentDate = req.body.paymentDate || new Date().toISOString().slice(0, 10);
+    const billIds = Array.isArray(req.body.billIds) ? req.body.billIds.filter(Boolean) : [];
+
+    if (!supplierName || !Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      return res.status(400).json({ message: 'Supplier name aur valid amount required hain' });
+    }
+
+    const baseFilter = { supplierName: new RegExp(`^${escapeRegex(supplierName)}$`, 'i') };
+    if (billIds.length > 0) baseFilter._id = { $in: billIds };
+    const bills = await PurchaseBill.find(baseFilter).sort({ invoiceDate: 1, createdAt: 1 });
+
+    let remaining = paymentAmount;
+    const applied = [];
+    for (const bill of bills) {
+      if (remaining <= 0.005) break;
+      const grandTotal = Number(bill.grandTotal || 0);
+      const hasPaidField = bill.amountPaid !== undefined && bill.amountPaid !== null;
+      const paid = hasPaidField
+        ? Number(bill.amountPaid || 0)
+        : (bill.paymentStatus === 'Paid' ? grandTotal : 0);
+      const due = Number(bill.balanceDue !== undefined && bill.balanceDue !== null
+        ? bill.balanceDue
+        : Math.max(0, grandTotal - paid));
+      if (due <= 0.005) continue;
+
+      const apply = Number(Math.min(remaining, due).toFixed(2));
+      const newPaid = Number((paid + apply).toFixed(2));
+      bill.amountPaid = newPaid;
+      bill.balanceDue = Number(Math.max(0, grandTotal - newPaid).toFixed(2));
+      bill.paymentStatus = bill.balanceDue <= 0.005 ? 'Paid' : 'Partial';
+      if (!Array.isArray(bill.paymentHistory)) bill.paymentHistory = [];
+      bill.paymentHistory.push({
+        date: paymentDate ? new Date(paymentDate) : new Date(),
+        amount: apply,
+        paymentMode,
+        remark: remark || `Bulk party payment (${supplierName})`
+      });
+      await bill.save();
+
+      applied.push({
+        _id: bill._id,
+        invoiceNumber: bill.invoiceNumber,
+        invoiceDate: bill.invoiceDate,
+        amount: apply,
+        balanceDue: bill.balanceDue,
+        paymentStatus: bill.paymentStatus
+      });
+      remaining = Number((remaining - apply).toFixed(2));
+    }
+
+    if (applied.length === 0) {
+      return res.status(400).json({ message: 'Iss party ke koi open bills nahi mile (sab paid hain).' });
+    }
+
+    AuditLog.create({
+      action: 'SUPPLIER_BULK_PAYMENT',
+      entityType: 'PurchaseBill',
+      entityId: supplierName,
+      message: `₹${Number(paymentAmount.toFixed(2))} bulk payment for ${supplierName} across ${applied.length} bills`,
+      details: { supplierName, paymentAmount, appliedCount: applied.length, paymentMode, unallocated: remaining },
+      userRole: req.user?.role || 'admin'
+    }).catch(err => console.error('Audit log error (SUPPLIER_BULK_PAYMENT):', err.message));
+
+    return res.json({
+      success: true,
+      message: `₹${Number(paymentAmount.toFixed(2))} ka payment ${supplierName} ke ${applied.length} bill(s) par distribute ho gaya.`,
+      applied,
+      unallocated: remaining
+    });
+  } catch (err) {
+    console.error('[Error] paySupplierParty:', err.message);
+    return res.status(500).json({ message: err.message || 'Party payment nahi ho saka' });
+  }
+};
+
+// ADMIN: Medicines whose expiry month has already ended (cannot be sold)
+const getExpiredMedicines = async (req, res) => {
+  try {
+    const now = new Date();
+    const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const meds = await Medicine.find({
+      expiryDate: { $lt: startOfCurrentMonth },
+      $or: [{ quantity: { $gt: 0 } }, { looseQty: { $gt: 0 } }]
+    })
+      .sort({ expiryDate: 1 })
+      .lean();
+    return res.json(meds);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// Party-typo checker: returns names in the ledger similar to the entered name.
+const getSimilarSuppliers = async (req, res) => {
+  try {
+    const name = String(req.query.name || '').trim();
+    if (name.length < 2) return res.json({ similar: [], exact: null });
+
+    const candidates = await allKnownSupplierNames();
+    const exact = candidates.find((c) => c.toLowerCase() === name.toLowerCase()) || null;
+    if (exact) return res.json({ similar: [], exact });
+
+    const matches = [];
+    for (const candidate of candidates) {
+      const ratio = similarityRatio(name, candidate);
+      if (ratio >= 0.78 && (candidate[0] || '').toLowerCase() === (name[0] || '').toLowerCase()) {
+        matches.push({ name: candidate, ratio: Math.round(ratio * 100) });
+      }
+    }
+    matches.sort((a, b) => b.ratio - a.ratio);
+    return res.json({ similar: matches.slice(0, 3), exact: null });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 };
 
@@ -1515,6 +1792,65 @@ const deleteSupplierParty = async (req, res) => {
   }
 };
 
+// ADMIN: Merge a typo/duplicate party into the canonical party name.
+const mergeSupplierParties = async (req, res) => {
+  try {
+    const sourceName = String(req.body.sourceName || '').trim();
+    const targetName = String(req.body.targetName || '').trim();
+    if (!sourceName || !targetName || normalizeForMatch(sourceName) === normalizeForMatch(targetName)) {
+      return res.status(400).json({ message: 'Source aur target party alag hone chahiye.' });
+    }
+
+    const sourceRegex = new RegExp(`^${escapeRegex(sourceName)}$`, 'i');
+    const targetRegex = new RegExp(`^${escapeRegex(targetName)}$`, 'i');
+    const sourceBills = await PurchaseBill.find({ supplierName: sourceRegex }).lean();
+    if (sourceBills.length === 0) {
+      return res.status(404).json({ message: `Source party '${sourceName}' nahi mili.` });
+    }
+
+    const targetBill = await PurchaseBill.findOne({ supplierName: targetRegex }).select('supplierGstin');
+    await PurchaseBill.updateMany({ supplierName: sourceRegex }, {
+      $set: {
+        supplierName: targetName,
+        ...(targetBill?.supplierGstin ? {} : {})
+      }
+    });
+    await Medicine.updateMany({ partyName: sourceRegex }, { $set: { partyName: targetName } });
+
+    const sourceProfile = await Supplier.findOne({ normalizedName: normalizeForMatch(sourceName) }).lean();
+    const targetProfile = await Supplier.findOne({ normalizedName: normalizeForMatch(targetName) });
+    if (sourceProfile) {
+      if (targetProfile) {
+        const fields = ['gstin', 'phone', 'altPhone', 'email', 'contactPerson', 'address', 'city', 'state', 'pincode', 'bankName', 'accountNumber', 'ifsc', 'upiId', 'drugLicenseNo', 'notes'];
+        fields.forEach((field) => {
+          if (!targetProfile[field] && sourceProfile[field]) targetProfile[field] = sourceProfile[field];
+        });
+        await targetProfile.save();
+        await Supplier.deleteOne({ _id: sourceProfile._id });
+      } else {
+        await Supplier.updateOne(
+          { _id: sourceProfile._id },
+          { $set: { name: targetName, normalizedName: normalizeForMatch(targetName) } }
+        );
+      }
+    }
+
+    AuditLog.create({
+      action: 'MERGE_SUPPLIER_PARTIES',
+      entityType: 'Supplier',
+      entityId: targetName,
+      message: `Supplier party '${sourceName}' merged into '${targetName}'`,
+      details: { sourceName, targetName, movedBills: sourceBills.length },
+      userRole: req.user?.role || 'admin'
+    }).catch(err => console.error('Audit log error (MERGE_SUPPLIER_PARTIES):', err.message));
+
+    return res.json({ success: true, message: `${sourceName} ko ${targetName} ke ledger me merge kar diya.`, movedBills: sourceBills.length });
+  } catch (err) {
+    console.error('[Error] mergeSupplierParties:', err.message);
+    return res.status(500).json({ message: err.message || 'Party merge nahi ho saka' });
+  }
+};
+
 // ADMIN: Manually add an old purchase bill to the supplier ledger (no stock added)
 const createManualSupplierBill = async (req, res) => {
   try {
@@ -1530,6 +1866,16 @@ const createManualSupplierBill = async (req, res) => {
 
     const duplicate = await PurchaseBill.findOne({ supplierName: new RegExp(`^${supplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), invoiceNumber });
     if (duplicate) return res.status(409).json({ message: 'This supplier invoice is already saved' });
+
+    const typoCheckManual = await ensureNoTypoSupplier(supplierName, String(req.body.confirmNewSupplier || ''));
+    if (typoCheckManual) {
+      return res.status(409).json({
+        message: `Party '${supplierName}' ledger me pehle se '${typoCheckManual.similarTo}' naam se hai (${Math.round(typoCheckManual.ratio * 100)}% match). Kya ye wahi party hai? Yadi hain to correct name use karein, warna naya ledger banane ki confirm karein.`,
+        similarTo: typoCheckManual.similarTo,
+        ratio: Math.round(typoCheckManual.ratio * 100),
+        confirmable: true
+      });
+    }
 
     amountPaid = Math.min(billAmount, Math.max(0, amountPaid));
     const balanceDue = Number(Math.max(0, billAmount - amountPaid).toFixed(2));
@@ -1590,6 +1936,7 @@ const createManualSupplierBill = async (req, res) => {
       paymentHistory,
       createdBy: req.user?.role || 'admin'
     });
+    await saveSupplierBillBasics(supplierName, req.body.supplierGstin);
 
     AuditLog.create({
       action: 'CREATE_MANUAL_SUPPLIER_BILL',
@@ -1684,5 +2031,6 @@ module.exports = {
   getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
   sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
   getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment, updatePurchaseBill, deletePurchaseBill, checkDuplicateBill,
+  getExpiredMedicines, getSupplierDetails, updateSupplierDetails, paySupplierParty, getSimilarSuppliers, mergeSupplierParties,
   autoDetectScheduleH1, getScheduleCategories
 };

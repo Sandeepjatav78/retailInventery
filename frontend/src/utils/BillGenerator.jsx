@@ -220,7 +220,7 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
                                 <td>${i + 1}</td>
                                 <td>
                                   <div style="font-weight:700; color:#000;">${item.name}</div>
-                                  <div style="font-size:8px; color:#666">Exp: ${item.expiry ? new Date(item.expiry).toLocaleDateString("en-IN", { month: "short", year: "2-digit" }) : "-"}</div>
+                                  <div style="font-size:8px; color:#666">Exp: ${item.expiry ? new Date(item.expiry).toLocaleDateString("en-IN", { month: "short", year: "2-digit" }) : "-"}${item.purchaseInvoiceNo ? ` · Purchase Inv: ${item.purchaseInvoiceNo}` : ""}</div>
                                   ${item.discount > 0 ? `<div style="font-size:8px; color:#16a34a; font-weight:600;">You saved ₹${(((item.mrp || 0) - (item.price || 0)) * (item.quantity || 0)).toFixed(2)}</div>` : ""}
                                 </td>
                                 <td>${item.hsn || "-"}</td>

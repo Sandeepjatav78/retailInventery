@@ -23,6 +23,7 @@ const MedicineSchema = new mongoose.Schema({
   expiryDate: { type: Date, required: true },
   partyName: { type: String },
   purchaseDate: { type: Date },
+  purchaseInvoiceNo: { type: String },
   billImage: { type: String },
   isKachiEntry: { type: Boolean, default: false },
   canShowInAdminInventory: { type: Boolean, default: true },

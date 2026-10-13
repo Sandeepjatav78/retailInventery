@@ -10,6 +10,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
   const [showCP, setShowCP] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [stockFilter, setStockFilter] = useState('all');
+  const [expiryView, setExpiryView] = useState('active');
   const [expiryFilter, setExpiryFilter] = useState('');
   const [minQtyFilter, setMinQtyFilter] = useState('');
   const [maxQtyFilter, setMaxQtyFilter] = useState('');
@@ -49,6 +50,11 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
             const loose = m.looseQty || 0;
             const stockAvailable = baseQty > 0 || loose > 0; // hide fully out-of-stock items
             if (!stockAvailable) return false;
+            const expiryDate = new Date(m.expiryDate);
+            const expiryMonthEnd = new Date(expiryDate.getFullYear(), expiryDate.getMonth() + 1, 0, 23, 59, 59, 999);
+            const isExpired = !Number.isNaN(expiryDate.getTime()) && expiryMonthEnd < new Date();
+            if (expiryView === 'expired' && !isExpired) return false;
+            if (expiryView === 'active' && isExpired) return false;
             if (stockFilter === 'loose' && loose <= 0) return false;
             if (userRole === 'staff' && !hasCompleteInventoryData(m)) return false;
 
@@ -209,12 +215,13 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
   const clearFilters = () => {
     setSearchTerm('');
     setStockFilter('all');
+    setExpiryView('active');
     setExpiryFilter('');
     setMinQtyFilter('');
     setMaxQtyFilter('');
   };
 
-  const isFilterActive = searchTerm || stockFilter !== 'all' || expiryFilter || minQtyFilter || maxQtyFilter;
+  const isFilterActive = searchTerm || stockFilter !== 'all' || expiryView !== 'active' || expiryFilter || minQtyFilter || maxQtyFilter;
 
   const scheduleBadge = (cat) => {
     if (!cat || cat === 'None') return <span className="text-gray-300 text-xs">-</span>;
@@ -245,6 +252,11 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                         className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
                     />
                     <span className="absolute left-3 top-2.5 text-gray-400">🔍</span>
+                </div>
+                <div className="flex rounded-lg border border-gray-300 overflow-hidden text-xs font-semibold">
+                    <button onClick={() => setExpiryView('active')} className={`px-3 py-2 ${expiryView === 'active' ? 'bg-teal-600 text-white' : 'bg-white text-gray-600'}`}>Valid stock</button>
+                    <button onClick={() => setExpiryView('expired')} className={`px-3 py-2 ${expiryView === 'expired' ? 'bg-red-600 text-white' : 'bg-white text-gray-600'}`}>Expired stock</button>
+                    <button onClick={() => setExpiryView('all')} className={`px-3 py-2 ${expiryView === 'all' ? 'bg-slate-600 text-white' : 'bg-white text-gray-600'}`}>All</button>
                 </div>
                 <div className="flex rounded-lg border border-gray-300 overflow-hidden text-xs font-semibold">
                     <button onClick={() => setStockFilter('all')} className={`px-3 py-2 ${stockFilter === 'all' ? 'bg-teal-600 text-white' : 'bg-white text-gray-600'}`}>All stock</button>

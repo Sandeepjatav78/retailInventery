@@ -32,13 +32,19 @@ router.get('/search', inventoryController.searchMedicines);
 router.get('/suppliers', inventoryController.getSuppliers);
 router.get('/schedule-categories', inventoryController.getScheduleCategories);
 router.get('/expiring', inventoryController.getExpiringMedicines);
+router.get('/expired', inventoryController.getExpiredMedicines);
 router.get('/dose/pending', inventoryController.getPendingEntries);
 router.get('/kachi', authorizeRoles('admin'), inventoryController.getKachiEntries);
 router.get('/purchase-bills/check-duplicate', authorizeRoles('admin'), inventoryController.checkDuplicateBill);
 router.get('/purchase-bills', authorizeRoles('admin'), inventoryController.getPurchaseBills);
 router.get('/supplier-ledger', authorizeRoles('admin'), inventoryController.getSupplierLedger);
+router.get('/supplier-ledger/:name/details', authorizeRoles('admin'), inventoryController.getSupplierDetails);
 router.post('/supplier-ledger/manual-bill', authorizeRoles('admin'), inventoryController.createManualSupplierBill);
+router.post('/supplier-ledger/pay', authorizeRoles('admin'), inventoryController.paySupplierParty);
+router.put('/supplier-ledger/:name', authorizeRoles('admin'), inventoryController.updateSupplierDetails);
+router.post('/supplier-ledger/merge', authorizeRoles('admin'), inventoryController.mergeSupplierParties);
 router.delete('/supplier-ledger/:name', authorizeRoles('admin'), inventoryController.deleteSupplierParty);
+router.get('/suppliers/similar', authorizeRoles('admin'), inventoryController.getSimilarSuppliers);
 router.get('/purchase-returns', authorizeRoles('staff'), inventoryController.getPurchaseReturns);
 
 // 2. POST Methods

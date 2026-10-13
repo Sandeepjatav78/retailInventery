@@ -5,6 +5,63 @@ import { filterMedicinesFromCache, getCachedMedicines, syncMedicinesCache } from
 
 /* eslint-disable react-hooks/set-state-in-effect */
 
+// --- EXPIRY & COST-PRICE HELPERS ---
+const getExpiryInfo = (expiryDate) => {
+  if (!expiryDate) return null;
+  const d = new Date(expiryDate);
+  if (isNaN(d.getTime())) return null;
+  const endOfMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+  const now = new Date();
+  return { date: d, endOfMonth, isExpired: now > endOfMonth, daysLeft: Math.floor((endOfMonth - now) / 86400000) };
+};
+
+const formatExpiryShort = (v) => {
+  if (!v) return "-";
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? String(v) : d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+};
+
+// True when stock is not yet expired but its expiry month ends within `withinDays`.
+const isExpiringSoon = (v, withinDays = 90) => {
+  const info = getExpiryInfo(v);
+  if (!info || info.isExpired) return false;
+  return info.daysLeft <= withinDays;
+};
+
+const formatDateFull = (v) => {
+  if (!v) return "-";
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? String(v) : d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+};
+
+// Opens a small read-only window showing the cost price details of an item (#6).
+const openCostPriceWindow = (item) => {
+  const w = window.open("", "_blank", "width=400,height=500");
+  if (!w) return alert("Popup blocked! Allow popups to view cost details.");
+  const safeName = String(item.name || "Item").replace(/</g, "&lt;");
+  const rows = [
+    ["Cost Price (CP)", `₹${Number(item.costPrice || 0).toFixed(2)}`, "#b91c1c"],
+    ["Selling Price", `₹${Number(item.price || item.sellingPrice || 0).toFixed(2)}`, "#0f766e"],
+    ["MRP", `₹${Number(item.mrp || 0).toFixed(2)}`, ""],
+    ["Discount", `${Number(item.discount || 0).toFixed(2)}%`, ""],
+    ["GST", `${Number(item.gst || 0)}%`, ""],
+    ["Stock Available", `${Number(item.maxStock ?? item.quantity ?? 0)} packs`, ""],
+    ["Purchase Invoice", String(item.purchaseInvoiceNo || "-"), ""],
+    ["Party / Supplier", String(item.partyName || "-"), ""]
+  ];
+  const tableHTML = rows
+    .map(([k, v, color]) => `<tr><td style="padding:7px 4px; border-bottom:1px solid #f3f4f6; color:#374151;">${k}</td><td style="padding:7px 4px; border-bottom:1px solid #f3f4f6; text-align:right; font-weight:bold; color:${color || "#111827"};">${v}</td></tr>`)
+    .join("");
+  w.document.write(`<html><head><title>Cost Details</title></head><body style="background:#f9fafb; margin:0;">
+    <div style="font-family: Arial, sans-serif; max-width: 360px; margin: 24px auto; padding: 22px; border: 2px solid #e5e7eb; border-radius: 12px; background:#fff;">
+      <h2 style="margin:0 0 4px; font-size:16px; color:#0f766e;">${safeName}</h2>
+      <div style="font-size:12px; color:#6b7280; margin-bottom:14px;">Batch: ${String(item.batch || "-")} &nbsp;|&nbsp; Exp: ${formatDateFull(item.expiry || item.expiryDate)}</div>
+      <table style="width:100%; font-size:13px; border-collapse:collapse;">${tableHTML}</table>
+      <div style="margin-top:14px; font-size:11px; color:#9ca3af; text-align:center;">Cost details are for pharmacy reference only.</div>
+    </div></body></html>`);
+  w.document.close();
+};
+
 const SaleForm = () => {
   const getSavedState = (key, defaultValue) => {
     try {
@@ -281,15 +338,14 @@ const SaleForm = () => {
       return alert("❌ This product has no HSN. Staff cannot bill it.");
     }
 
-    // Purchase Date Restriction Check
-    const pDate = med.purchaseDate ? new Date(med.purchaseDate) : (med.createdAt ? new Date(med.createdAt) : null);
-    if (pDate) {
-      const today = new Date();
-      const pDateOnly = new Date(pDate.getFullYear(), pDate.getMonth(), pDate.getDate());
-      const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      if (todayOnly < pDateOnly) {
-        return alert(`❌ Item cannot be sold before its purchase date!\nPurchase Date: ${pDate.toLocaleDateString('en-IN')}`);
-      }
+    // Expiry checks — expired stock can never be sold; near-expiry confirms once.
+    const expiryInfo = getExpiryInfo(med.expiryDate);
+    if (expiryInfo && expiryInfo.isExpired) {
+      return alert(`❌ This item is EXPIRED (${formatDateFull(expiryInfo.date)}) and cannot be sold.`);
+    }
+    if (expiryInfo && expiryInfo.daysLeft <= 90) {
+      const proceed = window.confirm(`⚠️ EXPIRY WARNING: This stock expires on ${formatExpiryShort(expiryInfo.date)} (${Math.max(0, expiryInfo.daysLeft)} days left). Add anyway?`);
+      if (!proceed) return;
     }
 
     setLastSale(null);
@@ -311,6 +367,7 @@ const SaleForm = () => {
           medicineId: med._id, name: med.productName, mrp: med.mrp, price: med.sellingPrice,
           costPrice: med.costPrice || 0, maxDiscount: med.maxDiscount || 0, discount: discount.toFixed(2),
           gst: med.gst || 0, hsn: String(med.hsnCode || '').trim(), batch: med.batchNumber || "N/A", expiry: med.expiryDate,
+          purchaseInvoiceNo: med.purchaseInvoiceNo || "", partyName: med.partyName || "",
           quantity: 1, maxStock: med.quantity, packSize: med.packSize || 1, unit: 'pack', total: med.sellingPrice 
       }]);
     }
@@ -531,7 +588,11 @@ const SaleForm = () => {
                           </span>
                         )}
                         <span>| Batch: {med.batchNumber}</span>
-                        <span>| {med.costPrice}</span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); openCostPriceWindow(med); }}
+                          className="bg-red-50 text-red-600 border border-red-200 text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer hover:bg-red-100"
+                          title="View cost price details"
+                        >₹ CP</button>
                         <span>| GST: {med.gst || 0}%</span>
                       </div>
                     </div>
@@ -582,7 +643,15 @@ const SaleForm = () => {
                   <tr key={idx} className="hover:bg-gray-50 transition-colors group">
                     <td className="px-4 py-3">
                       <div className="font-semibold text-gray-800 text-sm">{item.name}</div>
-                      {!isStaff && <div className="text-xs text-gray-500">Batch: {item.batch} | Pack: {item.packSize}</div>}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {!isStaff && <button onClick={() => openCostPriceWindow(item)} className="text-[10px] font-bold text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded hover:bg-red-100" title="View cost price details">₹ CP</button>}
+                        <div className="text-xs text-gray-500">Batch: {item.batch} | Pack: {item.packSize}</div>
+                        {item.expiry && (
+                          <span className={`text-[10px] font-semibold ${isExpiringSoon(item.expiry) ? 'text-orange-600' : 'text-gray-400'}`}>
+                            {isExpiringSoon(item.expiry) ? '⚠️' : ''} Exp: {formatExpiryShort(item.expiry)}
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {!isStaff && <td className="px-2 py-3 text-center text-gray-400 text-sm">₹{item.mrp}</td>}

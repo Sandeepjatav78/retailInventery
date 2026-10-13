@@ -102,6 +102,17 @@ const DailyReport = () => {
     setSearchTerm('');
   };
 
+  // Shift both dates by N days — handy for jumping to the next/previous day's report.
+  const shiftDays = (delta) => {
+    const addDays = (dateStr, days) => {
+      const d = new Date(`${dateStr}T00:00:00`);
+      d.setDate(d.getDate() + days);
+      return getLocalDateString(d);
+    };
+    setDates(prev => ({ start: addDays(prev.start, delta), end: addDays(prev.end, delta) }));
+    setSearchTerm('');
+  };
+
   // --- 🔥 GST EXCEL EXPORT LOGIC ---
   const handleExportGST = () => {
     if (!report || !report.transactions || report.transactions.length === 0) {
@@ -291,10 +302,12 @@ const DailyReport = () => {
             <button onClick={() => setRange('today')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Today</button>
             <div className="h-4 w-px bg-gray-300"></div>
             <button onClick={() => setRange('month')} className="text-xs font-bold text-gray-600 hover:text-teal-600">Month</button>
-            
+
+            <button onClick={() => shiftDays(-1)} title="Previous day" className="text-xs font-bold text-gray-600 hover:text-teal-600">← Prev</button>
             <input type="date" value={dates.start} onChange={e => setDates({...dates, start: e.target.value})} className="text-xs border rounded p-1" />
             <span className="text-xs">-</span>
             <input type="date" value={dates.end} onChange={e => setDates({...dates, end: e.target.value})} className="text-xs border rounded p-1" />
+            <button onClick={() => shiftDays(1)} title="Next day" className="text-xs font-bold text-gray-600 hover:text-teal-600">Next →</button>
 
             <select
                 value={paymentFilter}

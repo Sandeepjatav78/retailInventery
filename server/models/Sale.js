@@ -29,6 +29,9 @@ const SaleSchema = new mongoose.Schema({
       customerLastPrice: { type: Number },
       customerLastPriceDate: { type: Date },
       purchasePrice: { type: Number },
+      // Supplier/purchase invoice this stock came from — snapshotted so the bill
+      // can show it (helps when an item is sold before its purchase was entered).
+      purchaseInvoiceNo: { type: String },
       total: { type: Number },
 
       // Snapshot of the medicine's drug schedule at sale time (India — full A-Z schedule set)

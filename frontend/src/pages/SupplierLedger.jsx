@@ -23,6 +23,13 @@ const SupplierLedger = () => {
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [payRemark, setPayRemark] = useState('');
   const [submittingPay, setSubmittingPay] = useState(false);
+  const [selectedBillIds, setSelectedBillIds] = useState([]);
+  const [bulkPaymentOpen, setBulkPaymentOpen] = useState(false);
+  const [partyFormOpen, setPartyFormOpen] = useState(false);
+  const [mergeFormOpen, setMergeFormOpen] = useState(false);
+  const [partyForm, setPartyForm] = useState({});
+  const [savingParty, setSavingParty] = useState(false);
+  const [mergeTarget, setMergeTarget] = useState('');
 
   // Delete Party Modal State
   const [deleteParty, setDeleteParty] = useState(null);
@@ -64,6 +71,92 @@ const SupplierLedger = () => {
   useEffect(() => {
     fetchLedger();
   }, []);
+
+  const emptyPartyForm = (name = '', profile = {}) => ({
+    name,
+    gstin: profile.gstin || '',
+    phone: profile.phone || '',
+    altPhone: profile.altPhone || '',
+    email: profile.email || '',
+    contactPerson: profile.contactPerson || '',
+    address: profile.address || '',
+    city: profile.city || '',
+    state: profile.state || '',
+    pincode: profile.pincode || '',
+    bankName: profile.bankName || '',
+    accountNumber: profile.accountNumber || '',
+    ifsc: profile.ifsc || '',
+    upiId: profile.upiId || '',
+    drugLicenseNo: profile.drugLicenseNo || '',
+    notes: profile.notes || ''
+  });
+
+  const openPartyDetails = async (party = activePartyObj) => {
+    if (!party) return;
+    try {
+      const res = await api.get(`/medicines/supplier-ledger/${encodeURIComponent(party.supplierName)}/details`);
+      setPartyForm(emptyPartyForm(party.supplierName, res.data?.supplier || party.profile || { gstin: party.supplierGstin }));
+    } catch {
+      setPartyForm(emptyPartyForm(party.supplierName, party.profile || { gstin: party.supplierGstin }));
+    }
+    setPartyFormOpen(true);
+  };
+
+  const savePartyDetails = async (e) => {
+    e.preventDefault();
+    if (!partyForm.name?.trim()) return;
+    setSavingParty(true);
+    try {
+      await api.put(`/medicines/supplier-ledger/${encodeURIComponent(partyForm.name.trim())}`, partyForm);
+      setPartyFormOpen(false);
+      fetchLedger();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Party details save nahi ho sakin.');
+    } finally {
+      setSavingParty(false);
+    }
+  };
+
+  const toggleBill = (id) => setSelectedBillIds((prev) => prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]);
+
+  const handleBulkPayment = async (e) => {
+    e.preventDefault();
+    const amount = Number(payAmount);
+    if (!activePartyObj || !Number.isFinite(amount) || amount <= 0) return alert('Valid payment amount bharein.');
+    try {
+      setSubmittingPay(true);
+      const res = await api.post('/medicines/supplier-ledger/pay', {
+        supplierName: activePartyObj.supplierName,
+        amount,
+        billIds: selectedBillIds,
+        paymentMode: payMode,
+        paymentDate: payDate,
+        remark: payRemark
+      });
+      alert(res.data?.message || 'Payment bills par distribute ho gaya.');
+      setBulkPaymentOpen(false);
+      setSelectedBillIds([]);
+      fetchLedger();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Bulk payment save nahi ho saka.');
+    } finally {
+      setSubmittingPay(false);
+    }
+  };
+
+  const handleMergeParty = async (e) => {
+    e.preventDefault();
+    if (!selectedParty || !mergeTarget) return;
+    try {
+      const res = await api.post('/medicines/supplier-ledger/merge', { sourceName: selectedParty, targetName: mergeTarget });
+      alert(res.data?.message || 'Party merge ho gayi.');
+      setMergeFormOpen(false);
+      setSelectedParty(mergeTarget);
+      fetchLedger();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Party merge nahi ho saki.');
+    }
+  };
 
   const handleOpenPayModal = (bill) => {
     const due = Number(bill.balanceDue ?? Math.max(0, (bill.grandTotal || 0) - (bill.amountPaid || 0)));
@@ -177,6 +270,15 @@ const SupplierLedger = () => {
 
   // Selected Party Object & Bills
   const activePartyObj = suppliers.find(s => s.supplierName.toLowerCase() === (selectedParty || '').toLowerCase());
+  const hasFullPartyDetails = Boolean(activePartyObj?.profile && [
+    activePartyObj.profile.gstin,
+    activePartyObj.profile.phone,
+    activePartyObj.profile.address,
+    activePartyObj.profile.contactPerson,
+    activePartyObj.profile.city,
+    activePartyObj.profile.state,
+    activePartyObj.profile.pincode
+  ].some((value) => String(value || '').trim()));
   const activePartyBills = bills.filter(bill => {
     if (!selectedParty) return false;
     const matchesParty = String(bill.supplierName).toLowerCase() === selectedParty.toLowerCase();
@@ -187,6 +289,15 @@ const SupplierLedger = () => {
       String(bill.paymentRemarks || '').toLowerCase().includes(q);
     return matchesParty && matchesStatus && matchesSearch;
   });
+  const billDue = (bill) => {
+    const total = Number(bill.grandTotal || 0);
+    const paid = Number(bill.amountPaid || (bill.paymentStatus === 'Paid' ? total : 0));
+    return Math.max(0, Number(bill.balanceDue ?? (total - paid)));
+  };
+  const selectableBills = activePartyBills.filter((bill) => billDue(bill) > 0);
+  const selectedDue = activePartyBills
+    .filter((bill) => selectedBillIds.includes(String(bill._id)))
+    .reduce((sum, bill) => sum + billDue(bill), 0);
 
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
@@ -203,6 +314,31 @@ const SupplierLedger = () => {
               <p className="text-xs md:text-sm text-slate-500 mt-1">
                 Pehle supplier party select karein, uske baad andar unke saare bills & credit details dekhein.
               </p>
+            </div>
+            <div className="px-5 py-3 bg-teal-50 border-b border-teal-100 flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => {
+                  setPayAmount(selectedDue.toFixed(2));
+                  setPayMode('UPI');
+                  setPayDate(new Date().toISOString().slice(0, 10));
+                  setPayRemark('');
+                  setBulkPaymentOpen(true);
+                }}
+                disabled={!selectedBillIds.length}
+                className="px-3 py-2 rounded-lg bg-teal-600 text-white text-xs font-bold disabled:opacity-40"
+              >
+                💳 Pay Selected Bills ({selectedBillIds.length})
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedBillIds(selectableBills.map((bill) => String(bill._id)));
+                }}
+                disabled={!selectableBills.length}
+                className="px-3 py-2 rounded-lg bg-white text-teal-700 border border-teal-200 text-xs font-bold disabled:opacity-40"
+              >
+                Select All Due
+              </button>
+              {selectedBillIds.length > 0 && <button onClick={() => setSelectedBillIds([])} className="text-xs font-bold text-slate-500">Clear selection</button>}
             </div>
             <div className="flex flex-wrap gap-3">
               <button
@@ -286,7 +422,7 @@ const SupplierLedger = () => {
                 {filteredSuppliers.map((sup, idx) => (
                   <div
                     key={idx}
-                    onClick={() => { setSelectedParty(sup.supplierName); setSearchQuery(''); }}
+                    onClick={() => { setSelectedParty(sup.supplierName); setSearchQuery(''); setSelectedBillIds([]); }}
                     className="group bg-slate-50/60 hover:bg-teal-50/50 p-5 rounded-2xl border border-slate-200 hover:border-teal-400 shadow-xs hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
                   >
                     <div>
@@ -360,6 +496,17 @@ const SupplierLedger = () => {
                 {activePartyObj?.supplierGstin && (
                   <p className="text-xs text-slate-500 mt-0.5">GSTIN: {activePartyObj.supplierGstin}</p>
                 )}
+                <p className={`text-xs mt-2 font-semibold ${hasFullPartyDetails ? 'text-green-700' : 'text-amber-700'}`}>
+                  {hasFullPartyDetails ? '✅ Party details saved' : '⚠️ Full party details missing'}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={() => openPartyDetails()} className="px-3 py-2 rounded-lg bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold">
+                  {activePartyObj?.profile ? '✏️ Edit Party Details' : '➕ Fill Party Details'}
+                </button>
+                <button onClick={() => { setMergeTarget(''); setMergeFormOpen(true); }} className="px-3 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold">
+                  🔗 Merge / Correct Name
+                </button>
               </div>
 
               {/* PARTY TOTAL SUMMARY */}
@@ -419,6 +566,7 @@ const SupplierLedger = () => {
               <table className="w-full text-left text-xs sm:text-sm">
                 <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-extrabold text-[11px] border-b border-slate-200">
                   <tr>
+                    <th className="px-4 py-3">Select</th>
                     <th className="px-4 py-3">Bill Date</th>
                     <th className="px-4 py-3">Invoice No.</th>
                     <th className="px-4 py-3 text-right">Bill Total</th>
@@ -432,7 +580,7 @@ const SupplierLedger = () => {
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                   {activePartyBills.length === 0 ? (
                     <tr>
-                      <td colSpan="8" className="text-center py-8 text-slate-400 italic">Iss party ke koi matching bills nahi mile.</td>
+                      <td colSpan="9" className="text-center py-8 text-slate-400 italic">Iss party ke koi matching bills nahi mile.</td>
                     </tr>
                   ) : (
                     activePartyBills.map((bill) => {
@@ -443,6 +591,15 @@ const SupplierLedger = () => {
 
                       return (
                         <tr key={bill._id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="px-4 py-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedBillIds.includes(String(bill._id))}
+                              disabled={due <= 0}
+                              onChange={() => toggleBill(String(bill._id))}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </td>
                           <td className="px-4 py-3 font-semibold text-slate-600 whitespace-nowrap">
                             {new Date(bill.invoiceDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                           </td>
@@ -665,6 +822,113 @@ const SupplierLedger = () => {
                 >
                   {savingManual ? 'Saving...' : '✅ Save Old Bill'}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {partyFormOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-lg">🏢 Full Party Details</h3>
+                <p className="text-xs text-slate-500">Bill se milne wali GSTIN ke saath phone, address aur bank details save karein.</p>
+              </div>
+              <button onClick={() => setPartyFormOpen(false)} className="text-slate-400 text-xl font-bold">✕</button>
+            </div>
+            <form onSubmit={savePartyDetails} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {[
+                ['name', 'Party Name *'], ['gstin', 'GSTIN'], ['phone', 'Phone'], ['altPhone', 'Alternate Phone'],
+                ['email', 'Email'], ['contactPerson', 'Contact Person'], ['address', 'Address'], ['city', 'City'],
+                ['state', 'State'], ['pincode', 'Pincode'], ['bankName', 'Bank Name'], ['accountNumber', 'Account Number'],
+                ['ifsc', 'IFSC'], ['upiId', 'UPI ID'], ['drugLicenseNo', 'Drug License No.']
+              ].map(([field, label]) => (
+                <label key={field} className={field === 'address' ? 'sm:col-span-2 text-xs font-bold text-slate-600' : 'text-xs font-bold text-slate-600'}>
+                  {label}
+                  <input
+                    required={field === 'name'}
+                    value={partyForm[field] || ''}
+                    onChange={(e) => setPartyForm((prev) => ({ ...prev, [field]: e.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm font-medium outline-none focus:border-teal-500"
+                  />
+                </label>
+              ))}
+              <label className="sm:col-span-2 text-xs font-bold text-slate-600">
+                Notes
+                <textarea value={partyForm.notes || ''} onChange={(e) => setPartyForm((prev) => ({ ...prev, notes: e.target.value }))} rows="2" className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm outline-none focus:border-teal-500" />
+              </label>
+              <div className="sm:col-span-2 flex gap-3 pt-2">
+                <button type="button" onClick={() => setPartyFormOpen(false)} className="flex-1 py-2.5 rounded-lg border border-slate-300 font-bold text-xs">Cancel</button>
+                <button type="submit" disabled={savingParty} className="flex-1 py-2.5 rounded-lg bg-teal-600 text-white font-bold text-xs disabled:opacity-50">{savingParty ? 'Saving...' : '✅ Save Details'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {mergeFormOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-amber-200 space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-lg">🔗 Merge Party Ledger</h3>
+                <p className="text-xs text-slate-500">Galat naam ke saare bills, stock references aur details sahi party me chale jayenge.</p>
+              </div>
+              <button onClick={() => setMergeFormOpen(false)} className="text-slate-400 text-xl font-bold">✕</button>
+            </div>
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm">
+              <span className="text-xs text-amber-700 font-bold block">Current / source party</span>
+              <span className="font-extrabold text-slate-800">{selectedParty}</span>
+            </div>
+            <form onSubmit={handleMergeParty} className="space-y-3">
+              <label className="block text-xs font-bold text-slate-600">
+                Correct target party
+                <select required value={mergeTarget} onChange={(e) => setMergeTarget(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm bg-white">
+                  <option value="">Select party</option>
+                  {suppliers.filter((sup) => sup.supplierName.toLowerCase() !== String(selectedParty || '').toLowerCase()).map((sup) => (
+                    <option key={sup.supplierName} value={sup.supplierName}>{sup.supplierName}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setMergeFormOpen(false)} className="flex-1 py-2.5 rounded-lg border border-slate-300 font-bold text-xs">Cancel</button>
+                <button type="submit" className="flex-1 py-2.5 rounded-lg bg-amber-600 text-white font-bold text-xs">Merge Ledger</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {bulkPaymentOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-teal-200 space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-lg">💳 Pay Multiple Bills</h3>
+                <p className="text-xs text-slate-500">{selectedBillIds.length} selected bills · due {money(selectedDue)}</p>
+              </div>
+              <button onClick={() => setBulkPaymentOpen(false)} className="text-slate-400 text-xl font-bold">✕</button>
+            </div>
+            <form onSubmit={handleBulkPayment} className="space-y-3">
+              <label className="block text-xs font-bold text-slate-600">Payment Amount (₹)
+                <input type="number" min="0.01" step="0.01" required value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm font-bold" />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-xs font-bold text-slate-600">Mode
+                  <select value={payMode} onChange={(e) => setPayMode(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs bg-white">
+                    <option>UPI</option><option>Cash</option><option>Bank Transfer</option><option>Cheque</option>
+                  </select>
+                </label>
+                <label className="text-xs font-bold text-slate-600">Date
+                  <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs" />
+                </label>
+              </div>
+              <input value={payRemark} onChange={(e) => setPayRemark(e.target.value)} placeholder="Payment reference / remark" className="w-full rounded-lg border border-slate-300 p-2.5 text-xs" />
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setBulkPaymentOpen(false)} className="flex-1 py-2.5 rounded-lg border border-slate-300 font-bold text-xs">Cancel</button>
+                <button type="submit" disabled={submittingPay} className="flex-1 py-2.5 rounded-lg bg-teal-600 text-white font-bold text-xs disabled:opacity-50">{submittingPay ? 'Saving...' : 'Distribute Payment'}</button>
               </div>
             </form>
           </div>
