@@ -785,3 +785,244 @@ exports.returnSaleItems = async (req, res) => {
     res.status(500).json({ message: 'Return failed', error: err.message });
   }
 };
+// --- 7. AUTO BILL CUTTING ---
+// Generates N random cash bills for one day, each between minAmount and
+// maxAmount, from valid stock. Two steps: /auto-bill/preview builds a plan
+// (nothing saved), /auto-bill/commit re-validates that plan against live stock
+// and saves it with real sequential invoice numbers in time order.
+const AUTO_BILL_MAX_COUNT = 200;
+const AUTO_BILL_MAX_ITEMS = 6;
+const AUTO_BILL_MAX_QTY_PER_LINE = 3;
+
+const roundMoney = (value) => Math.round(Number(value || 0) * 100) / 100;
+const randomInt = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
+
+// Same rules a staff bill must pass, plus: only medicines already checked as
+// non-scheduled (H/H1/X etc. need a prescription register, so never auto-billed).
+const isAutoBillable = (med, saleDate) => {
+  if (!med || med.isKachiEntry) return false;
+  if (!String(med.hsnCode || '').trim()) return false;
+  if (!(Number(med.sellingPrice) > 0)) return false;
+  if (!med.scheduleAiChecked || (med.scheduleCategory && med.scheduleCategory !== 'None')) return false;
+  const expiry = med.expiryDate ? new Date(med.expiryDate) : null;
+  if (!expiry || Number.isNaN(expiry.getTime())) return false;
+  const expiryMonthEnd = new Date(expiry.getFullYear(), expiry.getMonth() + 1, 0, 23, 59, 59, 999);
+  return saleDate.getTime() <= expiryMonthEnd.getTime();
+};
+
+const buildAutoBillLine = (med, quantity) => {
+  const price = Number(med.sellingPrice || 0);
+  const mrp = Number(med.mrp || 0);
+  return {
+    medicineId: String(med._id),
+    name: med.productName,
+    hsn: String(med.hsnCode || '').trim(),
+    gst: Number(med.gst || 0),
+    batch: med.batchNumber || 'N/A',
+    expiry: med.expiryDate,
+    unit: 'pack',
+    packSize: Number(med.packSize || 1),
+    mrp,
+    discount: mrp > 0 ? Number((((mrp - price) / mrp) * 100).toFixed(2)) : 0,
+    quantity,
+    price,
+    purchasePrice: Number(med.costPrice || 0),
+    purchaseInvoiceNo: med.purchaseInvoiceNo || undefined,
+    scheduleCategory: 'None',
+    total: roundMoney(price * quantity)
+  };
+};
+
+// Picks random medicines until the bill lands inside [minAmount, maxAmount].
+// `stockLeft` is shared across bills so one plan never oversells an item.
+const buildRandomBill = (pool, stockLeft, minAmount, maxAmount) => {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const target = minAmount + Math.random() * (maxAmount - minAmount);
+    const lines = new Map();
+    let total = 0;
+
+    for (let tries = 0; tries < 300 && lines.size < AUTO_BILL_MAX_ITEMS && total < target; tries++) {
+      const med = pool[Math.floor(Math.random() * pool.length)];
+      const id = String(med._id);
+      if (lines.has(id)) continue;
+      const price = Number(med.sellingPrice);
+      const available = stockLeft.get(id) || 0;
+      if (available < 1 || total + price > maxAmount) continue;
+
+      const wanted = Math.max(1, Math.floor((target - total) / price));
+      const maxQty = Math.min(available, wanted, AUTO_BILL_MAX_QTY_PER_LINE, Math.floor((maxAmount - total) / price));
+      const quantity = randomInt(1, Math.max(1, maxQty));
+      lines.set(id, { med, quantity });
+      total += price * quantity;
+    }
+
+    total = roundMoney(total);
+    if (lines.size > 0 && total >= minAmount && total <= maxAmount) {
+      for (const [id, line] of lines) stockLeft.set(id, stockLeft.get(id) - line.quantity);
+      return { items: [...lines.values()].map(({ med, quantity }) => buildAutoBillLine(med, quantity)), totalAmount: total };
+    }
+  }
+  return null;
+};
+
+const parseAutoBillRequest = (body = {}) => {
+  const date = String(body.date || '').slice(0, 10);
+  const count = Math.floor(Number(body.count));
+  const minAmount = Number(body.minAmount);
+  const maxAmount = Number(body.maxAmount);
+  const startTime = /^\d{2}:\d{2}$/.test(String(body.startTime || '')) ? body.startTime : '09:00';
+  const endTime = /^\d{2}:\d{2}$/.test(String(body.endTime || '')) ? body.endTime : '21:00';
+  const paymentMode = body.paymentMode === 'Online' ? 'Online' : 'Cash';
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Valid bill date chahiye.' };
+  if (!Number.isFinite(count) || count < 1 || count > AUTO_BILL_MAX_COUNT) return { error: `Bills ki ginti 1 se ${AUTO_BILL_MAX_COUNT} ke beech honi chahiye.` };
+  if (!Number.isFinite(minAmount) || !Number.isFinite(maxAmount) || minAmount <= 0 || maxAmount < minAmount) return { error: 'Amount range sahi bharein (min > 0 aur max ≥ min).' };
+
+  const windowStart = new Date(`${date}T${startTime}:00.000${IST_OFFSET}`);
+  let windowEnd = new Date(`${date}T${endTime}:59.999${IST_OFFSET}`);
+  const now = new Date();
+  if (windowStart.getTime() > now.getTime()) return { error: 'Future date/time ke bills nahi ban sakte.' };
+  if (windowEnd.getTime() > now.getTime()) windowEnd = now; // today: never stamp a bill in the future
+  if (windowEnd.getTime() <= windowStart.getTime()) return { error: 'End time, start time ke baad hona chahiye.' };
+
+  return { date, count, minAmount, maxAmount, paymentMode, windowStart, windowEnd };
+};
+
+exports.previewAutoBills = async (req, res) => {
+  try {
+    const params = parseAutoBillRequest(req.body);
+    if (params.error) return res.status(400).json({ message: params.error });
+    const { count, minAmount, maxAmount, paymentMode, windowStart, windowEnd } = params;
+
+    const candidates = await Medicine.find({ quantity: { $gte: 1 }, sellingPrice: { $gt: 0 }, isKachiEntry: { $ne: true } }).lean();
+    const pool = candidates.filter((med) => isAutoBillable(med, windowEnd));
+    const skippedUnchecked = candidates.filter((med) => !med.scheduleAiChecked).length;
+
+    if (pool.length === 0) {
+      return res.status(400).json({ message: 'Auto bill ke liye koi valid stock nahi mila (HSN, expiry aur schedule check zaroori hai).', skippedUnchecked });
+    }
+
+    const stockLeft = new Map(pool.map((med) => [String(med._id), Math.floor(Number(med.quantity || 0))]));
+    const bills = [];
+    for (let i = 0; i < count; i++) {
+      const bill = buildRandomBill(pool, stockLeft, minAmount, maxAmount);
+      if (!bill) break;
+      bills.push(bill);
+    }
+
+    const span = windowEnd.getTime() - windowStart.getTime();
+    const times = bills.map(() => new Date(windowStart.getTime() + Math.floor(Math.random() * span))).sort((a, b) => a - b);
+    bills.forEach((bill, idx) => { bill.date = times[idx]; });
+
+    return res.json({
+      success: true,
+      paymentMode,
+      bills,
+      requested: count,
+      generated: bills.length,
+      grandTotal: roundMoney(bills.reduce((sum, bill) => sum + bill.totalAmount, 0)),
+      eligibleItems: pool.length,
+      skippedUnchecked
+    });
+  } catch (err) {
+    console.error('[Error] previewAutoBills:', err.message);
+    return res.status(500).json({ message: err.message || 'Auto bill preview nahi ban saka' });
+  }
+};
+
+exports.commitAutoBills = async (req, res) => {
+  try {
+    const userRole = req.user?.role || 'staff';
+    const paymentMode = req.body.paymentMode === 'Online' ? 'Online' : 'Cash';
+    const plan = Array.isArray(req.body.bills) ? req.body.bills : [];
+    if (plan.length === 0 || plan.length > AUTO_BILL_MAX_COUNT) {
+      return res.status(400).json({ message: 'Save karne ke liye koi bills nahi hain.' });
+    }
+
+    const now = new Date();
+    const normalizedPlan = plan.map((bill) => ({
+      date: new Date(bill.date),
+      items: (Array.isArray(bill.items) ? bill.items : []).map((item) => ({
+        medicineId: String(item.medicineId || ''),
+        quantity: Math.floor(Number(item.quantity))
+      }))
+    }));
+
+    // Validate the whole plan against live stock before writing anything.
+    const neededQty = new Map();
+    for (const bill of normalizedPlan) {
+      if (Number.isNaN(bill.date.getTime()) || bill.date.getTime() > now.getTime() + 60000) {
+        return res.status(400).json({ message: 'Bill ka date/time galat hai. Preview dobara banayein.' });
+      }
+      if (bill.items.length === 0) return res.status(400).json({ message: 'Khali bill save nahi ho sakta.' });
+      for (const item of bill.items) {
+        if (!item.medicineId || !(item.quantity >= 1)) return res.status(400).json({ message: 'Bill items galat hain. Preview dobara banayein.' });
+        neededQty.set(item.medicineId, (neededQty.get(item.medicineId) || 0) + item.quantity);
+      }
+    }
+
+    const meds = await Medicine.find({ _id: { $in: [...neededQty.keys()] } }).lean();
+    const medMap = new Map(meds.map((med) => [String(med._id), med]));
+    const latestBillDate = new Date(Math.max(...normalizedPlan.map((bill) => bill.date.getTime())));
+    for (const [id, qty] of neededQty) {
+      const med = medMap.get(id);
+      if (!med || !isAutoBillable(med, latestBillDate)) {
+        return res.status(400).json({ message: `Item '${med?.productName || id}' ab auto bill ke layak nahi hai. Preview dobara banayein.` });
+      }
+      if (qty > Number(med.quantity || 0) + 1e-6) {
+        return res.status(400).json({ message: `Stock kam hai: ${med.productName} (Available: ${Number(med.quantity || 0)}, Needed: ${qty}). Preview dobara banayein.` });
+      }
+    }
+
+    // Prices always come from the DB, never from the client-side plan.
+    const sortedPlan = [...normalizedPlan].sort((a, b) => a.date - b.date);
+    const year = new Date().getFullYear();
+    const counter = await Counter.findOneAndUpdate(
+      { id: `invoice_seq_${year}` },
+      { $inc: { seq: sortedPlan.length } },
+      { new: true, upsert: true }
+    );
+    const firstSeq = (counter.seq || sortedPlan.length) - sortedPlan.length + 1;
+
+    const sales = sortedPlan.map((bill, idx) => {
+      const items = bill.items.map((item) => buildAutoBillLine(medMap.get(item.medicineId), item.quantity));
+      return {
+        invoiceNo: `${INVOICE_PREFIX}${year}-${String(firstSeq + idx).padStart(INVOICE_DIGITS, '0')}`,
+        customerDetails: { name: 'Cash Sale', phone: '', doctor: '' },
+        items,
+        hasScheduleDrug: false,
+        totalAmount: roundMoney(items.reduce((sum, item) => sum + item.total, 0)),
+        paymentMode,
+        isBillRequired: true,
+        isCredit: false,
+        createdBy: userRole,
+        date: bill.date
+      };
+    });
+
+    const saved = await Sale.insertMany(sales);
+    await Medicine.bulkWrite([...neededQty].map(([id, qty]) => ({
+      updateOne: { filter: { _id: id }, update: { $inc: { quantity: -qty } } }
+    })));
+
+    const grandTotal = roundMoney(sales.reduce((sum, sale) => sum + sale.totalAmount, 0));
+    AuditLog.create({
+      action: 'AUTO_BILL_GENERATE',
+      entityType: 'Sale',
+      entityId: saved[0]._id.toString(),
+      message: `${saved.length} auto bills saved (${sales[0].invoiceNo} → ${sales[sales.length - 1].invoiceNo})`,
+      details: { count: saved.length, grandTotal, paymentMode, firstInvoice: sales[0].invoiceNo, lastInvoice: sales[sales.length - 1].invoiceNo },
+      userRole
+    }).catch(err => console.error('Audit log error (AUTO_BILL_GENERATE):', err.message));
+
+    return res.status(201).json({
+      success: true,
+      message: `${saved.length} bills save ho gaye (₹${grandTotal}).`,
+      grandTotal,
+      sales: saved.map((sale) => ({ _id: sale._id, invoiceNo: sale.invoiceNo, date: sale.date, totalAmount: sale.totalAmount, items: sale.items, paymentMode: sale.paymentMode }))
+    });
+  } catch (err) {
+    console.error('[Error] commitAutoBills:', err.message);
+    return res.status(500).json({ message: err.message || 'Auto bills save nahi ho sake' });
+  }
+};

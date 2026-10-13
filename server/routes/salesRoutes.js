@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const salesController = require('../controllers/salesController');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, authorizeRoles } = require('../middleware/auth');
 
 router.use(authenticateToken);
 
@@ -17,6 +17,10 @@ router.post('/', salesController.createSale);
 // 3. Get Sales Report & Manage Bills
 router.get('/filter', salesController.getAllSales);
 router.get('/schedule-ledger', salesController.getScheduleLedger);
+
+// 3B. Auto bill cutting (staff only) — random bills for a day within an amount range
+router.post('/auto-bill/preview', authorizeRoles('staff'), salesController.previewAutoBills);
+router.post('/auto-bill/commit', authorizeRoles('staff'), salesController.commitAutoBills);
 router.put('/:id', salesController.updateSale);
 router.delete('/:id', salesController.deleteSale);
 

@@ -47,24 +47,26 @@ const allKnownSupplierNames = async () => {
   return [...new Set([...fromBills, ...fromMeds].map((n) => String(n).trim()).filter(Boolean))];
 };
 
+// Party details read off a purchase bill only fill fields that are still
+// empty — so each new bill completes the profile bit by bit, but never
+// overwrites details already saved (or corrected manually by the user).
+const SUPPLIER_BILL_FIELDS = ['gstin', 'phone', 'address', 'city', 'state', 'pincode', 'contactPerson', 'email', 'drugLicenseNo'];
+
 const saveSupplierBillBasics = async (name, gstin = '', details = {}) => {
   const cleanName = String(name || '').trim();
   if (!cleanName) return;
-  const profileFields = ['phone', 'address', 'city', 'state', 'pincode', 'contactPerson', 'email'];
-  const profile = {};
-  profileFields.forEach((field) => {
-    const value = String(details[field] || '').trim();
-    if (value) profile[field] = value;
+  const incoming = { ...details, gstin };
+  const normalizedName = normalizeForMatch(cleanName);
+  const supplier = await Supplier.findOne({ normalizedName }) || new Supplier({ name: cleanName, normalizedName });
+  let changed = supplier.isNew;
+  SUPPLIER_BILL_FIELDS.forEach((field) => {
+    const value = String(incoming[field] || '').trim();
+    if (value && !String(supplier[field] || '').trim()) {
+      supplier[field] = value;
+      changed = true;
+    }
   });
-  if (String(gstin || '').trim()) profile.gstin = String(gstin).trim();
-  await Supplier.findOneAndUpdate(
-    { normalizedName: normalizeForMatch(cleanName) },
-    {
-      $setOnInsert: { name: cleanName, normalizedName: normalizeForMatch(cleanName) },
-      ...(Object.keys(profile).length ? { $set: profile } : {})
-    },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
-  );
+  if (changed) await supplier.save();
 };
 
 // Returns { similarTo, ratio } when the given party name is almost certainly a
@@ -981,7 +983,8 @@ const createPurchaseBill = async (req, res) => {
       state: req.body.supplierState,
       pincode: req.body.supplierPincode,
       contactPerson: req.body.supplierContactPerson,
-      email: req.body.supplierEmail
+      email: req.body.supplierEmail,
+      drugLicenseNo: req.body.supplierDrugLicenseNo
     });
 
     AuditLog.create({ action: 'CREATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: bill._id.toString(), message: `Purchase invoice ${invoiceNumber} saved`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal, balanceDue, paymentStatus }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (CREATE_PURCHASE_BILL):', err.message));
@@ -1361,6 +1364,7 @@ Analyze this invoice image${pages.length > 1 ? 's' : ''} and extract all details
   "supplierPincode": "Supplier pincode if printed, otherwise empty string",
   "supplierContactPerson": "Supplier contact person if printed, otherwise empty string",
   "supplierEmail": "Supplier email if printed, otherwise empty string",
+  "supplierDrugLicenseNo": "Supplier drug license number(s) (D.L. No.) if printed, otherwise empty string",
   "invoiceNumber": "Invoice or Bill Number e.g. A001437",
   "invoiceDate": "YYYY-MM-DD date format e.g. 2026-07-24",
   "billType": "Credit or Cash or GST Invoice",

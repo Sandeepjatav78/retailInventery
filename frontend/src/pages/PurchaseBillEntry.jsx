@@ -4,6 +4,19 @@ import api from '../api/axios';
 const emptyItem = () => ({ productName: '', packing: '', batchNumber: '', manufacturer: '', hsnCode: '', expiryDate: '', quantity: '1', freeQuantity: '0', mrp: '', rate: '', netRate: '', sellingPrice: '', discount: '0', gst: '5', amount: '' });
 const money = (value) => `₹${Number(value || 0).toFixed(2)}`;
 
+// Party profile fields that a purchase bill can fill: [bill field, profile field, label]
+const PARTY_FIELDS = [
+  ['supplierGstin', 'gstin', 'GSTIN'],
+  ['supplierPhone', 'phone', 'Phone'],
+  ['supplierContactPerson', 'contactPerson', 'Contact Person'],
+  ['supplierEmail', 'email', 'Email'],
+  ['supplierDrugLicenseNo', 'drugLicenseNo', 'Drug License No.'],
+  ['supplierAddress', 'address', 'Address'],
+  ['supplierCity', 'city', 'City'],
+  ['supplierState', 'state', 'State'],
+  ['supplierPincode', 'pincode', 'Pincode']
+];
+
 const MedicineNameCell = ({ value, onChange, onPick, inputId, invalid }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [open, setOpen] = useState(false);
@@ -70,7 +83,7 @@ const MedicineNameCell = ({ value, onChange, onPick, inputId, invalid }) => {
 };
 
 const PurchaseBillEntry = () => {
-  const initialBill = () => ({ supplierName: '', supplierGstin: '', supplierPhone: '', supplierAddress: '', supplierCity: '', supplierState: '', supplierPincode: '', supplierContactPerson: '', supplierEmail: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
+  const initialBill = () => ({ supplierName: '', supplierGstin: '', supplierPhone: '', supplierAddress: '', supplierCity: '', supplierState: '', supplierPincode: '', supplierContactPerson: '', supplierEmail: '', supplierDrugLicenseNo: '', invoiceNumber: '', invoiceDate: new Date().toISOString().slice(0, 10), billType: 'Credit', paymentMode: 'Credit', notes: '', additionalDiscount: '0', billFiles: [] });
   const [bill, setBill] = useState(initialBill);
   const [items, setItems] = useState([emptyItem()]);
   const [saving, setSaving] = useState(false);
@@ -78,6 +91,8 @@ const PurchaseBillEntry = () => {
   const [suppliers, setSuppliers] = useState([]);
   const [errors, setErrors] = useState({});
   const [duplicateWarning, setDuplicateWarning] = useState(null);
+  // Saved profile of the selected party (null = new party / not loaded yet)
+  const [partyProfile, setPartyProfile] = useState(null);
 
   const clearError = (key) => setErrors(prev => {
     if (!prev[key]) return prev;
@@ -110,6 +125,22 @@ const PurchaseBillEntry = () => {
     }, 500);
     return () => clearTimeout(timer);
   }, [bill.supplierName, bill.invoiceNumber]);
+
+  // Load the saved party profile so only the still-missing details are asked for.
+  useEffect(() => {
+    const supplierName = bill.supplierName.trim();
+    if (supplierName.length < 2) { setPartyProfile(null); return; }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.get(`/medicines/supplier-ledger/${encodeURIComponent(supplierName)}/details`);
+        setPartyProfile(res.data?.supplier || null);
+      } catch { setPartyProfile(null); }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [bill.supplierName]);
+
+  const savedPartyValue = (profileField) => String(partyProfile?.[profileField] || '').trim();
+  const missingPartyFields = PARTY_FIELDS.filter(([, profileField]) => !savedPartyValue(profileField));
 
   const addBillPages = (fileListRaw, autoScan = true) => {
     const newFiles = Array.from(fileListRaw || []);
@@ -146,6 +177,7 @@ const PurchaseBillEntry = () => {
           supplierPincode: extracted.supplierPincode || prev.supplierPincode,
           supplierContactPerson: extracted.supplierContactPerson || prev.supplierContactPerson,
           supplierEmail: extracted.supplierEmail || prev.supplierEmail,
+          supplierDrugLicenseNo: extracted.supplierDrugLicenseNo || prev.supplierDrugLicenseNo,
           invoiceNumber: extracted.invoiceNumber || prev.invoiceNumber,
           invoiceDate: extracted.invoiceDate || prev.invoiceDate,
           billType: extracted.billType || prev.billType,
@@ -270,7 +302,9 @@ const PurchaseBillEntry = () => {
     setSaving(true);
     try {
       const data = new FormData();
-      Object.entries(bill).forEach(([key, value]) => { if (key !== 'billFiles') data.append(key, value); });
+      // GSTIN is also stored on the bill itself — fall back to the saved party GSTIN.
+      const billToSend = { ...bill, supplierGstin: bill.supplierGstin || savedPartyValue('gstin') };
+      Object.entries(billToSend).forEach(([key, value]) => { if (key !== 'billFiles') data.append(key, value); });
       data.append('items', JSON.stringify(items));
       bill.billFiles.forEach(file => data.append('billImages', file));
       await api.post('/medicines/purchase-bills', data, { headers: { 'Content-Type': 'multipart/form-data' } });
@@ -373,7 +407,6 @@ const PurchaseBillEntry = () => {
           <div><label className={labelClass}>Supplier / Party Name *</label><input id="field-supplierName" required list="known-suppliers" value={bill.supplierName} onChange={e => { clearError('supplierName'); setBill({ ...bill, supplierName: e.target.value }); }} placeholder="Rosa Medical Agencies" className={fieldClass('supplierName')} />
             <datalist id="known-suppliers">{suppliers.map(s => <option key={s} value={s} />)}</datalist>
           </div>
-          <div><label className={labelClass}>Supplier GSTIN</label><input value={bill.supplierGstin} onChange={e => setBill({ ...bill, supplierGstin: e.target.value })} placeholder="06ABCDE1234F1Z5" className={inputClass} /></div>
           <div><label className={labelClass}>Invoice No. *</label><input id="field-invoiceNumber" required value={bill.invoiceNumber} onChange={e => { clearError('invoiceNumber'); setBill({ ...bill, invoiceNumber: e.target.value }); }} placeholder="C-09141" className={fieldClass('invoiceNumber')} /></div>
           <div><label className={labelClass}>Invoice Date *</label><input id="field-invoiceDate" required type="date" value={bill.invoiceDate} onChange={e => { clearError('invoiceDate'); setBill({ ...bill, invoiceDate: e.target.value }); }} className={fieldClass('invoiceDate')} /></div>
           <div><label className={labelClass}>Bill Type</label><select value={bill.billType} onChange={e => setBill({ ...bill, billType: e.target.value })} className={inputClass}><option>Credit</option><option>Cash</option><option>GST Invoice</option></select></div>
@@ -384,6 +417,33 @@ const PurchaseBillEntry = () => {
               {bill.billFiles.length > 0 ? ` — ${bill.billFiles.length} page${bill.billFiles.length > 1 ? 's' : ''} attached.` : '.'}
             </p>
           </div>
+
+          {/* --- PARTY DETAILS: auto-filled from the bill scan; saved fields are kept, only missing ones are asked --- */}
+          {bill.supplierName.trim() && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:col-span-2 lg:col-span-4">
+              <h3 className="text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">🏢 Party Details</h3>
+              <p className="text-[11px] text-slate-500 mb-3">
+                {missingPartyFields.length === 0
+                  ? '✅ Iss party ki saari details pehle se saved hain.'
+                  : 'Bill scan se jo mila wo bhar diya hai. Jo khali hai wo next bill se auto-fill ho jayega, ya abhi khud bhar dein.'}
+              </p>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {PARTY_FIELDS.map(([billField, profileField, label]) => {
+                  const saved = savedPartyValue(profileField);
+                  return (
+                    <div key={billField} className={billField === 'supplierAddress' ? 'sm:col-span-2' : ''}>
+                      <label className={labelClass}>{label}{saved ? ' ✓' : ''}</label>
+                      {saved ? (
+                        <div className="rounded-md border border-green-200 bg-green-50 px-2 py-2 text-sm text-green-800 truncate" title={saved}>{saved}</div>
+                      ) : (
+                        <input value={bill[billField]} onChange={e => setBill({ ...bill, [billField]: e.target.value })} placeholder={`${label} (missing)`} className={`${inputClass} ${bill[billField] ? '' : 'border-amber-300 bg-amber-50/40'}`} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* --- PAYMENT STATUS & LEDGER SECTION --- */}
           <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4 sm:col-span-2 lg:col-span-4 mt-1">

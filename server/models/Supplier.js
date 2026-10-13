@@ -6,7 +6,7 @@ const mongoose = require('mongoose');
 const SupplierSchema = new mongoose.Schema({
   name: { type: String, required: true },
   // lower-cased / trimmed name used to match a party across bills & typo variants
-  normalizedName: { type: String, required: true, index: true },
+  normalizedName: { type: String, required: true },
   gstin: { type: String, default: '' },
   phone: { type: String, default: '' },
   altPhone: { type: String, default: '' },

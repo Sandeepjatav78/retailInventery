@@ -4,6 +4,8 @@ import Dashboard from './pages/Dashboard';
 import SaleForm from './components/SaleForm';
 import DailyReport from './pages/DailyReport';
 import ManualBill from './pages/ManualBill'; 
+import AutoBill from './pages/AutoBill';
+import CostPrice from './pages/CostPrice';
 import CreditLedger from './pages/CreditLedger';
 import PurchaseReturn from './pages/PurchaseReturn';
 import KachiEntry from './pages/KachiEntry';
@@ -34,6 +36,8 @@ function App() {
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/sales" element={<SaleForm />} />
                     <Route path="/manual" element={<ManualBill />} />
+                    <Route path="/auto-bill" element={<PrivateRoute roles={['staff']}><AutoBill /></PrivateRoute>} />
+                    <Route path="/cp" element={<PrivateRoute roles={['admin']}><CostPrice /></PrivateRoute>} />
                     <Route path="/kachi-entry" element={<KachiEntry />} />
                     <Route path="/purchase-bill" element={<PurchaseBillEntry />} />
                     <Route path="/purchase-bill-history" element={<PurchaseBillHistory />} />

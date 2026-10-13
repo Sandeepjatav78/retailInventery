@@ -30,6 +30,7 @@ const SupplierLedger = () => {
   const [partyForm, setPartyForm] = useState({});
   const [savingParty, setSavingParty] = useState(false);
   const [mergeTarget, setMergeTarget] = useState('');
+  const [viewBill, setViewBill] = useState(null);
 
   // Delete Party Modal State
   const [deleteParty, setDeleteParty] = useState(null);
@@ -270,15 +271,13 @@ const SupplierLedger = () => {
 
   // Selected Party Object & Bills
   const activePartyObj = suppliers.find(s => s.supplierName.toLowerCase() === (selectedParty || '').toLowerCase());
-  const hasFullPartyDetails = Boolean(activePartyObj?.profile && [
-    activePartyObj.profile.gstin,
-    activePartyObj.profile.phone,
-    activePartyObj.profile.address,
-    activePartyObj.profile.contactPerson,
-    activePartyObj.profile.city,
-    activePartyObj.profile.state,
-    activePartyObj.profile.pincode
-  ].some((value) => String(value || '').trim()));
+  // Key details a party profile should have; anything missing is listed so the
+  // user knows what to fill (or what the next scanned bill will fill).
+  const KEY_PARTY_FIELDS = [['gstin', 'GSTIN'], ['phone', 'Phone'], ['address', 'Address'], ['city', 'City'], ['state', 'State'], ['drugLicenseNo', 'Drug License']];
+  const missingPartyLabels = KEY_PARTY_FIELDS
+    .filter(([field]) => !String(activePartyObj?.profile?.[field] || (field === 'gstin' ? activePartyObj?.supplierGstin : '') || '').trim())
+    .map(([, label]) => label);
+  const hasFullPartyDetails = missingPartyLabels.length === 0;
   const activePartyBills = bills.filter(bill => {
     if (!selectedParty) return false;
     const matchesParty = String(bill.supplierName).toLowerCase() === selectedParty.toLowerCase();
@@ -497,12 +496,12 @@ const SupplierLedger = () => {
                   <p className="text-xs text-slate-500 mt-0.5">GSTIN: {activePartyObj.supplierGstin}</p>
                 )}
                 <p className={`text-xs mt-2 font-semibold ${hasFullPartyDetails ? 'text-green-700' : 'text-amber-700'}`}>
-                  {hasFullPartyDetails ? '✅ Party details saved' : '⚠️ Full party details missing'}
+                  {hasFullPartyDetails ? '✅ Party details saved' : `⚠️ Missing: ${missingPartyLabels.join(', ')} — next bill se auto-fill hoga, ya abhi khud bharein`}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button onClick={() => openPartyDetails()} className="px-3 py-2 rounded-lg bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold">
-                  {activePartyObj?.profile ? '✏️ Edit Party Details' : '➕ Fill Party Details'}
+                  {hasFullPartyDetails ? '✏️ Edit Party Details' : '➕ Fill Missing Details'}
                 </button>
                 <button onClick={() => { setMergeTarget(''); setMergeFormOpen(true); }} className="px-3 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold">
                   🔗 Merge / Correct Name
@@ -635,7 +634,13 @@ const SupplierLedger = () => {
                           <td className="px-4 py-3 text-xs text-slate-500 max-w-[200px] truncate">
                             {bill.paymentRemarks || bill.notes || '-'}
                           </td>
-                          <td className="px-4 py-3 text-center whitespace-nowrap">
+                          <td className="px-4 py-3 text-center whitespace-nowrap space-x-2">
+                            <button
+                              onClick={() => setViewBill(bill)}
+                              className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold text-xs transition-colors"
+                            >
+                              👁 View
+                            </button>
                             {due > 0 ? (
                               <button
                                 onClick={() => handleOpenPayModal(bill)}
@@ -934,6 +939,91 @@ const SupplierLedger = () => {
           </div>
         </div>
       )}
+
+      {/* --- VIEW BILL MODAL --- */}
+      {viewBill && (() => {
+        const images = (viewBill.billImages?.length > 0 ? viewBill.billImages : [viewBill.billImage]).filter(Boolean);
+        const grandTotal = Number(viewBill.grandTotal || 0);
+        const paid = Number(viewBill.amountPaid || (viewBill.paymentStatus === 'Paid' ? grandTotal : 0));
+        const due = Number(viewBill.balanceDue ?? Math.max(0, grandTotal - paid));
+        const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs" onClick={() => setViewBill(null)}>
+            <div className="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="font-extrabold text-slate-800 text-lg">🧾 Invoice {viewBill.invoiceNumber}</h3>
+                  <p className="text-xs text-slate-500 mt-0.5">{viewBill.supplierName} · {fmtDate(viewBill.invoiceDate)}{viewBill.supplierGstin ? ` · GSTIN ${viewBill.supplierGstin}` : ''}</p>
+                </div>
+                <button onClick={() => setViewBill(null)} className="text-slate-400 hover:text-slate-600 text-xl font-bold">✕</button>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="bg-slate-50 rounded-xl border border-slate-200 p-2"><span className="block text-[10px] font-bold uppercase text-slate-400">Bill Total</span><span className="font-extrabold text-slate-800">{money(grandTotal)}</span></div>
+                <div className="bg-green-50 rounded-xl border border-green-200 p-2"><span className="block text-[10px] font-bold uppercase text-green-700">Paid</span><span className="font-extrabold text-green-700">{money(paid)}</span></div>
+                <div className="bg-red-50 rounded-xl border border-red-200 p-2"><span className="block text-[10px] font-bold uppercase text-red-600">Due</span><span className="font-extrabold text-red-600">{money(due)}</span></div>
+              </div>
+
+              {viewBill.items?.length > 0 ? (
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-500 uppercase font-extrabold text-[10px]">
+                      <tr>
+                        <th className="px-3 py-2">Item</th><th className="px-3 py-2">Batch</th><th className="px-3 py-2">Exp</th>
+                        <th className="px-3 py-2 text-right">Qty</th><th className="px-3 py-2 text-right">Free</th><th className="px-3 py-2 text-right">MRP</th>
+                        <th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right">Disc %</th><th className="px-3 py-2 text-right">GST %</th><th className="px-3 py-2 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {viewBill.items.map((item, idx) => (
+                        <tr key={idx}>
+                          <td className="px-3 py-2 font-semibold text-slate-800">{item.productName}{item.packing ? <span className="text-slate-400"> ({item.packing})</span> : null}</td>
+                          <td className="px-3 py-2">{item.batchNumber}</td>
+                          <td className="px-3 py-2">{item.expiryDate ? new Date(item.expiryDate).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }) : '-'}</td>
+                          <td className="px-3 py-2 text-right">{item.quantity}</td>
+                          <td className="px-3 py-2 text-right">{item.freeQuantity || 0}</td>
+                          <td className="px-3 py-2 text-right">{money(item.mrp)}</td>
+                          <td className="px-3 py-2 text-right">{money(item.rate)}</td>
+                          <td className="px-3 py-2 text-right">{item.discount || 0}</td>
+                          <td className="px-3 py-2 text-right">{item.gst || 0}</td>
+                          <td className="px-3 py-2 text-right font-bold">{money(item.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400 italic">Ye manual ledger entry hai — iske item details save nahi hain.</p>
+              )}
+
+              {viewBill.paymentHistory?.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-extrabold uppercase text-slate-500 mb-1">Payment History</h4>
+                  {viewBill.paymentHistory.map((p, idx) => (
+                    <div key={idx} className="flex justify-between text-xs text-slate-600 py-1 border-b border-slate-100">
+                      <span>{fmtDate(p.date)} · {p.paymentMode}{p.remark ? ` · ${p.remark}` : ''}</span>
+                      <span className="font-bold text-green-700">{money(p.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {images.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-extrabold uppercase text-slate-500 mb-2">Bill Photo / PDF</h4>
+                  <div className="space-y-3">
+                    {images.map((url, idx) => /\.pdf($|\?)/i.test(url) ? (
+                      <a key={idx} href={url} target="_blank" rel="noreferrer" className="inline-block px-3 py-2 rounded-lg bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold">📄 Open PDF {images.length > 1 ? idx + 1 : ''}</a>
+                    ) : (
+                      <a key={idx} href={url} target="_blank" rel="noreferrer"><img src={url} alt={`Bill page ${idx + 1}`} className="w-full rounded-lg border border-slate-200" /></a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* --- DELETE PARTY CONFIRMATION MODAL --- */}
       {deleteParty && (
