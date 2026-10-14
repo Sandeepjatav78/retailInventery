@@ -786,8 +786,8 @@ exports.returnSaleItems = async (req, res) => {
   }
 };
 // --- 7. AUTO BILL CUTTING ---
-// Generates N random cash bills for one day, each between minAmount and
-// maxAmount, from valid stock. Two steps: /auto-bill/preview builds a plan
+// For each day, generates random bills that add up to the requested cash and
+// online amounts, each bill between minAmount and maxAmount, from valid stock. Two steps: /auto-bill/preview builds a plan
 // (nothing saved), /auto-bill/commit re-validates that plan against live stock
 // and saves it with real sequential invoice numbers in time order.
 const AUTO_BILL_MAX_COUNT = 500;
@@ -835,13 +835,13 @@ const buildAutoBillLine = (med, quantity) => {
 
 // Picks random medicines until the bill lands inside [minAmount, maxAmount].
 // `stockLeft` is shared across bills so one plan never oversells an item.
-const buildRandomBill = (pool, stockLeft, minAmount, maxAmount) => {
+const buildRandomBill = (pool, stockLeft, minAmount, maxAmount, { maxItems = AUTO_BILL_MAX_ITEMS, maxQtyPerLine = AUTO_BILL_MAX_QTY_PER_LINE } = {}) => {
   for (let attempt = 0; attempt < 40; attempt++) {
     const target = minAmount + Math.random() * (maxAmount - minAmount);
     const lines = new Map();
     let total = 0;
 
-    for (let tries = 0; tries < 300 && lines.size < AUTO_BILL_MAX_ITEMS && total < target; tries++) {
+    for (let tries = 0; tries < 300 && lines.size < maxItems && total < target; tries++) {
       const med = pool[Math.floor(Math.random() * pool.length)];
       const id = String(med._id);
       if (lines.has(id)) continue;
@@ -850,7 +850,7 @@ const buildRandomBill = (pool, stockLeft, minAmount, maxAmount) => {
       if (available < 1 || total + price > maxAmount) continue;
 
       const wanted = Math.max(1, Math.floor((target - total) / price));
-      const maxQty = Math.min(available, wanted, AUTO_BILL_MAX_QTY_PER_LINE, Math.floor((maxAmount - total) / price));
+      const maxQty = Math.min(available, wanted, maxQtyPerLine, Math.floor((maxAmount - total) / price));
       const quantity = randomInt(1, Math.max(1, maxQty));
       lines.set(id, { med, quantity });
       total += price * quantity;
@@ -865,20 +865,35 @@ const buildRandomBill = (pool, stockLeft, minAmount, maxAmount) => {
   return null;
 };
 
-// One bill-day: its date + how many bills, with the IST time window clipped
-// so a bill is never stamped in the future.
+// One bill-day: its date + how much cash and online billing (₹) is wanted,
+// optionally in an exact number of bills, with the IST time window clipped so a bill is never stamped in the future.
 const parseAutoBillDay = (day, startTime, endTime, now) => {
   const date = String(day?.date || '').slice(0, 10);
-  const count = Math.floor(Number(day?.count));
+  const cashAmount = roundMoney(Math.max(0, Number(day?.cashAmount) || 0));
+  const onlineAmount = roundMoney(Math.max(0, Number(day?.onlineAmount) || 0));
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Har row me valid date chahiye.' };
-  if (!Number.isFinite(count) || count < 1) return { error: `${date}: bills ki ginti kam se kam 1 honi chahiye.` };
+  if (cashAmount + onlineAmount <= 0) return { error: `${date}: Cash ya Online me se kam se kam ek amount bharein.` };
+  // Blank count = let the min/max range decide how many bills.
+  const parseCount = (value, amount, label) => {
+    if (value === undefined || value === null || String(value).trim() === '') return { count: null };
+    const count = Math.floor(Number(value));
+    if (!Number.isFinite(count) || count < 0) return { error: `${date}: ${label} bills ki ginti sahi bharein.` };
+    if (count === 0 && amount > 0) return { error: `${date}: ${label} ₹${amount} ke liye kam se kam 1 bill chahiye.` };
+    if (count > 0 && amount <= 0) return { error: `${date}: ${label} amount 0 hai, par ${count} bills likhe hain.` };
+    if (count > 0 && amount / count < 1) return { error: `${date}: ${label} ₹${amount} ke ${count} bills nahi ban sakte (har bill kam se kam ₹1).` };
+    return { count: count || null };
+  };
+  const cash = parseCount(day?.cashCount, cashAmount, 'Cash');
+  if (cash.error) return { error: cash.error };
+  const online = parseCount(day?.onlineCount, onlineAmount, 'Online');
+  if (online.error) return { error: online.error };
 
   const windowStart = new Date(`${date}T${startTime}:00.000${IST_OFFSET}`);
   let windowEnd = new Date(`${date}T${endTime}:59.999${IST_OFFSET}`);
   if (windowStart.getTime() > now.getTime()) return { error: `${date}: future date/time ke bills nahi ban sakte.` };
   if (windowEnd.getTime() > now.getTime()) windowEnd = now;
   if (windowEnd.getTime() <= windowStart.getTime()) return { error: `${date}: end time, start time ke baad hona chahiye.` };
-  return { date, count, windowStart, windowEnd };
+  return { date, cashAmount, onlineAmount, cashCount: cash.count, onlineCount: online.count, windowStart, windowEnd };
 };
 
 const parseAutoBillRequest = (body = {}) => {
@@ -886,10 +901,10 @@ const parseAutoBillRequest = (body = {}) => {
   const maxAmount = Number(body.maxAmount);
   const startTime = /^\d{2}:\d{2}$/.test(String(body.startTime || '')) ? body.startTime : '09:00';
   const endTime = /^\d{2}:\d{2}$/.test(String(body.endTime || '')) ? body.endTime : '21:00';
-  const paymentMode = body.paymentMode === 'Online' ? 'Online' : 'Cash';
   if (!Number.isFinite(minAmount) || !Number.isFinite(maxAmount) || minAmount <= 0 || maxAmount < minAmount) return { error: 'Amount range sahi bharein (min > 0 aur max ≥ min).' };
 
-  const rawDays = Array.isArray(body.days) && body.days.length ? body.days : [{ date: body.date, count: body.count }];
+  const rawDays = Array.isArray(body.days) ? body.days : [];
+  if (rawDays.length === 0) return { error: 'Kam se kam ek date bharein.' };
   const now = new Date();
   const days = [];
   const seen = new Set();
@@ -900,18 +915,78 @@ const parseAutoBillRequest = (body = {}) => {
     seen.add(day.date);
     days.push(day);
   }
-  const total = days.reduce((sum, day) => sum + day.count, 0);
-  if (total > AUTO_BILL_MAX_COUNT) return { error: `Ek baar me maximum ${AUTO_BILL_MAX_COUNT} bills ban sakte hain (abhi ${total}).` };
+  // Fixed counts are exact; otherwise the fewest possible bills is target / maxAmount.
+  const billsFor = (count, amount) => count || Math.ceil(amount / maxAmount);
+  const minBills = days.reduce((sum, day) => sum + billsFor(day.cashCount, day.cashAmount) + billsFor(day.onlineCount, day.onlineAmount), 0);
+  if (minBills > AUTO_BILL_MAX_COUNT) return { error: `Itne amount ke liye ${minBills}+ bills banenge — ek baar me maximum ${AUTO_BILL_MAX_COUNT}. Amount kam karein ya Max Amount badhayein.` };
 
   days.sort((a, b) => a.windowStart - b.windowStart);
-  return { days, minAmount, maxAmount, paymentMode };
+  return { days, minAmount, maxAmount };
+};
+
+// Cuts bills until `target` ₹ is covered. Normal bills stay inside
+// [minAmount, maxAmount]; the last one is sized to land on the remainder, so
+// the day's total comes out at (or just under) the target.
+const buildBillsForAmount = (pool, stockLeft, target, minAmount, maxAmount, maxBills) => {
+  const bills = [];
+  let remaining = target;
+  while (remaining >= 1 && bills.length < maxBills) {
+    let bill = null;
+    const hi = Math.min(maxAmount, remaining - minAmount);
+    if (hi >= minAmount) {
+      bill = buildRandomBill(pool, stockLeft, minAmount, hi);
+    } else {
+      // Final bill: try to hit the remainder closely, loosening if stock prices don't fit.
+      const top = Math.min(maxAmount, remaining);
+      for (const slack of [0.02, 0.1, 0.25, 0.5]) {
+        bill = buildRandomBill(pool, stockLeft, Math.max(1, roundMoney(top * (1 - slack))), top);
+        if (bill) break;
+      }
+    }
+    if (!bill) break;
+    bills.push(bill);
+    remaining = roundMoney(remaining - bill.totalAmount);
+  }
+  return bills;
+};
+
+// Cuts exactly `count` bills adding up to `target` ₹. Each bill's share is
+// randomised around the average and kept inside [minAmount, maxAmount] when
+// the rest can still fit; if target/count falls outside that range, the
+// count wins and bills simply sit near the average.
+const buildBillsForCount = (pool, stockLeft, target, count, minAmount, maxAmount) => {
+  const bills = [];
+  let remaining = target;
+  for (let i = 0; i < count && remaining >= 1; i++) {
+    const left = count - i - 1;
+    let share = remaining;
+    if (left > 0) {
+      const avg = remaining / (left + 1);
+      const lo = Math.max(minAmount, remaining - left * maxAmount);
+      const hi = Math.min(maxAmount, remaining - left * minAmount);
+      share = avg * (0.6 + Math.random() * 0.8);
+      share = lo <= hi ? Math.min(hi, Math.max(lo, share)) : avg;
+    }
+    share = roundMoney(Math.min(share, remaining));
+    // Few bills for a big amount → let a bill hold more lines/qty than usual.
+    const limits = share > maxAmount ? { maxItems: 12, maxQtyPerLine: 6 } : {};
+    let bill = null;
+    for (const slack of [0.05, 0.12, 0.25, 0.5]) {
+      bill = buildRandomBill(pool, stockLeft, Math.max(1, roundMoney(share * (1 - slack))), share, limits);
+      if (bill) break;
+    }
+    if (!bill) break;
+    bills.push(bill);
+    remaining = roundMoney(remaining - bill.totalAmount);
+  }
+  return bills;
 };
 
 exports.previewAutoBills = async (req, res) => {
   try {
     const params = parseAutoBillRequest(req.body);
     if (params.error) return res.status(400).json({ message: params.error });
-    const { days, minAmount, maxAmount, paymentMode } = params;
+    const { days, minAmount, maxAmount } = params;
 
     // Eligibility is checked against the latest bill date in the plan, so no
     // item that expires partway through the selected days gets used.
@@ -928,12 +1003,21 @@ exports.previewAutoBills = async (req, res) => {
     const stockLeft = new Map(pool.map((med) => [String(med._id), Math.floor(Number(med.quantity || 0))]));
     const bills = [];
     const daySummary = [];
+    const sumOf = (list) => roundMoney(list.reduce((sum, bill) => sum + bill.totalAmount, 0));
     for (const day of days) {
-      const dayBills = [];
-      for (let i = 0; i < day.count; i++) {
-        const bill = buildRandomBill(pool, stockLeft, minAmount, maxAmount);
-        if (!bill) break;
-        dayBills.push(bill);
+      const cut = (amount, count, room) => (count
+        ? buildBillsForCount(pool, stockLeft, amount, count, minAmount, maxAmount)
+        : buildBillsForAmount(pool, stockLeft, amount, minAmount, maxAmount, room));
+      const cashBills = cut(day.cashAmount, day.cashCount, AUTO_BILL_MAX_COUNT - bills.length);
+      cashBills.forEach((bill) => { bill.paymentMode = 'Cash'; });
+      const onlineBills = cut(day.onlineAmount, day.onlineCount, AUTO_BILL_MAX_COUNT - bills.length - cashBills.length);
+      onlineBills.forEach((bill) => { bill.paymentMode = 'Online'; });
+
+      // Shuffle cash/online together so the modes are mixed through the day.
+      const dayBills = [...cashBills, ...onlineBills];
+      for (let i = dayBills.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [dayBills[i], dayBills[j]] = [dayBills[j], dayBills[i]];
       }
       const span = day.windowEnd.getTime() - day.windowStart.getTime();
       const times = dayBills.map(() => new Date(day.windowStart.getTime() + Math.floor(Math.random() * span))).sort((a, b) => a - b);
@@ -941,20 +1025,28 @@ exports.previewAutoBills = async (req, res) => {
       bills.push(...dayBills);
       daySummary.push({
         date: day.date,
-        requested: day.count,
-        generated: dayBills.length,
-        total: roundMoney(dayBills.reduce((sum, bill) => sum + bill.totalAmount, 0))
+        cashTarget: day.cashAmount,
+        cashTotal: sumOf(cashBills),
+        cashCount: cashBills.length,
+        cashCountTarget: day.cashCount,
+        onlineTarget: day.onlineAmount,
+        onlineTotal: sumOf(onlineBills),
+        onlineCount: onlineBills.length,
+        onlineCountTarget: day.onlineCount,
+        total: sumOf(dayBills)
       });
     }
 
+    const requestedAmount = roundMoney(days.reduce((sum, day) => sum + day.cashAmount + day.onlineAmount, 0));
     return res.json({
       success: true,
-      paymentMode,
       bills,
       days: daySummary,
-      requested: days.reduce((sum, day) => sum + day.count, 0),
+      requestedAmount,
       generated: bills.length,
-      grandTotal: roundMoney(bills.reduce((sum, bill) => sum + bill.totalAmount, 0)),
+      grandTotal: sumOf(bills),
+      cashTotal: sumOf(bills.filter((bill) => bill.paymentMode === 'Cash')),
+      onlineTotal: sumOf(bills.filter((bill) => bill.paymentMode === 'Online')),
       eligibleItems: pool.length,
       skippedUnchecked
     });
@@ -967,7 +1059,6 @@ exports.previewAutoBills = async (req, res) => {
 exports.commitAutoBills = async (req, res) => {
   try {
     const userRole = req.user?.role || 'staff';
-    const paymentMode = req.body.paymentMode === 'Online' ? 'Online' : 'Cash';
     const plan = Array.isArray(req.body.bills) ? req.body.bills : [];
     if (plan.length === 0 || plan.length > AUTO_BILL_MAX_COUNT) {
       return res.status(400).json({ message: 'Save karne ke liye koi bills nahi hain.' });
@@ -976,6 +1067,7 @@ exports.commitAutoBills = async (req, res) => {
     const now = new Date();
     const normalizedPlan = plan.map((bill) => ({
       date: new Date(bill.date),
+      paymentMode: bill.paymentMode === 'Online' ? 'Online' : 'Cash',
       items: (Array.isArray(bill.items) ? bill.items : []).map((item) => ({
         medicineId: String(item.medicineId || ''),
         quantity: Math.floor(Number(item.quantity))
@@ -1026,7 +1118,7 @@ exports.commitAutoBills = async (req, res) => {
         items,
         hasScheduleDrug: false,
         totalAmount: roundMoney(items.reduce((sum, item) => sum + item.total, 0)),
-        paymentMode,
+        paymentMode: bill.paymentMode,
         isBillRequired: true,
         isCredit: false,
         createdBy: userRole,
@@ -1040,18 +1132,21 @@ exports.commitAutoBills = async (req, res) => {
     })));
 
     const grandTotal = roundMoney(sales.reduce((sum, sale) => sum + sale.totalAmount, 0));
+    const modeTotal = (mode) => roundMoney(sales.filter((sale) => sale.paymentMode === mode).reduce((sum, sale) => sum + sale.totalAmount, 0));
+    const cashTotal = modeTotal('Cash');
+    const onlineTotal = modeTotal('Online');
     AuditLog.create({
       action: 'AUTO_BILL_GENERATE',
       entityType: 'Sale',
       entityId: saved[0]._id.toString(),
       message: `${saved.length} auto bills saved (${sales[0].invoiceNo} → ${sales[sales.length - 1].invoiceNo})`,
-      details: { count: saved.length, grandTotal, paymentMode, firstInvoice: sales[0].invoiceNo, lastInvoice: sales[sales.length - 1].invoiceNo },
+      details: { count: saved.length, grandTotal, cashTotal, onlineTotal, firstInvoice: sales[0].invoiceNo, lastInvoice: sales[sales.length - 1].invoiceNo },
       userRole
     }).catch(err => console.error('Audit log error (AUTO_BILL_GENERATE):', err.message));
 
     return res.status(201).json({
       success: true,
-      message: `${saved.length} bills save ho gaye (₹${grandTotal}).`,
+      message: `${saved.length} bills save ho gaye (₹${grandTotal} — Cash ₹${cashTotal}, Online ₹${onlineTotal}).`,
       grandTotal,
       sales: saved.map((sale) => ({ _id: sale._id, invoiceNo: sale.invoiceNo, date: sale.date, totalAmount: sale.totalAmount, items: sale.items, paymentMode: sale.paymentMode }))
     });
