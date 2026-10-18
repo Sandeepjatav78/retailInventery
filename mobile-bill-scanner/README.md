@@ -1,6 +1,6 @@
 # 📱 Radhe Pharmacy Mobile Purchase Bill Scanner App
 
-This React Native / Expo app allows admins and staff to snap physical purchase bills with their phone camera, extract supplier & medicine details using Gemini AI Vision OCR, and auto-populate inventory stock in 1 click.
+This React Native / Expo app is a simple bill camera: admins and staff photograph a purchase bill (one photo per page) and send it. The bill then shows up on the web under **📲 Mobile Uploads**, where the AI fills the Purchase Bill form from the photos, the admin checks/corrects it and saves — which marks the upload Done.
 
 ---
 

@@ -68,6 +68,7 @@ const ScheduleLedger = () => {
         name: sale.customerDetails?.name || 'Cash',
         phone: sale.customerDetails?.phone || '',
         doctor: sale.customerDetails?.doctor || 'Self',
+        buyerParty: sale.isPartySale ? sale.buyerParty : null,
         mode: sale.paymentMode,
         isDuplicate: true,
         grandTotal: sale.totalAmount,

@@ -4,8 +4,11 @@ import * as XLSX from 'xlsx';
 import { fetchScheduleCategories, SCHEDULE_BADGE_STYLES, DEFAULT_SCHEDULE_BADGE_STYLE } from '../utils/scheduleCategories';
 
 const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDetecting }) => {
-  const [editId, setEditId] = useState(null);
-  const [editFormData, setEditFormData] = useState({});
+  // Rows currently in edit mode: { [medicineId]: formData }. One row = single edit, many = multi edit.
+  const [editRows, setEditRows] = useState({});
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkValues, setBulkValues] = useState({ gst: '', scheduleCategory: '', partyName: '', hsnCode: '' });
+  const [savingEdits, setSavingEdits] = useState(false);
   const [newBillFile, setNewBillFile] = useState(null);
   const [showCP, setShowCP] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -150,28 +153,59 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
   };
 
   // --- EDIT HANDLERS ---
-  const handleEditClick = (med) => { 
-      setEditId(med._id); 
-      setEditFormData({ 
-          ...med, 
-          packSize: med.packSize || '', 
-          quantity: med.quantity || 0,
-          doctorPrice: med.doctorPrice ?? '',
-          gst: med.gst || 0
-      }); 
+  const toEditForm = (med) => ({
+      ...med,
+      packSize: med.packSize || '',
+      quantity: med.quantity || 0,
+      doctorPrice: med.doctorPrice ?? '',
+      gst: med.gst || 0
+  });
+  const editIds = Object.keys(editRows);
+  const isMultiEdit = editIds.length > 1;
+
+  const handleEditClick = (med) => {
+      setEditRows({ [med._id]: toEditForm(med) });
       setNewBillFile(null);
   };
 
-  const handleEditFormChange = (e) => { 
-      setEditFormData({ ...editFormData, [e.target.name]: e.target.value }); 
+  const handleEditSelected = () => {
+      const rows = {};
+      meds.filter((m) => selectedIds.includes(m._id)).forEach((m) => { rows[m._id] = toEditForm(m); });
+      setEditRows(rows);
+      setNewBillFile(null);
   };
+
+  const cancelEdit = () => {
+      setEditRows({});
+      setNewBillFile(null);
+  };
+
+  const handleEditFormChange = (id) => (e) => {
+      const { name, value } = e.target;
+      setEditRows((prev) => ({ ...prev, [id]: { ...prev[id], [name]: value } }));
+  };
+
+  // Multi edit: copy one value (GST, schedule, party, HSN) into every row being edited.
+  const applyBulkValue = (field) => {
+      const value = bulkValues[field];
+      if (value === '') return;
+      setEditRows((prev) => Object.fromEntries(Object.entries(prev).map(([id, row]) => [id, { ...row, [field]: value }])));
+  };
+
+  const toggleSelect = (id) => setSelectedIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  const allVisibleSelected = filteredMeds.length > 0 && filteredMeds.every((m) => selectedIds.includes(m._id));
+  const toggleSelectAllVisible = () => setSelectedIds(allVisibleSelected
+      ? selectedIds.filter((id) => !filteredMeds.some((m) => m._id === id))
+      : [...new Set([...selectedIds, ...filteredMeds.map((m) => m._id)])]);
 
   const handleEditFileChange = (e) => {
       setNewBillFile(e.target.files[0]);
   };
 
+  const BULK_FIELDS = ['productName', 'quantity', 'batchNumber', 'hsnCode', 'partyName', 'packSize', 'mrp', 'sellingPrice', 'doctorPrice', 'gst', 'scheduleCategory', 'costPrice'];
+
     const handleSaveClick = async () => {
-            const code = prompt("🛡 Enter Admin Secret to EDIT:");
+            const code = prompt(`🛡 Enter Admin Secret to EDIT${isMultiEdit ? ` ${editIds.length} items` : ''}:`);
             if (!code) return;
 
             try {
@@ -186,29 +220,54 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                 return;
             }
 
-      const formData = new FormData();
-      Object.keys(editFormData).forEach(key => {
-          if (key !== 'billImage' && key !== '_id' && key !== '__v' && key !== 'createdAt' && key !== 'updatedAt') {
-              const value = editFormData[key];
-              if (value !== null && value !== undefined) {
-                  formData.append(key, value);
-              }
-          }
-      });
-      if (newBillFile) {
-          formData.append('billImage', newBillFile);
-      }
-
+      setSavingEdits(true);
       try {
-        await api.put(`/medicines/${editId}`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-        });
-        alert("✅ Updated Successfully!");
-        setEditId(null);
+        if (!isMultiEdit) {
+            const [editId] = editIds;
+            const editFormData = editRows[editId];
+            const formData = new FormData();
+            Object.keys(editFormData).forEach(key => {
+                if (key !== 'billImage' && key !== '_id' && key !== '__v' && key !== 'createdAt' && key !== 'updatedAt') {
+                    const value = editFormData[key];
+                    if (value !== null && value !== undefined) {
+                        formData.append(key, value);
+                    }
+                }
+            });
+            if (newBillFile) {
+                formData.append('billImage', newBillFile);
+            }
+            await api.put(`/medicines/${editId}`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+        } else {
+            // Send only the fields that actually changed on each row.
+            const original = new Map(meds.map((m) => [m._id, toEditForm(m)]));
+            const updates = editIds.map((id) => {
+                const row = editRows[id];
+                const before = original.get(id) || {};
+                const changed = { _id: id };
+                BULK_FIELDS.forEach((field) => {
+                    if (String(row[field] ?? '') !== String(before[field] ?? '')) changed[field] = row[field];
+                });
+                return changed;
+            }).filter((row) => Object.keys(row).length > 1);
+            if (updates.length === 0) {
+                alert('Koi change nahi kiya gaya.');
+                return;
+            }
+            const res = await api.put('/medicines/bulk-update', { updates });
+            alert(`✅ ${res.data?.message || 'Updated Successfully!'}`);
+        }
+        if (!isMultiEdit) alert("✅ Updated Successfully!");
+        setEditRows({});
+        setSelectedIds([]);
         window.location.reload();
       } catch (error) {
           console.error("Update Failed:", error.response?.data?.message || error.message);
           alert("Update Failed: " + (error.response?.data?.message || "Unknown Error"));
+      } finally {
+          setSavingEdits(false);
       }
   };
 
@@ -333,11 +392,52 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
          </div>
       </div>
 
+      {/* --- MULTI EDIT BAR --- */}
+      {(selectedIds.length > 0 || editIds.length > 0) && (
+        <div className="px-4 py-3 bg-blue-50 border-b border-blue-100 flex flex-wrap items-center gap-3 text-xs">
+            {editIds.length === 0 ? (
+                <>
+                    <span className="font-bold text-blue-800">{selectedIds.length} item select kiye</span>
+                    <button onClick={handleEditSelected} className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold">✏️ Edit Selected ({selectedIds.length})</button>
+                    <button onClick={() => setSelectedIds([])} className="font-bold text-gray-500">Clear selection</button>
+                </>
+            ) : (
+                <>
+                    <span className="font-bold text-blue-800">✏️ {editIds.length} item edit ho rahe hain</span>
+                    {isMultiEdit && (
+                        <div className="flex flex-wrap items-center gap-2 bg-white border border-blue-200 rounded-lg px-2 py-1">
+                            <span className="font-bold text-gray-600">Sab par lagayein:</span>
+                            <select value={bulkValues.gst} onChange={(e) => setBulkValues({ ...bulkValues, gst: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5">
+                                <option value="">GST%</option>
+                                {['0', '5', '12', '18', '28', '40'].map((g) => <option key={g} value={g}>{g}%</option>)}
+                            </select>
+                            <button onClick={() => applyBulkValue('gst')} className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">Apply</button>
+                            <select value={bulkValues.scheduleCategory} onChange={(e) => setBulkValues({ ...bulkValues, scheduleCategory: e.target.value })} className="border border-gray-300 rounded px-1 py-0.5">
+                                <option value="">Sch.</option>
+                                {scheduleCategories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
+                            </select>
+                            <button onClick={() => applyBulkValue('scheduleCategory')} className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">Apply</button>
+                            <input value={bulkValues.hsnCode} onChange={(e) => setBulkValues({ ...bulkValues, hsnCode: e.target.value })} placeholder="HSN" className="w-20 border border-gray-300 rounded px-1 py-0.5" />
+                            <button onClick={() => applyBulkValue('hsnCode')} className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">Apply</button>
+                            <input value={bulkValues.partyName} onChange={(e) => setBulkValues({ ...bulkValues, partyName: e.target.value })} placeholder="Party" className="w-28 border border-gray-300 rounded px-1 py-0.5" />
+                            <button onClick={() => applyBulkValue('partyName')} className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">Apply</button>
+                        </div>
+                    )}
+                    <button onClick={handleSaveClick} disabled={savingEdits} className="px-3 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold disabled:opacity-50">{savingEdits ? 'Saving...' : `💾 Save All (${editIds.length})`}</button>
+                    <button onClick={cancelEdit} className="px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-600 font-bold">❌ Cancel</button>
+                </>
+            )}
+        </div>
+      )}
+
       {/* --- TABLE --- */}
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
                 <tr>
+                    <th className={`${thClass} text-center`}>
+                        <input type="checkbox" checked={allVisibleSelected} onChange={toggleSelectAllVisible} disabled={editIds.length > 0} title="Select all visible" />
+                    </th>
                     <th className={thClass}>Name</th>
                     <th className={`${thClass} text-center`}>Qty (Strips)</th>
                     <th className={`${thClass} bg-orange-50 text-orange-800 text-center`}>Loose</th> 
@@ -361,25 +461,31 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                 const looseTablets = Math.round(m.looseQty || 0);
 
                 return (
-                <tr key={m._id} className="hover:bg-gray-50 transition-colors">
-                {editId === m._id ? (
+                <tr key={m._id} className={`hover:bg-gray-50 transition-colors ${selectedIds.includes(m._id) ? 'bg-blue-50/50' : ''}`}>
+                <td className={`${tdClass} text-center`}>
+                    <input type="checkbox" checked={selectedIds.includes(m._id)} onChange={() => toggleSelect(m._id)} disabled={editIds.length > 0} />
+                </td>
+                {editRows[m._id] ? (() => {
                     // --- EDIT MODE ---
+                    const editFormData = editRows[m._id];
+                    const onChange = handleEditFormChange(m._id);
+                    return (
                     <>
-                    <td className={tdClass}><input name="productName" value={editFormData.productName} onChange={handleEditFormChange} className={inputEditClass} /></td>
-                    <td className={tdClass}><input name="quantity" type="number" value={editFormData.quantity} onChange={handleEditFormChange} className={`${inputEditClass} w-16 text-center`} /></td>
+                    <td className={tdClass}><input name="productName" value={editFormData.productName} onChange={onChange} className={inputEditClass} /></td>
+                    <td className={tdClass}><input name="quantity" type="number" value={editFormData.quantity} onChange={onChange} className={`${inputEditClass} w-16 text-center`} /></td>
                     <td className={`${tdClass} bg-orange-50 text-center text-gray-400 font-bold`}>
                         -
                     </td>
-                    <td className={tdClass}><input name="batchNumber" value={editFormData.batchNumber} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
-                    <td className={tdClass}><input name="hsnCode" value={editFormData.hsnCode || ''} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
-                    <td className={tdClass}><input name="partyName" value={editFormData.partyName || ''} onChange={handleEditFormChange} className={inputEditClass} /></td>
-                    <td className={tdClass}><input name="packSize" type="number" value={editFormData.packSize || ''} onChange={handleEditFormChange} className={`${inputEditClass} text-center w-16`} /></td>
+                    <td className={tdClass}><input name="batchNumber" value={editFormData.batchNumber} onChange={onChange} className={`${inputEditClass} w-20`} /></td>
+                    <td className={tdClass}><input name="hsnCode" value={editFormData.hsnCode || ''} onChange={onChange} className={`${inputEditClass} w-20`} /></td>
+                    <td className={tdClass}><input name="partyName" value={editFormData.partyName || ''} onChange={onChange} className={inputEditClass} /></td>
+                    <td className={tdClass}><input name="packSize" type="number" value={editFormData.packSize || ''} onChange={onChange} className={`${inputEditClass} text-center w-16`} /></td>
 
-                    <td className={tdClass}><input name="mrp" type="number" value={editFormData.mrp} onChange={handleEditFormChange} className={`${inputEditClass} w-20`} /></td>
-                    <td className={tdClass}><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 font-bold text-green-700`} /></td>
-                    <td className={tdClass}><input name="doctorPrice" type="number" value={editFormData.doctorPrice ?? ''} onChange={handleEditFormChange} className={`${inputEditClass} w-20 font-bold text-indigo-700`} /></td>
+                    <td className={tdClass}><input name="mrp" type="number" value={editFormData.mrp} onChange={onChange} className={`${inputEditClass} w-20`} /></td>
+                    <td className={tdClass}><input name="sellingPrice" type="number" value={editFormData.sellingPrice} onChange={onChange} className={`${inputEditClass} w-20 font-bold text-green-700`} /></td>
+                    <td className={tdClass}><input name="doctorPrice" type="number" value={editFormData.doctorPrice ?? ''} onChange={onChange} className={`${inputEditClass} w-20 font-bold text-indigo-700`} /></td>
                     <td className={tdClass}>
-                        <select name="gst" value={editFormData.gst} onChange={handleEditFormChange} className={inputEditClass}>
+                        <select name="gst" value={editFormData.gst} onChange={onChange} className={inputEditClass}>
                             <option value="0">0%</option>
                             <option value="5">5%</option>
                             <option value="12">12%</option>
@@ -389,26 +495,33 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                         </select>
                     </td>
                     <td className={tdClass}>
-                        <select name="scheduleCategory" title="Drug Schedule (A-Z)" value={editFormData.scheduleCategory || 'None'} onChange={handleEditFormChange} className={`${inputEditClass} w-20`}>
+                        <select name="scheduleCategory" title="Drug Schedule (A-Z)" value={editFormData.scheduleCategory || 'None'} onChange={onChange} className={`${inputEditClass} w-20`}>
                             {scheduleCategories.map((cat) => (
                                 <option key={cat} value={cat} title={scheduleInfo[cat] || ''}>{cat}</option>
                             ))}
                         </select>
                     </td>
                     {showCP && (
-                        <td className={tdClass}><input name="costPrice" type="number" value={editFormData.costPrice} onChange={handleEditFormChange} className={`${inputEditClass} w-20 text-[#59677d] border-gray-300`} /></td>
+                        <td className={tdClass}><input name="costPrice" type="number" value={editFormData.costPrice} onChange={onChange} className={`${inputEditClass} w-20 text-[#59677d] border-gray-300`} /></td>
                     )}
                     <td className={tdClass}>
-                        <input type="file" onChange={handleEditFileChange} className="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100" />
+                        {isMultiEdit ? <span className="text-gray-400 text-xs italic">-</span> : <input type="file" onChange={handleEditFileChange} className="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100" />}
                     </td>
                     <td className={tdClass}>
-                        <div className="flex gap-2 justify-center">
-                            <button onClick={handleSaveClick} className="bg-green-100 text-green-700 hover:bg-green-200 p-1.5 rounded-md" title="Save">💾</button>
-                            <button onClick={() => setEditId(null)} className="bg-gray-100 text-gray-600 hover:bg-gray-200 p-1.5 rounded-md" title="Cancel">❌</button>
-                        </div>
+                        {isMultiEdit ? (
+                            <div className="flex justify-center">
+                                <button onClick={() => setEditRows((prev) => { const next = { ...prev }; delete next[m._id]; return next; })} className="bg-gray-100 text-gray-600 hover:bg-gray-200 p-1.5 rounded-md text-xs" title="Is item ko edit se hatayein">✕</button>
+                            </div>
+                        ) : (
+                            <div className="flex gap-2 justify-center">
+                                <button onClick={handleSaveClick} disabled={savingEdits} className="bg-green-100 text-green-700 hover:bg-green-200 p-1.5 rounded-md" title="Save">💾</button>
+                                <button onClick={cancelEdit} className="bg-gray-100 text-gray-600 hover:bg-gray-200 p-1.5 rounded-md" title="Cancel">❌</button>
+                            </div>
+                        )}
                     </td>
                     </>
-                ) : (
+                    );
+                })() : (
                     // --- VIEW MODE ---
                     <>
                     <td className={`${tdClass} font-medium text-gray-900`}>{m.productName}</td>
@@ -443,7 +556,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                     </td>
                     <td className={tdClass}>
                         <div className="flex gap-2 justify-center">
-                            <button onClick={() => handleEditClick(m)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit Item (Password Required)">✏️</button>
+                            <button onClick={() => handleEditClick(m)} disabled={editIds.length > 0} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit Item (Password Required)">✏️</button>
                             {userRole !== 'staff' && (
                                 <button onClick={() => handleDeleteClick(m._id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors" title="Delete Item">🗑️</button>
                             )}

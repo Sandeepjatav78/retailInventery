@@ -114,6 +114,16 @@ exports.createSale = async (req, res) => {
       return res.status(400).json({ message: "No sale items provided" });
     }
 
+    const isPartySale = req.body.buyerParty?.isPartySale === true;
+    const buyerParty = isPartySale ? {
+      gstin: String(req.body.buyerParty.gstin || '').trim().toUpperCase(),
+      drugLicenseNo: String(req.body.buyerParty.drugLicenseNo || '').trim().toUpperCase(),
+      address: String(req.body.buyerParty.address || '').trim()
+    } : undefined;
+    if (isPartySale && (!String(customerDetails?.name || '').trim() || !buyerParty.drugLicenseNo)) {
+      return res.status(400).json({ message: 'Party sale ke liye party ka naam aur Drug License No. zaroori hai' });
+    }
+
     const safeNumber = (value, fallback = 0) => {
       const parsed = Number(value);
       return Number.isFinite(parsed) ? parsed : fallback;
@@ -323,6 +333,8 @@ exports.createSale = async (req, res) => {
       },
       items: scheduledItems,
       hasScheduleDrug,
+      isPartySale,
+      buyerParty,
       totalAmount: safeNumber(totalAmount),
       paymentMode,
       isBillRequired: isBillRequired,
@@ -785,6 +797,38 @@ exports.returnSaleItems = async (req, res) => {
     res.status(500).json({ message: 'Return failed', error: err.message });
   }
 };
+// --- 6B. BUYER PARTIES (B2B) ---
+// Parties (other pharmacies / firms) we have sold to, with their latest details,
+// so a repeat party sale can be filled in from the name.
+exports.getBuyerParties = async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const match = { isPartySale: true };
+    if (q) match['customerDetails.name'] = { $regex: q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), $options: 'i' };
+    const parties = await Sale.aggregate([
+      { $match: match },
+      { $sort: { date: -1 } },
+      {
+        $group: {
+          _id: { $toLower: '$customerDetails.name' },
+          name: { $first: '$customerDetails.name' },
+          phone: { $first: '$customerDetails.phone' },
+          gstin: { $first: '$buyerParty.gstin' },
+          drugLicenseNo: { $first: '$buyerParty.drugLicenseNo' },
+          address: { $first: '$buyerParty.address' },
+          lastSale: { $first: '$date' }
+        }
+      },
+      { $sort: { lastSale: -1 } },
+      { $limit: 200 }
+    ]);
+    return res.json({ parties: parties.map(({ _id, ...party }) => party) });
+  } catch (err) {
+    console.error('[Error] getBuyerParties:', err.message);
+    return res.status(500).json({ message: 'Parties load nahi ho sakin' });
+  }
+};
+
 // --- 7. AUTO BILL CUTTING ---
 // For each day, generates random bills that add up to the requested cash and
 // online amounts, each bill between minAmount and maxAmount, from valid stock. Two steps: /auto-bill/preview builds a plan
@@ -796,6 +840,23 @@ const AUTO_BILL_MAX_QTY_PER_LINE = 3;
 
 const roundMoney = (value) => Math.round(Number(value || 0) * 100) / 100;
 const randomInt = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
+const pickRandom = (list) => list[Math.floor(Math.random() * list.length)];
+
+// Customer names put on auto bills when the user doesn't give their own list.
+const AUTO_BILL_FIRST_NAMES = [
+  'Amit', 'Rahul', 'Sunil', 'Rakesh', 'Vikas', 'Sandeep', 'Rajesh', 'Manoj', 'Deepak', 'Ajay',
+  'Ravi', 'Naveen', 'Pankaj', 'Sanjay', 'Mukesh', 'Anil', 'Vinod', 'Ashok', 'Rohit', 'Mohit',
+  'Sunita', 'Pooja', 'Neha', 'Priya', 'Anita', 'Kavita', 'Seema', 'Rekha', 'Suman', 'Geeta',
+  'Kiran', 'Meena', 'Nisha', 'Ritu', 'Sonia', 'Babita', 'Asha', 'Usha', 'Monika', 'Jyoti'
+];
+const AUTO_BILL_LAST_NAMES = [
+  'Sharma', 'Verma', 'Gupta', 'Kumar', 'Singh', 'Yadav', 'Malik', 'Jain', 'Goyal', 'Bansal',
+  'Saini', 'Arora', 'Garg', 'Mittal', 'Chauhan', 'Rana', 'Dhiman', 'Aggarwal', 'Kaushik', 'Sethi'
+];
+const randomCustomerName = (names) => (names.length
+  ? pickRandom(names)
+  : `${pickRandom(AUTO_BILL_FIRST_NAMES)} ${pickRandom(AUTO_BILL_LAST_NAMES)}`);
+const cleanCustomerName = (value) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'Cash Sale';
 
 // Same rules a staff bill must pass, plus: only medicines already checked as
 // non-scheduled (H/H1/X etc. need a prescription register, so never auto-billed).
@@ -982,11 +1043,73 @@ const buildBillsForCount = (pool, stockLeft, target, count, minAmount, maxAmount
   return bills;
 };
 
+// Random bills often land a little under the target (stock prices don't add up
+// exactly). Closes that gap by adding one unit at a time — of an item whose price
+// still fits — to the smallest bill, so totals land on (or within ₹1 of) the target.
+const AUTO_BILL_TOPUP_MAX_ITEMS = 12;
+const topUpBills = (pool, stockLeft, bills, target) => {
+  let gap = roundMoney(target - bills.reduce((sum, bill) => sum + bill.totalAmount, 0));
+  for (let pass = 0; pass < 400 && gap >= 1; pass++) {
+    const fits = pool.filter((med) => (stockLeft.get(String(med._id)) || 0) >= 1 && Number(med.sellingPrice) <= gap);
+    if (fits.length === 0) break;
+    if (bills.length === 0) bills.push({ items: [], totalAmount: 0 });
+    const bill = bills.reduce((min, b) => (b.totalAmount < min.totalAmount ? b : min), bills[0]);
+    // Prefer bumping an item already on the bill; else add a new line (if the bill has room).
+    const onBill = fits.filter((med) => bill.items.some((item) => item.medicineId === String(med._id)));
+    const med = onBill.length && (bill.items.length >= AUTO_BILL_TOPUP_MAX_ITEMS || Math.random() < 0.5)
+      ? pickRandom(onBill)
+      : (bill.items.length < AUTO_BILL_TOPUP_MAX_ITEMS ? pickRandom(fits) : null);
+    if (!med) break;
+    const id = String(med._id);
+    const price = Number(med.sellingPrice);
+    const line = bill.items.find((item) => item.medicineId === id);
+    if (line) {
+      line.quantity += 1;
+      line.total = roundMoney(line.price * line.quantity);
+    } else {
+      bill.items.push(buildAutoBillLine(med, 1));
+    }
+    stockLeft.set(id, stockLeft.get(id) - 1);
+    bill.totalAmount = roundMoney(bill.totalAmount + price);
+    gap = roundMoney(gap - price);
+  }
+  return bills;
+};
+
+// Staff search for adding a medicine by hand to an auto-bill preview — only
+// items that are themselves valid for auto billing are returned.
+exports.searchAutoBillMedicines = async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ medicines: [] });
+    const regex = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const candidates = await Medicine.find({
+      quantity: { $gte: 1 },
+      sellingPrice: { $gt: 0 },
+      isKachiEntry: { $ne: true },
+      $or: [{ productName: regex }, { batchNumber: regex }]
+    }).limit(60).lean();
+    const now = new Date();
+    const medicines = candidates.filter((med) => isAutoBillable(med, now)).slice(0, 20).map((med) => ({
+      ...buildAutoBillLine(med, 1),
+      stock: Math.floor(Number(med.quantity || 0))
+    }));
+    return res.json({ medicines });
+  } catch (err) {
+    console.error('[Error] searchAutoBillMedicines:', err.message);
+    return res.status(500).json({ message: 'Medicine search nahi ho saki' });
+  }
+};
+
 exports.previewAutoBills = async (req, res) => {
   try {
     const params = parseAutoBillRequest(req.body);
     if (params.error) return res.status(400).json({ message: params.error });
     const { days, minAmount, maxAmount } = params;
+    const useNames = req.body.randomNames !== false;
+    const customNames = (Array.isArray(req.body.customerNames) ? req.body.customerNames : [])
+      .map((name) => String(name || '').replace(/\s+/g, ' ').trim().slice(0, 60))
+      .filter(Boolean);
 
     // Eligibility is checked against the latest bill date in the plan, so no
     // item that expires partway through the selected days gets used.
@@ -1008,9 +1131,9 @@ exports.previewAutoBills = async (req, res) => {
       const cut = (amount, count, room) => (count
         ? buildBillsForCount(pool, stockLeft, amount, count, minAmount, maxAmount)
         : buildBillsForAmount(pool, stockLeft, amount, minAmount, maxAmount, room));
-      const cashBills = cut(day.cashAmount, day.cashCount, AUTO_BILL_MAX_COUNT - bills.length);
+      const cashBills = topUpBills(pool, stockLeft, cut(day.cashAmount, day.cashCount, AUTO_BILL_MAX_COUNT - bills.length), day.cashAmount);
       cashBills.forEach((bill) => { bill.paymentMode = 'Cash'; });
-      const onlineBills = cut(day.onlineAmount, day.onlineCount, AUTO_BILL_MAX_COUNT - bills.length - cashBills.length);
+      const onlineBills = topUpBills(pool, stockLeft, cut(day.onlineAmount, day.onlineCount, AUTO_BILL_MAX_COUNT - bills.length - cashBills.length), day.onlineAmount);
       onlineBills.forEach((bill) => { bill.paymentMode = 'Online'; });
 
       // Shuffle cash/online together so the modes are mixed through the day.
@@ -1021,7 +1144,11 @@ exports.previewAutoBills = async (req, res) => {
       }
       const span = day.windowEnd.getTime() - day.windowStart.getTime();
       const times = dayBills.map(() => new Date(day.windowStart.getTime() + Math.floor(Math.random() * span))).sort((a, b) => a - b);
-      dayBills.forEach((bill, idx) => { bill.date = times[idx]; });
+      dayBills.forEach((bill, idx) => {
+        bill.date = times[idx];
+        bill.day = day.date;
+        bill.customerName = useNames ? randomCustomerName(customNames) : 'Cash Sale';
+      });
       bills.push(...dayBills);
       daySummary.push({
         date: day.date,
@@ -1068,10 +1195,16 @@ exports.commitAutoBills = async (req, res) => {
     const normalizedPlan = plan.map((bill) => ({
       date: new Date(bill.date),
       paymentMode: bill.paymentMode === 'Online' ? 'Online' : 'Cash',
+      customerName: cleanCustomerName(bill.customerName),
       items: (Array.isArray(bill.items) ? bill.items : []).map((item) => ({
         medicineId: String(item.medicineId || ''),
         quantity: Math.floor(Number(item.quantity))
-      }))
+      })).reduce((lines, item) => {
+        const same = lines.find((line) => line.medicineId === item.medicineId);
+        if (same) same.quantity += item.quantity;
+        else lines.push(item);
+        return lines;
+      }, [])
     }));
 
     // Validate the whole plan against live stock before writing anything.
@@ -1114,7 +1247,7 @@ exports.commitAutoBills = async (req, res) => {
       const items = bill.items.map((item) => buildAutoBillLine(medMap.get(item.medicineId), item.quantity));
       return {
         invoiceNo: `${INVOICE_PREFIX}${year}-${String(firstSeq + idx).padStart(INVOICE_DIGITS, '0')}`,
-        customerDetails: { name: 'Cash Sale', phone: '', doctor: '' },
+        customerDetails: { name: bill.customerName, phone: '', doctor: '' },
         items,
         hasScheduleDrug: false,
         totalAmount: roundMoney(items.reduce((sum, item) => sum + item.total, 0)),
@@ -1148,7 +1281,7 @@ exports.commitAutoBills = async (req, res) => {
       success: true,
       message: `${saved.length} bills save ho gaye (₹${grandTotal} — Cash ₹${cashTotal}, Online ₹${onlineTotal}).`,
       grandTotal,
-      sales: saved.map((sale) => ({ _id: sale._id, invoiceNo: sale.invoiceNo, date: sale.date, totalAmount: sale.totalAmount, items: sale.items, paymentMode: sale.paymentMode }))
+      sales: saved.map((sale) => ({ _id: sale._id, invoiceNo: sale.invoiceNo, date: sale.date, totalAmount: sale.totalAmount, items: sale.items, paymentMode: sale.paymentMode, customerName: sale.customerDetails?.name || 'Cash Sale' }))
     });
   } catch (err) {
     console.error('[Error] commitAutoBills:', err.message);

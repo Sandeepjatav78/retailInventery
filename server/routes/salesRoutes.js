@@ -17,10 +17,12 @@ router.post('/', salesController.createSale);
 // 3. Get Sales Report & Manage Bills
 router.get('/filter', salesController.getAllSales);
 router.get('/schedule-ledger', salesController.getScheduleLedger);
+router.get('/buyer-parties', salesController.getBuyerParties);
 
 // 3B. Auto bill cutting (staff only) — random bills for a day within an amount range
 router.post('/auto-bill/preview', authorizeRoles('staff'), salesController.previewAutoBills);
 router.post('/auto-bill/commit', authorizeRoles('staff'), salesController.commitAutoBills);
+router.get('/auto-bill/medicines', authorizeRoles('staff'), salesController.searchAutoBillMedicines);
 router.put('/:id', salesController.updateSale);
 router.delete('/:id', salesController.deleteSale);
 

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/axios';
 
 const emptyItem = () => ({ productName: '', packing: '', batchNumber: '', manufacturer: '', hsnCode: '', expiryDate: '', quantity: '1', freeQuantity: '0', mrp: '', rate: '', netRate: '', sellingPrice: '', discount: '0', gst: '5', amount: '' });
@@ -88,6 +89,11 @@ const PurchaseBillEntry = () => {
   const [items, setItems] = useState([emptyItem()]);
   const [saving, setSaving] = useState(false);
   const [scanning, setScanning] = useState(false);
+  // Bill sent from the mobile app (?upload=<id>): its stored pages are scanned and saved with the bill.
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const uploadId = searchParams.get('upload');
+  const [mobileUpload, setMobileUpload] = useState(null);
   const [suppliers, setSuppliers] = useState([]);
   const [errors, setErrors] = useState({});
   const [duplicateWarning, setDuplicateWarning] = useState(null);
@@ -104,6 +110,17 @@ const PurchaseBillEntry = () => {
   useEffect(() => {
     api.get('/medicines/suppliers').then(res => setSuppliers(res.data || [])).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!uploadId) return;
+    api.get(`/medicines/bill-uploads/${uploadId}`)
+      .then((res) => {
+        setMobileUpload(res.data.upload);
+        if (res.data.upload.status === 'Pending') scanMobileUpload();
+      })
+      .catch((err) => alert(err.response?.data?.message || 'Mobile upload load nahi ho saka.'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uploadId]);
 
   // Warn (non-blocking) as soon as supplier + invoice number match an already-saved bill —
   // so the user knows before typing out the whole bill, not only when they hit Save.
@@ -157,13 +174,20 @@ const PurchaseBillEntry = () => {
   const handleScanBill = async (files) => {
     const fileList = Array.isArray(files) ? files : (files ? [files] : []);
     if (fileList.length === 0) return;
+    const formData = new FormData();
+    fileList.forEach(file => formData.append('billImages', file));
+    await runScan(() => api.post('/medicines/scan-bill', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    }), fileList);
+  };
+
+  const scanMobileUpload = (rescan = false) => runScan(() => api.post('/medicines/scan-bill', { uploadId, rescan }), null);
+
+  // fileList = local pages to keep attached (null = mobile upload, its pages stay on the server)
+  const runScan = async (request, fileList) => {
     setScanning(true);
     try {
-      const formData = new FormData();
-      fileList.forEach(file => formData.append('billImages', file));
-      const res = await api.post('/medicines/scan-bill', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      const res = await request();
       if (res.data?.success && res.data?.data) {
         const extracted = res.data.data;
         setBill(prev => ({
@@ -184,7 +208,7 @@ const PurchaseBillEntry = () => {
           paymentMode: extracted.paymentMode || prev.paymentMode,
           notes: extracted.notes || prev.notes,
           additionalDiscount: extracted.additionalDiscount != null && Number(extracted.additionalDiscount) > 0 ? String(extracted.additionalDiscount) : prev.additionalDiscount,
-          billFiles: fileList
+          billFiles: fileList || prev.billFiles
         }));
 
         if (Array.isArray(extracted.items) && extracted.items.length > 0) {
@@ -208,7 +232,7 @@ const PurchaseBillEntry = () => {
           setItems(scannedItems);
         }
         setErrors({});
-        alert('✨ AI Scanner: Purchase bill parsed and auto-filled successfully!');
+        if (!res.data.cached) alert('✨ AI Scanner: Purchase bill parsed and auto-filled successfully! Photo se milakar check karein.');
       }
     } catch (error) {
       console.error(error);
@@ -307,8 +331,13 @@ const PurchaseBillEntry = () => {
       Object.entries(billToSend).forEach(([key, value]) => { if (key !== 'billFiles') data.append(key, value); });
       data.append('items', JSON.stringify(items));
       bill.billFiles.forEach(file => data.append('billImages', file));
+      if (mobileUpload && bill.billFiles.length === 0) data.append('uploadId', mobileUpload._id);
       await api.post('/medicines/purchase-bills', data, { headers: { 'Content-Type': 'multipart/form-data' } });
       alert('Purchase bill save ho gaya aur medicines inventory mein add ho gayi.');
+      if (mobileUpload) {
+        navigate('/mobile-uploads');
+        return;
+      }
       setErrors({});
       setDuplicateWarning(null);
       setBill(initialBill());
@@ -329,6 +358,34 @@ const PurchaseBillEntry = () => {
         <div><h1 className="text-2xl font-extrabold text-slate-800">Purchase Bill Entry</h1><p className="text-sm text-slate-500">Supplier bill upload karein, photo scan karein aur medicines automatically add karein.</p></div>
         <div className="rounded-lg bg-teal-700 px-5 py-3 text-right text-white shadow-sm"><p className="text-xs font-semibold uppercase tracking-wider text-teal-100">Grand Total</p><p className="text-2xl font-extrabold">{money(grandTotal)}</p></div>
       </div>
+
+      {mobileUpload && (
+        <div className="rounded-xl border-2 border-sky-300 bg-sky-50 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="font-extrabold text-sky-900">📲 Mobile se aaya bill ({mobileUpload.pages.length} photo)</h2>
+              <p className="text-xs text-sky-800">
+                {new Date(mobileUpload.createdAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true })}
+                {mobileUpload.note ? ` · Note: ${mobileUpload.note}` : ''}
+                {mobileUpload.status !== 'Pending' ? ` · Status: ${mobileUpload.status}` : ''}
+              </p>
+              <p className="text-xs text-sky-700 mt-0.5">AI ne form bhar diya hai — photo se milakar galti theek karein, phir Save karein. Save hote hi ye upload "Done" ho jayega.</p>
+            </div>
+            <button type="button" disabled={scanning} onClick={() => scanMobileUpload(true)} className="px-3 py-2 rounded-lg bg-white border border-sky-300 text-sky-800 text-xs font-bold disabled:opacity-50">
+              {scanning ? 'Scanning...' : '🔄 AI se dobara scan'}
+            </button>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {mobileUpload.pages.map((page, idx) => (/\.pdf($|\?)/i.test(page.url) || page.mimeType === 'application/pdf' ? (
+              <a key={idx} href={page.url} target="_blank" rel="noreferrer" className="shrink-0 w-40 h-56 rounded-lg border border-sky-200 bg-white flex items-center justify-center text-sm font-bold text-sky-700">📄 PDF {idx + 1}</a>
+            ) : (
+              <a key={idx} href={page.url} target="_blank" rel="noreferrer" title="Bada dekhne ke liye click karein" className="shrink-0">
+                <img src={page.url} alt={`Page ${idx + 1}`} className="h-72 rounded-lg border border-sky-200 bg-white object-contain" />
+              </a>
+            )))}
+          </div>
+        </div>
+      )}
 
       {/* --- AI BILL AUTO-SCANNER BANNER --- */}
       <div className="bg-gradient-to-r from-purple-700 to-indigo-800 p-4 rounded-xl text-white shadow-sm">

@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import api from '../api/axios';
 
 const Sidebar = () => {
   const location = useLocation();
@@ -7,6 +8,15 @@ const Sidebar = () => {
   
   // Get User Role
   const userRole = localStorage.getItem('userRole'); // 'admin' or 'staff'
+
+  // Count of bill photos sent from the mobile app and not entered yet (refreshed on page change).
+  const [pendingUploads, setPendingUploads] = useState(0);
+  useEffect(() => {
+    if (userRole !== 'admin') return;
+    api.get('/medicines/bill-uploads', { params: { status: 'Pending', limit: 1 } })
+      .then((res) => setPendingUploads(res.data?.pendingCount || 0))
+      .catch(() => {});
+  }, [userRole, location.pathname]);
 
   const handleLogout = () => {
     if(window.confirm("Are you sure you want to Logout?")) {
@@ -85,6 +95,14 @@ const Sidebar = () => {
             {userRole === 'admin' && (
                 <li>
                     <Link to="/purchase-bill" className={getLinkClass('/purchase-bill')}>📥 Purchase Bill</Link>
+                </li>
+            )}
+
+            {userRole === 'admin' && (
+                <li>
+                    <Link to="/mobile-uploads" className={getLinkClass('/mobile-uploads')}>
+                        📲 Mobile Uploads{pendingUploads > 0 && <span className="ml-1 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold">{pendingUploads}</span>}
+                    </Link>
                 </li>
             )}
 

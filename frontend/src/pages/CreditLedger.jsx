@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import api from '../api/axios';
-import { generateBillHTML } from '../utils/BillGenerator';
+import { generateBillHTML, PHARMACY_DETAILS } from '../utils/BillGenerator';
 import '../styles/CreditLedger.css';
 
 const CreditLedger = () => {
@@ -115,6 +115,7 @@ const CreditLedger = () => {
         name: matchedSale.customerDetails?.name || 'Cash',
         phone: matchedSale.customerDetails?.phone || '',
         doctor: matchedSale.customerDetails?.doctor || 'Self',
+        buyerParty: matchedSale.isPartySale ? matchedSale.buyerParty : null,
         mode: matchedSale.paymentMode,
         isDuplicate: true,
         grandTotal: matchedSale.totalAmount,
@@ -224,9 +225,35 @@ const CreditLedger = () => {
   };
 
   const buildWhatsAppReminder = (credit) => {
-    const remaining = Number(credit?.remainingAmount || 0).toFixed(2);
+    const amount = (value) => `₹${Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     const customerName = credit?.customerName || 'Customer';
-    return `Namaste ${customerName}, aapke udhari khate me abhi ₹${remaining} baki hai. Kripya payment jaldi kar dein. Dhanyavaad. - Radhe Pharmacy`;
+    const pendingBills = (credit?.bills || [])
+      .filter((bill) => bill.billStatus !== 'Paid')
+      .map((bill) => ({ ...bill, due: Number(bill.billAmount || 0) - Number(bill.billPaid || 0) }))
+      .filter((bill) => bill.due > 0.009);
+    const billLines = pendingBills.slice(0, 5).map((bill) => {
+      const date = bill.billDate ? new Date(bill.billDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
+      const ref = String(bill.invoiceNo || '').startsWith('OPENING-') ? 'Previous balance' : `Invoice ${bill.invoiceNo}`;
+      return `• ${ref}${date ? ` (${date})` : ''}: ${amount(bill.due)}`;
+    });
+    if (pendingBills.length > 5) billLines.push(`• ...and ${pendingBills.length - 5} more`);
+
+    return [
+      `Dear ${customerName},`,
+      '',
+      `Greetings from ${PHARMACY_DETAILS.name}.`,
+      `This is a gentle reminder that an outstanding balance of *${amount(credit?.remainingAmount)}* is pending on your account.`,
+      ...(billLines.length ? ['', 'Pending bills:', ...billLines] : []),
+      '',
+      `You may pay at the store or via UPI to *${PHARMACY_DETAILS.upiId}*.`,
+      'If you have already made the payment, please ignore this message.',
+      '',
+      `For any queries, call us at ${PHARMACY_DETAILS.phone}.`,
+      '',
+      'Thank you for your continued trust.',
+      'Warm regards,',
+      PHARMACY_DETAILS.name,
+    ].join('\n');
   };
 
   const handleSendWhatsApp = (credit) => {

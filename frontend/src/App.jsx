@@ -11,6 +11,7 @@ import PurchaseReturn from './pages/PurchaseReturn';
 import KachiEntry from './pages/KachiEntry';
 import PurchaseBillEntry from './pages/PurchaseBillEntry';
 import PurchaseBillHistory from './pages/PurchaseBillHistory';
+import MobileUploads from './pages/MobileUploads';
 import SupplierLedger from './pages/SupplierLedger';
 import ScheduleLedger from './pages/ScheduleLedger';
 import PriceChecker from './components/PriceChecker';
@@ -41,6 +42,7 @@ function App() {
                     <Route path="/kachi-entry" element={<KachiEntry />} />
                     <Route path="/purchase-bill" element={<PurchaseBillEntry />} />
                     <Route path="/purchase-bill-history" element={<PurchaseBillHistory />} />
+                    <Route path="/mobile-uploads" element={<PrivateRoute roles={['admin']}><MobileUploads /></PrivateRoute>} />
                     <Route path="/supplier-ledger" element={<SupplierLedger />} />
                     <Route path="/check-price" element={<PriceChecker />} />
                     <Route path="/doctor-price" element={<DoctorPriceChecker />} />

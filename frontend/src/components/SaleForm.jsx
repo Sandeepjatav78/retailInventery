@@ -62,6 +62,8 @@ const openCostPriceWindow = (item) => {
   w.document.close();
 };
 
+const EMPTY_PARTY_SALE = { enabled: false, gstin: "", drugLicenseNo: "", address: "" };
+
 const SaleForm = () => {
   const getSavedState = (key, defaultValue) => {
     try {
@@ -85,6 +87,9 @@ const SaleForm = () => {
   const [changeToReturn, setChangeToReturn] = useState(0);
   const [isBillNeeded, setIsBillNeeded] = useState(() => getSavedState("isBillNeeded", true));
   const [customer, setCustomer] = useState(() => getSavedState("customer", { name: "", phone: "", doctor: "" }));
+  // B2B: selling to another pharmacy / firm — their licence & tax details go on the bill.
+  const [partySale, setPartySale] = useState(() => getSavedState("partySale", EMPTY_PARTY_SALE));
+  const [buyerParties, setBuyerParties] = useState([]);
   const [invoiceNo, setInvoiceNo] = useState("Loading...");
   const [doseAmount, setDoseAmount] = useState(() => getSavedState("doseAmount", ""));
 
@@ -163,8 +168,14 @@ const SaleForm = () => {
   useEffect(() => {
     const given = parseFloat(amountGiven) || 0;
     setChangeToReturn(paymentMode === "Cash" && !isCredit ? given - grandTotal : 0);
-    localStorage.setItem("draft_sale_v3", JSON.stringify({ cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, isCredit, creditNotes }));
-  }, [cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, grandTotal, isCredit, creditNotes]);
+    localStorage.setItem("draft_sale_v3", JSON.stringify({ cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, isCredit, creditNotes, partySale }));
+  }, [cart, customer, paymentMode, isBillNeeded, amountGiven, doseAmount, grandTotal, isCredit, creditNotes, partySale]);
+
+  // Load parties sold to before, so a repeat party sale fills itself from the name.
+  useEffect(() => {
+    if (!partySale.enabled) return;
+    api.get("/sales/buyer-parties").then((res) => setBuyerParties(res.data?.parties || [])).catch(() => setBuyerParties([]));
+  }, [partySale.enabled]);
 
   useEffect(() => {
     let mounted = true;
@@ -387,8 +398,13 @@ const SaleForm = () => {
     if (!isCredit && paymentMode === "Cash" && given < grandTotal) return alert("Insufficient Cash!");
     if (isBillNeeded && !customer.name.trim()) return alert("Customer Name is required");
     if (isCredit && !customer.phone.trim()) return alert("Customer Phone is required for Credit");
+    if (partySale.enabled && !customer.name.trim()) return alert("Party / Firm name is required");
+    if (partySale.enabled && !partySale.drugLicenseNo.trim()) return alert("Party ka Drug License No. zaroori hai");
 
     const finalCustomer = { name: customer.name.trim() || "Cash Sale", phone: isBillNeeded ? customer.phone : "", doctor: isBillNeeded ? customer.doctor : "" };
+    const buyerParty = partySale.enabled
+      ? { isPartySale: true, gstin: partySale.gstin.trim().toUpperCase(), drugLicenseNo: partySale.drugLicenseNo.trim().toUpperCase(), address: partySale.address.trim() }
+      : null;
 
     if (isStaff) {
       const invalidItem = cart.find((i) => !String(i.hsn || '').trim());
@@ -422,7 +438,8 @@ const SaleForm = () => {
       isBillRequired: isBillNeeded, 
       userRole: userRole,
       isCredit: isCredit,
-      creditNotes: creditNotes
+      creditNotes: creditNotes,
+      buyerParty
     };
 
     let billWindow = null;
@@ -439,14 +456,15 @@ const SaleForm = () => {
       if (isBillNeeded === true && billWindow) {
         const html = await generateBillHTML(itemsForPrint, { 
             no: finalInvoiceNo, ...finalCustomer, mode: paymentMode, isDuplicate: false, 
+            buyerParty,
             grandTotal: grandTotal, 
             doseAmount: doseVal 
         });
         billWindow.document.open(); billWindow.document.write(html); billWindow.document.close();
       } else if (billWindow) billWindow.close();
 
-      setLastSale({ cart: itemsForPrint, invoiceNo: finalInvoiceNo, isBillRequired: isBillNeeded, customer: finalCustomer, paymentMode, doseAmount: doseVal });
-      setCart([]); setAmountGiven(""); setDoseAmount(""); setCustomer({ name: "", phone: "", doctor: "" });
+      setLastSale({ cart: itemsForPrint, invoiceNo: finalInvoiceNo, isBillRequired: isBillNeeded, customer: finalCustomer, buyerParty, paymentMode, doseAmount: doseVal });
+      setCart([]); setAmountGiven(""); setDoseAmount(""); setCustomer({ name: "", phone: "", doctor: "" }); setPartySale(EMPTY_PARTY_SALE);
       fetchNextInvoice();
 
     } catch (error) { 
@@ -456,7 +474,7 @@ const SaleForm = () => {
     }
   };
 
-  const clearDraft = () => { localStorage.removeItem("draft_sale_v3"); setCart([]); setAmountGiven(""); setDoseAmount(""); setChangeToReturn(0); setPaymentMode("Cash"); setIsCredit(false); setCreditNotes(""); setCustomer({ name: "", phone: "", doctor: "" }); setResults([]); setQuery(""); };
+  const clearDraft = () => { localStorage.removeItem("draft_sale_v3"); setCart([]); setAmountGiven(""); setDoseAmount(""); setChangeToReturn(0); setPaymentMode("Cash"); setIsCredit(false); setCreditNotes(""); setCustomer({ name: "", phone: "", doctor: "" }); setPartySale(EMPTY_PARTY_SALE); setResults([]); setQuery(""); };
   
   const handleReprint = async () => { 
       if (!lastSale) return; 
@@ -465,6 +483,7 @@ const SaleForm = () => {
       const html = await generateBillHTML(lastSale.cart, { 
           no: lastSale.invoiceNo, name: lastSale.customer.name, phone: lastSale.customer.phone, 
           doctor: lastSale.customer.doctor, mode: lastSale.paymentMode, isDuplicate: true, 
+          buyerParty: lastSale.buyerParty, 
           grandTotal: lastSale.cart.reduce((a, b) => a + b.total, 0),
           doseAmount: parseFloat(lastSale.doseAmount) || 0 
       }); 
@@ -800,12 +819,24 @@ const SaleForm = () => {
 
         <div className="mb-6">
           <div className="flex justify-between items-center mb-2">
-            <span className={labelClass}>Customer Details</span>
+            <span className={labelClass}>{partySale.enabled ? "Party / Firm Details" : "Customer Details"}</span>
+            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-indigo-700" title="Kisi dusri pharmacy / party ko sale">
+              <input
+                type="checkbox"
+                checked={partySale.enabled}
+                onChange={(e) => {
+                  setPartySale({ ...EMPTY_PARTY_SALE, enabled: e.target.checked });
+                  if (e.target.checked) setIsBillNeeded(true);
+                }}
+                className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"
+              />
+              🏪 Party Sale
+            </label>
             <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-teal-700">
               <input
                 type="checkbox"
                 checked={isBillNeeded}
-                onChange={(e) => setIsBillNeeded(e.target.checked)}
+                onChange={(e) => setIsBillNeeded(e.target.checked || partySale.enabled)}
                 className="w-4 h-4 text-teal-600 rounded focus:ring-teal-500"
               />
               Print Bill
@@ -819,17 +850,29 @@ const SaleForm = () => {
                   isBillNeeded && !customer.name ? "border-red-400 bg-red-50" : ""
                 }`}
                 placeholder={
-                  isBillNeeded ? "Customer Name *" : "Customer Name (Optional)"
+                  partySale.enabled ? "Party / Firm Name *" : isBillNeeded ? "Customer Name *" : "Customer Name (Optional)"
                 }
+                list={partySale.enabled ? "buyer-party-list" : undefined}
                 value={customer.name}
                 onFocus={() => setCustomerFocusField("name")}
                 onKeyDown={handleCustomerKeyDown}
                 onChange={(e) => {
                   setCustomerFocusField("name");
-                  setCustomer({ ...customer, name: e.target.value });
+                  const known = partySale.enabled && buyerParties.find((p) => String(p.name || "").toLowerCase() === e.target.value.trim().toLowerCase());
+                  if (known) {
+                    setCustomer({ ...customer, name: known.name, phone: known.phone || customer.phone });
+                    setPartySale({ enabled: true, gstin: known.gstin || "", drugLicenseNo: known.drugLicenseNo || "", address: known.address || "" });
+                  } else {
+                    setCustomer({ ...customer, name: e.target.value });
+                  }
                 }}
                 onBlur={() => setTimeout(() => setShowCustomerSuggestions(false), 80)}
               />
+              {partySale.enabled && (
+                <datalist id="buyer-party-list">
+                  {buyerParties.map((p) => <option key={p.name} value={p.name} />)}
+                </datalist>
+              )}
 
               {isBillNeeded && showCustomerSuggestions && customerSuggestions.length > 0 && customerFocusField === "name" && (
                 <div className="absolute z-30 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
@@ -892,6 +935,30 @@ const SaleForm = () => {
                   onChange={(e) =>
                     setCustomer({ ...customer, doctor: e.target.value })
                   }
+                />
+              </div>
+            )}
+            {partySale.enabled && (
+              <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/50 p-3">
+                <div className="flex gap-3">
+                  <input
+                    className={`${inputClass} ${!partySale.drugLicenseNo.trim() ? "border-red-400 bg-red-50" : ""}`}
+                    placeholder="Drug License No. *"
+                    value={partySale.drugLicenseNo}
+                    onChange={(e) => setPartySale({ ...partySale, drugLicenseNo: e.target.value })}
+                  />
+                  <input
+                    className={inputClass}
+                    placeholder="GSTIN"
+                    value={partySale.gstin}
+                    onChange={(e) => setPartySale({ ...partySale, gstin: e.target.value })}
+                  />
+                </div>
+                <input
+                  className={inputClass}
+                  placeholder="Party Address"
+                  value={partySale.address}
+                  onChange={(e) => setPartySale({ ...partySale, address: e.target.value })}
                 />
               </div>
             )}

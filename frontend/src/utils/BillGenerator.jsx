@@ -1,7 +1,7 @@
 import QRCode from "qrcode";
 
 // --- CONFIGURATION ---
-const PHARMACY_DETAILS = {
+export const PHARMACY_DETAILS = {
   name: "RADHE PHARMACY",
   address: "Hari Singh Chowk, Devi Mandir Road, Panipat",
   gstin: "06NNTPS0144E1ZL",
@@ -105,6 +105,16 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
   const paymentQR = await QRCode.toDataURL(upiString);
   const reviewQR = await QRCode.toDataURL(PHARMACY_DETAILS.googleReviewUrl);
 
+  // --- B2B BUYER (party sale) DETAILS ---
+  const buyer = invoiceData.buyerParty;
+  const buyerPartyLines = buyer
+    ? [
+        buyer.address && `<div style="font-weight:400; font-size:10px">${buyer.address}</div>`,
+        buyer.gstin && `<div style="font-weight:400; font-size:10px">GSTIN: ${buyer.gstin}</div>`,
+        buyer.drugLicenseNo && `<div style="font-weight:400; font-size:10px">DL No: ${buyer.drugLicenseNo}</div>`,
+      ].filter(Boolean).join("")
+    : "";
+
   // --- DOSE ROW HTML ---
   let doseRow = "";
   if (doseAmount > 0) {
@@ -187,6 +197,7 @@ export const generateBillHTML = async (cartItems, invoiceData) => {
                   <h4>Billed To</h4>
                   <div>${invoiceData.name}</div>
                   <div style="font-weight:400; font-size:10px">${invoiceData.phone || ""}</div>
+                  ${buyerPartyLines}
                 </div>
                 <div class="info-box" style="text-align: center;">
                   <h4>Dr. Ref</h4>

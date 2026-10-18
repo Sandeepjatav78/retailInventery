@@ -5,6 +5,7 @@ const AuditLog = require('../models/AuditLog');
 const PurchaseReturn = require('../models/PurchaseReturn');
 const PurchaseBill = require('../models/PurchaseBill');
 const Supplier = require('../models/Supplier');
+const BillUpload = require('../models/BillUpload');
 const cloudinary = require('cloudinary').v2;
 const { classifyMedicinesWithAI, SCHEDULE_CATEGORIES, SCHEDULE_INFO } = require('../utils/scheduleDetector');
 
@@ -443,6 +444,58 @@ const updateMedicine = async (req, res) => {
   } catch (err) {
     console.error("Update Error:", err);
     res.status(400).json({ message: err.message });
+  }
+};
+
+// 4B. BULK UPDATE — save several edited inventory rows in one request.
+// Only these fields can be changed from the inventory grid.
+const BULK_EDIT_NUMBER_FIELDS = ['mrp', 'sellingPrice', 'doctorPrice', 'costPrice', 'quantity', 'packSize', 'gst'];
+const BULK_EDIT_STRING_FIELDS = ['productName', 'batchNumber', 'hsnCode', 'partyName', 'scheduleCategory'];
+
+const bulkUpdateMedicines = async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body.updates) ? req.body.updates : [];
+    if (rows.length === 0) return res.status(400).json({ message: 'Update karne ke liye koi item nahi mila' });
+    if (rows.length > 500) return res.status(400).json({ message: 'Ek baar me maximum 500 items edit ho sakte hain' });
+
+    const ops = [];
+    for (const row of rows) {
+      const id = String(row?._id || '').trim();
+      if (!id) return res.status(400).json({ message: 'Har item ka _id chahiye' });
+      const update = {};
+      BULK_EDIT_NUMBER_FIELDS.forEach((field) => {
+        if (row[field] === undefined || row[field] === null || row[field] === '') return;
+        const value = Number(row[field]);
+        if (!Number.isFinite(value) || value < 0) throw new Error(`${row.productName || id}: ${field} galat hai`);
+        update[field] = value;
+      });
+      BULK_EDIT_STRING_FIELDS.forEach((field) => {
+        if (row[field] !== undefined && row[field] !== null) update[field] = String(row[field]).trim();
+      });
+      if (update.productName === '' || update.batchNumber === '') throw new Error('Name aur Batch khali nahi ho sakte');
+      if (update.scheduleCategory === '') delete update.scheduleCategory;
+      if (update.scheduleCategory !== undefined) {
+        if (!SCHEDULE_CATEGORIES.includes(update.scheduleCategory)) throw new Error(`Schedule '${update.scheduleCategory}' galat hai`);
+        update.scheduleAiChecked = true; // same as single edit: a manual schedule is final
+      }
+      if (Object.keys(update).length) ops.push({ updateOne: { filter: { _id: id }, update: { $set: update } } });
+    }
+
+    const result = ops.length ? await Medicine.bulkWrite(ops) : { matchedCount: 0, modifiedCount: 0 };
+
+    AuditLog.create({
+      action: 'BULK_UPDATE_MEDICINE',
+      entityType: 'Medicine',
+      entityId: 'bulk',
+      message: `${result.modifiedCount} medicines updated in bulk edit`,
+      details: { ids: rows.map((row) => row._id), matched: result.matchedCount, modified: result.modifiedCount },
+      userRole: req.user?.role || 'admin'
+    }).catch(err => console.error('Audit log error (BULK_UPDATE_MEDICINE):', err.message));
+
+    return res.json({ success: true, message: `${result.modifiedCount} items update ho gaye`, matched: result.matchedCount, modified: result.modifiedCount });
+  } catch (err) {
+    console.error('[Error] bulkUpdateMedicines:', err.message);
+    return res.status(400).json({ message: err.message || 'Bulk update nahi ho saka' });
   }
 };
 
@@ -924,7 +977,10 @@ const createPurchaseBill = async (req, res) => {
       });
     }
 
-    const billImagePaths = Array.isArray(req.files) ? req.files.map(f => f.path) : [];
+    const fromUpload = req.body.uploadId ? await BillUpload.findById(req.body.uploadId) : null;
+    const billImagePaths = Array.isArray(req.files) && req.files.length > 0
+      ? req.files.map(f => f.path)
+      : (fromUpload ? fromUpload.pages.map((page) => page.url) : []);
     const primaryBillImage = billImagePaths[0] || null;
 
     // Look up which items are brand-new medicines first, so their schedule
@@ -986,6 +1042,10 @@ const createPurchaseBill = async (req, res) => {
       email: req.body.supplierEmail,
       drugLicenseNo: req.body.supplierDrugLicenseNo
     });
+
+    if (fromUpload) {
+      await BillUpload.updateOne({ _id: fromUpload._id }, { $set: { status: 'Done', purchaseBillId: bill._id, completedAt: new Date() } });
+    }
 
     AuditLog.create({ action: 'CREATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: bill._id.toString(), message: `Purchase invoice ${invoiceNumber} saved`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal, balanceDue, paymentStatus }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (CREATE_PURCHASE_BILL):', err.message));
     return res.status(201).json(bill);
@@ -1333,7 +1393,15 @@ const scanPurchaseBill = async (req, res) => {
 
     let pages = [];
     const bodyBase64 = req.body.imageBase64 || req.body.base64 || req.body.image;
-    if (Array.isArray(req.files) && req.files.length > 0) {
+    // Scan a bill sent from the mobile app (pages already stored on Cloudinary).
+    const upload = req.body.uploadId ? await BillUpload.findById(req.body.uploadId) : null;
+    if (req.body.uploadId && !upload) return res.status(404).json({ message: 'Mobile upload nahi mila' });
+    if (upload && upload.scanData && req.body.rescan !== 'true' && req.body.rescan !== true) {
+      return res.json({ success: true, data: upload.scanData, cached: true });
+    }
+    if (upload) {
+      pages = await Promise.all(upload.pages.map((page) => readFileAsBase64({ path: page.url, filename: page.publicId, mimetype: page.mimeType })));
+    } else if (Array.isArray(req.files) && req.files.length > 0) {
       pages = await Promise.all(req.files.map(readFileAsBase64));
     } else if (bodyBase64) {
       pages = [{
@@ -1480,6 +1548,7 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
     parsedData.items = cleaned.items;
     parsedData.warnings = cleaned.warnings;
 
+    if (upload) await BillUpload.updateOne({ _id: upload._id }, { $set: { scanData: parsedData } });
     return res.json({ success: true, data: parsedData });
 
 } catch (err) {
@@ -1496,6 +1565,81 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
       return res.status(400).json({ message: 'AI Scanner ye file read nahi kar paaya (corrupt ya bahut badi PDF/image ho sakti hai). Kripya dusri photo/PDF try karein ya PDF ko photo se replace karke dekhein.' });
     }
     return res.status(500).json({ message: 'AI Bill Scanning failed: ' + (err.message || 'Unknown error') });
+  }
+};
+
+// --- MOBILE BILL UPLOADS (phone photo -> web entry queue) ---
+// STAFF/ADMIN (mobile app): send photographed bill pages; nothing is scanned or added to stock yet.
+const createBillUpload = async (req, res) => {
+  try {
+    const files = Array.isArray(req.files) ? req.files : [];
+    if (files.length === 0) return res.status(400).json({ message: 'Kam se kam ek photo bhejein' });
+    const upload = await BillUpload.create({
+      pages: files.map((file) => ({ url: file.path, publicId: file.filename, mimeType: file.mimetype })),
+      note: String(req.body.note || '').trim().slice(0, 500),
+      uploadedBy: req.user?.role || 'staff'
+    });
+    return res.status(201).json({ success: true, message: 'Bill photo bhej di gayi', upload });
+  } catch (err) {
+    console.error('[Error] createBillUpload:', err.message);
+    return res.status(500).json({ message: 'Photo upload nahi ho saki' });
+  }
+};
+
+// List uploads, newest first. ?status=Pending|Done|Rejected|all
+const getBillUploads = async (req, res) => {
+  try {
+    const status = String(req.query.status || 'Pending');
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 300);
+    const filter = status === 'all' ? {} : { status };
+    const [uploads, pendingCount] = await Promise.all([
+      BillUpload.find(filter).sort({ createdAt: -1 }).limit(limit).select('-scanData').lean(),
+      BillUpload.countDocuments({ status: 'Pending' })
+    ]);
+    return res.json({ uploads, pendingCount });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+const getBillUpload = async (req, res) => {
+  try {
+    const upload = await BillUpload.findById(req.params.id).select('-scanData').lean();
+    if (!upload) return res.status(404).json({ message: 'Mobile upload nahi mila' });
+    return res.json({ upload });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+// ADMIN: mark Done / Rejected / back to Pending, with an optional remark.
+const updateBillUpload = async (req, res) => {
+  try {
+    const status = String(req.body.status || '');
+    if (!['Pending', 'Done', 'Rejected'].includes(status)) return res.status(400).json({ message: 'Status galat hai' });
+    const update = { status, completedAt: status === 'Pending' ? null : new Date() };
+    if (req.body.remark !== undefined) update.remark = String(req.body.remark || '').trim().slice(0, 500);
+    const upload = await BillUpload.findByIdAndUpdate(req.params.id, { $set: update }, { new: true }).select('-scanData');
+    if (!upload) return res.status(404).json({ message: 'Mobile upload nahi mila' });
+    return res.json({ success: true, upload });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+};
+
+const deleteBillUpload = async (req, res) => {
+  try {
+    const upload = await BillUpload.findByIdAndDelete(req.params.id);
+    if (!upload) return res.status(404).json({ message: 'Mobile upload nahi mila' });
+    // Photos still referenced by a saved purchase bill are kept on Cloudinary.
+    if (!upload.purchaseBillId) {
+      upload.pages.filter((page) => page.publicId).forEach((page) => {
+        cloudinary.uploader.destroy(page.publicId).catch(() => {});
+      });
+    }
+    return res.json({ success: true, message: 'Upload delete ho gaya' });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
   }
 };
 
@@ -1528,8 +1672,10 @@ const getSupplierLedger = async (req, res) => {
       totalCreditDue += due;
 
       const supplier = String(bill.supplierName || 'Unknown').trim();
-      if (!supplierMap[supplier]) {
-        supplierMap[supplier] = {
+      // Case-insensitive grouping — same matching the pay/merge/delete routes use.
+      const key = supplier.toLowerCase();
+      if (!supplierMap[key]) {
+        supplierMap[key] = {
           supplierName: supplier,
           supplierGstin: bill.supplierGstin || '',
           totalPurchased: 0,
@@ -1540,11 +1686,11 @@ const getSupplierLedger = async (req, res) => {
         };
       }
 
-      supplierMap[supplier].totalPurchased += grandTotal;
-      supplierMap[supplier].totalPaid += paid;
-      supplierMap[supplier].balanceDue += due;
-      supplierMap[supplier].billCount += 1;
-      supplierMap[supplier].bills.push({
+      supplierMap[key].totalPurchased += grandTotal;
+      supplierMap[key].totalPaid += paid;
+      supplierMap[key].balanceDue += due;
+      supplierMap[key].billCount += 1;
+      supplierMap[key].bills.push({
         ...bill,
         amountPaid: paid,
         balanceDue: due
@@ -1616,6 +1762,42 @@ const updateSupplierDetails = async (req, res) => {
   }
 };
 
+// Paid / due of a hydrated PurchaseBill. Legacy bills were saved before
+// amountPaid/balanceDue existed, so Mongoose fills defaults — $isDefault spots those.
+const billPaidAmount = (bill) => (!bill.$isDefault('amountPaid')
+  ? Number(bill.amountPaid || 0)
+  : (bill.paymentStatus === 'Paid' ? Number(bill.grandTotal || 0) : 0));
+const billDueAmount = (bill) => (!bill.$isDefault('balanceDue')
+  ? Math.max(0, Number(bill.balanceDue || 0))
+  : Math.max(0, Number(bill.grandTotal || 0) - billPaidAmount(bill)));
+
+// ADMIN: Edit the remarks / notes of a purchase bill from the party ledger
+const updatePurchaseBillRemarks = async (req, res) => {
+  try {
+    const update = {};
+    if (req.body.paymentRemarks !== undefined) update.paymentRemarks = String(req.body.paymentRemarks || '').trim();
+    if (req.body.notes !== undefined) update.notes = String(req.body.notes || '').trim();
+    if (Object.keys(update).length === 0) return res.status(400).json({ message: 'Kuch update karne ko nahi mila' });
+
+    const bill = await PurchaseBill.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
+    if (!bill) return res.status(404).json({ message: 'Purchase bill not found' });
+
+    AuditLog.create({
+      action: 'UPDATE_PURCHASE_BILL_REMARKS',
+      entityType: 'PurchaseBill',
+      entityId: bill._id.toString(),
+      message: `Remarks updated for ${bill.supplierName} (Inv: ${bill.invoiceNumber})`,
+      details: update,
+      userRole: req.user?.role || 'admin'
+    }).catch(err => console.error('Audit log error (UPDATE_PURCHASE_BILL_REMARKS):', err.message));
+
+    return res.json({ success: true, message: 'Remarks save ho gaye', bill });
+  } catch (err) {
+    console.error('[Error] updatePurchaseBillRemarks:', err.message);
+    return res.status(500).json({ message: 'Remarks save nahi ho sake' });
+  }
+};
+
 // ADMIN: Bulk payment — pay a lump-sum amount across a party's open bills
 // (oldest invoice first; optionally restricted to selected billIds).
 const paySupplierParty = async (req, res) => {
@@ -1635,18 +1817,21 @@ const paySupplierParty = async (req, res) => {
     if (billIds.length > 0) baseFilter._id = { $in: billIds };
     const bills = await PurchaseBill.find(baseFilter).sort({ invoiceDate: 1, createdAt: 1 });
 
+    const openDue = Number(bills.reduce((sum, bill) => sum + billDueAmount(bill), 0).toFixed(2));
+    if (openDue <= 0.005) {
+      return res.status(400).json({ message: 'Iss party ke koi open bills nahi mile (sab paid hain).' });
+    }
+    if (paymentAmount - openDue > 0.009) {
+      return res.status(400).json({ message: `Payment ₹${paymentAmount.toFixed(2)} total due ₹${openDue.toFixed(2)} se zyada hai.` });
+    }
+
     let remaining = paymentAmount;
     const applied = [];
     for (const bill of bills) {
       if (remaining <= 0.005) break;
       const grandTotal = Number(bill.grandTotal || 0);
-      const hasPaidField = bill.amountPaid !== undefined && bill.amountPaid !== null;
-      const paid = hasPaidField
-        ? Number(bill.amountPaid || 0)
-        : (bill.paymentStatus === 'Paid' ? grandTotal : 0);
-      const due = Number(bill.balanceDue !== undefined && bill.balanceDue !== null
-        ? bill.balanceDue
-        : Math.max(0, grandTotal - paid));
+      const paid = billPaidAmount(bill);
+      const due = billDueAmount(bill);
       if (due <= 0.005) continue;
 
       const apply = Number(Math.min(remaining, due).toFixed(2));
@@ -1801,29 +1986,30 @@ const mergeSupplierParties = async (req, res) => {
   try {
     const sourceName = String(req.body.sourceName || '').trim();
     const targetName = String(req.body.targetName || '').trim();
-    if (!sourceName || !targetName || normalizeForMatch(sourceName) === normalizeForMatch(targetName)) {
+    // Only an exact match is a no-op: "rosa medical" -> "ROSA MEDICAL" is a valid name correction.
+    if (!sourceName || !targetName || sourceName === targetName) {
       return res.status(400).json({ message: 'Source aur target party alag hone chahiye.' });
     }
+    const sameProfile = normalizeForMatch(sourceName) === normalizeForMatch(targetName);
 
     const sourceRegex = new RegExp(`^${escapeRegex(sourceName)}$`, 'i');
-    const targetRegex = new RegExp(`^${escapeRegex(targetName)}$`, 'i');
-    const sourceBills = await PurchaseBill.find({ supplierName: sourceRegex }).lean();
+    const sourceBills = await PurchaseBill.find({ supplierName: sourceRegex }).select('_id').lean();
     if (sourceBills.length === 0) {
       return res.status(404).json({ message: `Source party '${sourceName}' nahi mili.` });
     }
 
-    const targetBill = await PurchaseBill.findOne({ supplierName: targetRegex }).select('supplierGstin');
-    await PurchaseBill.updateMany({ supplierName: sourceRegex }, {
-      $set: {
-        supplierName: targetName,
-        ...(targetBill?.supplierGstin ? {} : {})
-      }
-    });
+    await PurchaseBill.updateMany({ supplierName: sourceRegex }, { $set: { supplierName: targetName } });
     await Medicine.updateMany({ partyName: sourceRegex }, { $set: { partyName: targetName } });
 
     const sourceProfile = await Supplier.findOne({ normalizedName: normalizeForMatch(sourceName) }).lean();
     const targetProfile = await Supplier.findOne({ normalizedName: normalizeForMatch(targetName) });
-    if (sourceProfile) {
+    if (sameProfile) {
+      // Both names share one profile doc — just correct its display name (never delete it).
+      if (targetProfile) {
+        targetProfile.name = targetName;
+        await targetProfile.save();
+      }
+    } else if (sourceProfile) {
       if (targetProfile) {
         const fields = ['gstin', 'phone', 'altPhone', 'email', 'contactPerson', 'address', 'city', 'state', 'pincode', 'bankName', 'accountNumber', 'ifsc', 'upiId', 'drugLicenseNo', 'notes'];
         fields.forEach((field) => {
@@ -2032,9 +2218,10 @@ const recordSupplierPayment = async (req, res) => {
 
 module.exports = {
   getMedicines, searchMedicines, addKachiEntry, getKachiEntries, createPurchaseReturn,
-  getPurchaseReturns, addMedicine, updateMedicine, deleteMedicine, getExpiringMedicines,
+  getPurchaseReturns, addMedicine, updateMedicine, bulkUpdateMedicines, deleteMedicine, getExpiringMedicines,
   sellLooseMedicine, addQuickEntry, getPendingEntries, resolvePendingEntry, createPurchaseBill,
   getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment, updatePurchaseBill, deletePurchaseBill, checkDuplicateBill,
-  getExpiredMedicines, getSupplierDetails, updateSupplierDetails, paySupplierParty, getSimilarSuppliers, mergeSupplierParties,
-  autoDetectScheduleH1, getScheduleCategories
+  getExpiredMedicines, getSupplierDetails, updateSupplierDetails, paySupplierParty, updatePurchaseBillRemarks, getSimilarSuppliers, mergeSupplierParties,
+  autoDetectScheduleH1, getScheduleCategories,
+  createBillUpload, getBillUploads, getBillUpload, updateBillUpload, deleteBillUpload
 };

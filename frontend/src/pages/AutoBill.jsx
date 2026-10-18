@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import api from '../api/axios';
 import { generateBillHTML } from '../utils/BillGenerator';
 
@@ -19,6 +19,45 @@ const addDays = (dateStr, n) => {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 };
 
+const sumBills = (list) => Math.round(list.reduce((sum, bill) => sum + Number(bill.totalAmount || 0), 0) * 100) / 100;
+const withTotal = (bill) => ({ ...bill, totalAmount: Math.round(bill.items.reduce((sum, item) => sum + Number(item.total || 0), 0) * 100) / 100 });
+
+// Search box for adding a medicine by hand to a preview bill (only auto-billable stock is returned).
+const AddMedicineSearch = ({ onPick }) => {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) return undefined;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await api.get(`/sales/auto-bill/medicines?q=${encodeURIComponent(q)}`);
+        setResults(res.data?.medicines || []);
+      } catch {
+        setResults([]);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  return (
+    <div className="relative">
+      <input value={query} onChange={(e) => { setQuery(e.target.value); if (e.target.value.trim().length < 2) setResults([]); }} placeholder="➕ Dawai add karein (naam / batch)" className="w-full rounded-lg border border-slate-300 p-1.5 text-xs" />
+      {results.length > 0 && (
+        <div className="absolute z-20 mt-1 w-full max-h-56 overflow-auto bg-white border border-slate-200 rounded-lg shadow-lg">
+          {results.map((med) => (
+            <button key={med.medicineId} type="button" onClick={() => { onPick(med); setQuery(''); setResults([]); }} className="w-full text-left px-3 py-1.5 text-xs hover:bg-teal-50 flex justify-between gap-2">
+              <span>{med.name} <span className="text-slate-400">({med.batch}) · stock {med.stock}</span></span>
+              <span className="font-bold">{money(med.price)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Auto bill cutting: one row per date with how much Cash and Online billing (₹)
 // is wanted that day (optionally in a fixed number of bills each), plus a shared per-bill amount range and time window —
 // the server picks random valid stock until each target is covered.
@@ -31,6 +70,9 @@ const AutoBill = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(null);
+  const [randomNames, setRandomNames] = useState(true);
+  const [customerNamesText, setCustomerNamesText] = useState('');
+  const [manualBill, setManualBill] = useState({ date: getLocalDateString(), time: '12:00', paymentMode: 'Online' });
 
   const update = (field) => (e) => setForm((prev) => ({ ...prev, [field]: e.target.value }));
   const updateDay = (idx, field, value) => setDays((prev) => prev.map((day, i) => (i === idx ? { ...day, [field]: value } : day)));
@@ -59,7 +101,8 @@ const AutoBill = () => {
     setSaved(null);
     setExpanded(null);
     try {
-      const res = await api.post('/sales/auto-bill/preview', { ...form, days: days.filter((day) => day.date) });
+      const customerNames = customerNamesText.split('\n').map((name) => name.trim()).filter(Boolean);
+      const res = await api.post('/sales/auto-bill/preview', { ...form, days: days.filter((day) => day.date), randomNames, customerNames });
       setPreview(res.data);
     } catch (err) {
       setPreview(null);
@@ -69,13 +112,48 @@ const AutoBill = () => {
     }
   };
 
+  // --- Manual corrections to the preview (when the random amounts don't come out right) ---
+  const updateBill = (idx, change) => setPreview((prev) => ({
+    ...prev,
+    bills: prev.bills.map((bill, i) => (i === idx ? withTotal(change(bill)) : bill))
+  }));
+  const setItemQty = (idx, medicineId, qty) => updateBill(idx, (bill) => ({
+    ...bill,
+    items: bill.items.map((item) => (item.medicineId === medicineId
+      ? { ...item, quantity: qty, total: Math.round(item.price * qty * 100) / 100 }
+      : item))
+  }));
+  const removeItem = (idx, medicineId) => updateBill(idx, (bill) => ({ ...bill, items: bill.items.filter((item) => item.medicineId !== medicineId) }));
+  const addItem = (idx, med) => updateBill(idx, (bill) => {
+    const existing = bill.items.find((item) => item.medicineId === med.medicineId);
+    if (existing) {
+      return { ...bill, items: bill.items.map((item) => (item.medicineId === med.medicineId ? { ...item, quantity: item.quantity + 1, total: Math.round(item.price * (item.quantity + 1) * 100) / 100 } : item)) };
+    }
+    const { stock: _stock, ...line } = med;
+    return { ...bill, items: [...bill.items, line] };
+  });
+  const removeBill = (idx) => {
+    setPreview((prev) => ({ ...prev, bills: prev.bills.filter((_, i) => i !== idx) }));
+    setExpanded(null);
+  };
+  const addManualBill = () => {
+    const date = new Date(`${manualBill.date}T${manualBill.time}:00+05:30`);
+    if (Number.isNaN(date.getTime()) || date > new Date()) return alert('Date/time sahi bharein (future nahi).');
+    const bill = { date: date.toISOString(), day: manualBill.date, paymentMode: manualBill.paymentMode, customerName: 'Cash Sale', items: [], totalAmount: 0 };
+    const bills = [...(preview?.bills || []), bill].sort((a, b) => new Date(a.date) - new Date(b.date));
+    setPreview({ ...preview, bills });
+    setExpanded(bills.indexOf(bill));
+  };
+
   const handleCommit = async () => {
     if (!preview?.bills?.length) return;
-    if (!window.confirm(`${preview.bills.length} bills (${money(preview.grandTotal)}) save karein? Stock bhi kam ho jayega.`)) return;
+    const emptyIdx = preview.bills.findIndex((bill) => bill.items.length === 0);
+    if (emptyIdx >= 0) return alert(`Bill #${emptyIdx + 1} khali hai — dawai add karein ya bill hatayein.`);
+    if (!window.confirm(`${preview.bills.length} bills (${money(sumBills(preview.bills))}) save karein? Stock bhi kam ho jayega.`)) return;
     setSaving(true);
     try {
       const res = await api.post('/sales/auto-bill/commit', {
-        bills: preview.bills.map((bill) => ({ date: bill.date, paymentMode: bill.paymentMode, items: bill.items.map((item) => ({ medicineId: item.medicineId, quantity: item.quantity })) }))
+        bills: preview.bills.map((bill) => ({ date: bill.date, paymentMode: bill.paymentMode, customerName: bill.customerName, items: bill.items.map((item) => ({ medicineId: item.medicineId, quantity: item.quantity })) }))
       });
       setSaved(res.data);
       setPreview(null);
@@ -91,13 +169,26 @@ const AutoBill = () => {
     const w = window.open('', '_blank', 'width=900,height=900');
     if (!w) return alert('Popup blocked! Allow popups to print.');
     const html = await generateBillHTML(sale.items, {
-      no: sale.invoiceNo, name: 'Cash Sale', phone: '', doctor: '', mode: sale.paymentMode,
+      no: sale.invoiceNo, name: sale.customerName || 'Cash Sale', phone: '', doctor: '', mode: sale.paymentMode,
       isDuplicate: false, grandTotal: sale.totalAmount, doseAmount: 0, customDate: sale.date, customTime: sale.date
     });
     w.document.open(); w.document.write(html); w.document.close();
   };
 
   const rows = saved ? saved.sales : (preview?.bills || []);
+  // Totals are recomputed from the (possibly hand-edited) bills, not taken from the server.
+  const previewBills = preview?.bills || [];
+  const previewTotals = {
+    grand: sumBills(previewBills),
+    cash: sumBills(previewBills.filter((bill) => bill.paymentMode === 'Cash')),
+    online: sumBills(previewBills.filter((bill) => bill.paymentMode === 'Online'))
+  };
+  const dayChips = (preview?.days || []).map((day) => {
+    const ofDay = previewBills.filter((bill) => bill.day === day.date);
+    const cash = ofDay.filter((bill) => bill.paymentMode === 'Cash');
+    const online = ofDay.filter((bill) => bill.paymentMode === 'Online');
+    return { ...day, cashTotal: sumBills(cash), cashCount: cash.length, onlineTotal: sumBills(online), onlineCount: online.length };
+  });
 
   return (
     <div className="max-w-5xl mx-auto space-y-5">
@@ -143,6 +234,22 @@ const AutoBill = () => {
             </div>
           </div>
 
+          <div className="rounded-xl border border-slate-200 p-3 space-y-2">
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+              <input type="checkbox" checked={randomNames} onChange={(e) => setRandomNames(e.target.checked)} />
+              👤 Bills par customer naam daalein (band = "Cash Sale")
+            </label>
+            {randomNames && (
+              <textarea
+                rows="2"
+                value={customerNamesText}
+                onChange={(e) => setCustomerNamesText(e.target.value)}
+                placeholder="Apne naam (har line me ek) — khali chhodein to common naam apne aap lagenge"
+                className="w-full rounded-lg border border-slate-300 p-2 text-xs"
+              />
+            )}
+          </div>
+
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <label className="text-xs font-bold text-slate-600">Min per Bill (₹)
             <input type="number" required min="1" step="1" value={form.minAmount} onChange={update('minAmount')} className="mt-1 w-full rounded-lg border border-slate-300 p-2 text-sm" />
@@ -168,16 +275,17 @@ const AutoBill = () => {
       {preview && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div className="text-sm text-amber-900">
-            <div className="font-extrabold">Preview: {preview.generated} bills · Total {money(preview.grandTotal)} / {money(preview.requestedAmount)}</div>
-            <div className="text-xs font-bold mt-0.5">💵 Cash {money(preview.cashTotal)} · 📱 Online {money(preview.onlineTotal)}</div>
+            <div className="font-extrabold">Preview: {previewBills.length} bills · Total {money(previewTotals.grand)} / {money(preview.requestedAmount)}</div>
+            <div className="text-xs font-bold mt-0.5">💵 Cash {money(previewTotals.cash)} · 📱 Online {money(previewTotals.online)}</div>
             <div className="text-xs mt-1">
               {preview.eligibleItems} items se bills bane. Expired, bina HSN, Kachi aur Schedule (H/H1/X…) items kabhi use nahi hote.
               {preview.skippedUnchecked > 0 && ` ${preview.skippedUnchecked} items ka schedule check nahi hua hai, isliye skip hue — Inventory me "Auto Detect Schedule" chalayein.`}
-              {preview.requestedAmount - preview.grandTotal > 50 && ' Stock kam hone se poora amount nahi ban paya.'}
+              {preview.requestedAmount - previewTotals.grand > 50 && ' Stock kam hone se poora amount nahi ban paya.'}
+              {' '}Amount sahi na ho to bill par click karke dawai/qty khud badlein, ya neeche se naya bill jodein.
             </div>
-            {preview.days?.length > 0 && (
+            {dayChips.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
-                {preview.days.map((day) => {
+                {dayChips.map((day) => {
                   const short = day.cashTarget - day.cashTotal > 50 || day.onlineTarget - day.onlineTotal > 50
                     || (day.cashCountTarget && day.cashCount < day.cashCountTarget)
                     || (day.onlineCountTarget && day.onlineCount < day.onlineCountTarget);
@@ -191,9 +299,21 @@ const AutoBill = () => {
               </div>
             )}
           </div>
-          <button onClick={handleCommit} disabled={saving || preview.generated === 0} className="px-5 py-2.5 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold text-sm whitespace-nowrap disabled:opacity-50">
-            {saving ? 'Saving...' : `✅ Save ${preview.generated} Bills`}
+          <button onClick={handleCommit} disabled={saving || previewBills.length === 0} className="px-5 py-2.5 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold text-sm whitespace-nowrap disabled:opacity-50">
+            {saving ? 'Saving...' : `✅ Save ${previewBills.length} Bills`}
           </button>
+        </div>
+      )}
+
+      {preview && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-extrabold text-slate-700">✍️ Manual bill jodein:</span>
+          <input type="date" max={getLocalDateString()} value={manualBill.date} onChange={(e) => setManualBill({ ...manualBill, date: e.target.value })} className="rounded-lg border border-slate-300 p-1.5" aria-label="Manual bill date" />
+          <input type="time" value={manualBill.time} onChange={(e) => setManualBill({ ...manualBill, time: e.target.value })} className="rounded-lg border border-slate-300 p-1.5" aria-label="Manual bill time" />
+          <select value={manualBill.paymentMode} onChange={(e) => setManualBill({ ...manualBill, paymentMode: e.target.value })} className="rounded-lg border border-slate-300 p-1.5 bg-white" aria-label="Manual bill mode">
+            <option>Online</option><option>Cash</option>
+          </select>
+          <button type="button" onClick={addManualBill} className="px-3 py-1.5 rounded-lg bg-teal-600 text-white font-bold">➕ Add Bill</button>
         </div>
       )}
 
@@ -209,6 +329,7 @@ const AutoBill = () => {
                 <th className="px-4 py-3">#</th>
                 {saved && <th className="px-4 py-3">Invoice</th>}
                 <th className="px-4 py-3">Date / Time</th>
+                <th className="px-4 py-3">Customer</th>
                 <th className="px-4 py-3">Mode</th>
                 <th className="px-4 py-3">Items</th>
                 <th className="px-4 py-3 text-right">Amount</th>
@@ -222,6 +343,7 @@ const AutoBill = () => {
                     <td className="px-4 py-2.5 text-slate-400">{idx + 1}</td>
                     {saved && <td className="px-4 py-2.5 font-bold text-slate-800">{bill.invoiceNo}</td>}
                     <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{formatDay(bill.date)} · {formatTime(bill.date)}</td>
+                    <td className="px-4 py-2.5 text-slate-700">{bill.customerName || 'Cash Sale'}</td>
                     <td className="px-4 py-2.5">
                       <span className={`px-2 py-0.5 rounded-md text-[11px] font-bold border ${bill.paymentMode === 'Online' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-green-50 text-green-700 border-green-200'}`}>{bill.paymentMode}</span>
                     </td>
@@ -235,13 +357,36 @@ const AutoBill = () => {
                   </tr>
                   {expanded === idx && (
                     <tr className="bg-slate-50">
-                      <td colSpan={saved ? 7 : 5} className="px-6 py-2">
-                        {bill.items.map((item) => (
+                      <td colSpan={saved ? 8 : 6} className="px-6 py-2">
+                        {saved ? bill.items.map((item) => (
                           <div key={item.medicineId} className="flex justify-between text-xs text-slate-600 py-0.5">
                             <span>{item.name} <span className="text-slate-400">({item.batch})</span> × {item.quantity}</span>
                             <span className="font-semibold">{money(item.total)}</span>
                           </div>
-                        ))}
+                        )) : (
+                          <div className="space-y-2">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <label className="font-bold text-slate-600">Customer
+                                <input value={bill.customerName || ''} onChange={(e) => updateBill(idx, (b) => ({ ...b, customerName: e.target.value }))} className="ml-1 rounded border border-slate-300 p-1 w-40" />
+                              </label>
+                              <label className="font-bold text-slate-600">Mode
+                                <select value={bill.paymentMode} onChange={(e) => updateBill(idx, (b) => ({ ...b, paymentMode: e.target.value }))} className="ml-1 rounded border border-slate-300 p-1 bg-white">
+                                  <option>Cash</option><option>Online</option>
+                                </select>
+                              </label>
+                              <button type="button" onClick={() => removeBill(idx)} className="ml-auto px-2 py-1 rounded bg-red-50 text-red-600 border border-red-200 font-bold">🗑 Bill hatayein</button>
+                            </div>
+                            {bill.items.map((item) => (
+                              <div key={item.medicineId} className="flex items-center justify-between gap-2 text-xs text-slate-600">
+                                <span className="flex-1">{item.name} <span className="text-slate-400">({item.batch}) · {money(item.price)}</span></span>
+                                <input type="number" min="1" step="1" value={item.quantity} onChange={(e) => setItemQty(idx, item.medicineId, Math.max(1, Math.floor(Number(e.target.value) || 1)))} className="w-16 rounded border border-slate-300 p-1 text-center" aria-label="Quantity" />
+                                <span className="w-20 text-right font-semibold">{money(item.total)}</span>
+                                <button type="button" onClick={() => removeItem(idx, item.medicineId)} className="px-1.5 text-red-500 font-bold" title="Remove">✕</button>
+                              </div>
+                            ))}
+                            <AddMedicineSearch onPick={(med) => addItem(idx, med)} />
+                          </div>
+                        )}
                       </td>
                     </tr>
                   )}

@@ -24,7 +24,11 @@ const SupplierLedger = () => {
   const [payRemark, setPayRemark] = useState('');
   const [submittingPay, setSubmittingPay] = useState(false);
   const [selectedBillIds, setSelectedBillIds] = useState([]);
-  const [bulkPaymentOpen, setBulkPaymentOpen] = useState(false);
+  // 'selected' = pay the ticked bills, 'round' = pay a lump-sum against the party's total due (oldest bill first)
+  const [bulkPaymentOpen, setBulkPaymentOpen] = useState(null);
+  const [remarkBill, setRemarkBill] = useState(null);
+  const [remarkText, setRemarkText] = useState('');
+  const [savingRemark, setSavingRemark] = useState(false);
   const [partyFormOpen, setPartyFormOpen] = useState(false);
   const [mergeFormOpen, setMergeFormOpen] = useState(false);
   const [partyForm, setPartyForm] = useState({});
@@ -124,18 +128,21 @@ const SupplierLedger = () => {
     e.preventDefault();
     const amount = Number(payAmount);
     if (!activePartyObj || !Number.isFinite(amount) || amount <= 0) return alert('Valid payment amount bharein.');
+    const isRound = bulkPaymentOpen === 'round';
+    const maxDue = isRound ? Number(activePartyObj.balanceDue || 0) : selectedDue;
+    if (amount - maxDue > 0.009) return alert(`Amount ${money(amount)} due ${money(maxDue)} se zyada hai.`);
     try {
       setSubmittingPay(true);
       const res = await api.post('/medicines/supplier-ledger/pay', {
         supplierName: activePartyObj.supplierName,
         amount,
-        billIds: selectedBillIds,
+        billIds: isRound ? [] : selectedBillIds,
         paymentMode: payMode,
         paymentDate: payDate,
         remark: payRemark
       });
       alert(res.data?.message || 'Payment bills par distribute ho gaya.');
-      setBulkPaymentOpen(false);
+      setBulkPaymentOpen(null);
       setSelectedBillIds([]);
       fetchLedger();
     } catch (err) {
@@ -145,14 +152,49 @@ const SupplierLedger = () => {
     }
   };
 
+  const openBulkPayment = (kind) => {
+    setPayAmount(kind === 'selected' ? selectedDue.toFixed(2) : '');
+    setPayMode('UPI');
+    setPayDate(new Date().toISOString().slice(0, 10));
+    setPayRemark('');
+    setBulkPaymentOpen(kind);
+  };
+
+  const openRemarkEditor = (bill) => {
+    setRemarkBill(bill);
+    setRemarkText(bill.paymentRemarks || bill.notes || '');
+  };
+
+  const handleSaveRemark = async (e) => {
+    e.preventDefault();
+    if (!remarkBill) return;
+    setSavingRemark(true);
+    try {
+      await api.put(`/medicines/purchase-bills/${remarkBill._id}/remarks`, { paymentRemarks: remarkText, notes: remarkText });
+      setBills((prev) => prev.map((bill) => (bill._id === remarkBill._id ? { ...bill, paymentRemarks: remarkText.trim(), notes: remarkText.trim() } : bill)));
+      setRemarkBill(null);
+    } catch (err) {
+      alert(err.response?.data?.message || 'Remarks save nahi ho sake.');
+    } finally {
+      setSavingRemark(false);
+    }
+  };
+
   const handleMergeParty = async (e) => {
     e.preventDefault();
-    if (!selectedParty || !mergeTarget) return;
+    const target = mergeTarget.trim();
+    if (!selectedParty || !target) return;
+    if (target === selectedParty) return alert('Naya / sahi naam current naam se alag hona chahiye.');
+    // Typed name matching an existing party (any case) merges into that party's exact spelling.
+    const existing = suppliers.find((sup) => sup.supplierName.toLowerCase() === target.toLowerCase() && sup.supplierName !== selectedParty);
+    const targetName = existing ? existing.supplierName : target;
+    if (!window.confirm(`'${selectedParty}' ke saare bills '${targetName}' me move karein?`)) return;
     try {
-      const res = await api.post('/medicines/supplier-ledger/merge', { sourceName: selectedParty, targetName: mergeTarget });
+      const res = await api.post('/medicines/supplier-ledger/merge', { sourceName: selectedParty, targetName });
       alert(res.data?.message || 'Party merge ho gayi.');
       setMergeFormOpen(false);
-      setSelectedParty(mergeTarget);
+      setSelectedBillIds([]);
+      setSelectedParty(targetName);
       fetchLedger();
     } catch (err) {
       alert(err.response?.data?.message || 'Party merge nahi ho saki.');
@@ -294,7 +336,8 @@ const SupplierLedger = () => {
     return Math.max(0, Number(bill.balanceDue ?? (total - paid)));
   };
   const selectableBills = activePartyBills.filter((bill) => billDue(bill) > 0);
-  const selectedDue = activePartyBills
+  // From all bills, not just the filtered view — every selected bill gets paid.
+  const selectedDue = bills
     .filter((bill) => selectedBillIds.includes(String(bill._id)))
     .reduce((sum, bill) => sum + billDue(bill), 0);
 
@@ -313,31 +356,6 @@ const SupplierLedger = () => {
               <p className="text-xs md:text-sm text-slate-500 mt-1">
                 Pehle supplier party select karein, uske baad andar unke saare bills & credit details dekhein.
               </p>
-            </div>
-            <div className="px-5 py-3 bg-teal-50 border-b border-teal-100 flex flex-wrap items-center gap-3">
-              <button
-                onClick={() => {
-                  setPayAmount(selectedDue.toFixed(2));
-                  setPayMode('UPI');
-                  setPayDate(new Date().toISOString().slice(0, 10));
-                  setPayRemark('');
-                  setBulkPaymentOpen(true);
-                }}
-                disabled={!selectedBillIds.length}
-                className="px-3 py-2 rounded-lg bg-teal-600 text-white text-xs font-bold disabled:opacity-40"
-              >
-                💳 Pay Selected Bills ({selectedBillIds.length})
-              </button>
-              <button
-                onClick={() => {
-                  setSelectedBillIds(selectableBills.map((bill) => String(bill._id)));
-                }}
-                disabled={!selectableBills.length}
-                className="px-3 py-2 rounded-lg bg-white text-teal-700 border border-teal-200 text-xs font-bold disabled:opacity-40"
-              >
-                Select All Due
-              </button>
-              {selectedBillIds.length > 0 && <button onClick={() => setSelectedBillIds([])} className="text-xs font-bold text-slate-500">Clear selection</button>}
             </div>
             <div className="flex flex-wrap gap-3">
               <button
@@ -482,7 +500,7 @@ const SupplierLedger = () => {
           {/* BACK BUTTON & PARTY HEADER */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <button
-              onClick={() => { setSelectedParty(null); setSearchQuery(''); }}
+              onClick={() => { setSelectedParty(null); setSearchQuery(''); setSelectedBillIds([]); }}
               className="inline-flex items-center gap-2 text-sm font-bold text-teal-700 hover:text-teal-900 bg-teal-50 hover:bg-teal-100 px-3.5 py-1.5 rounded-lg border border-teal-200 transition-colors"
             >
               ← Back to All Parties
@@ -506,6 +524,11 @@ const SupplierLedger = () => {
                 <button onClick={() => { setMergeTarget(''); setMergeFormOpen(true); }} className="px-3 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold">
                   🔗 Merge / Correct Name
                 </button>
+                {Number(activePartyObj?.balanceDue || 0) > 0 && (
+                  <button onClick={() => openBulkPayment('round')} className="px-3 py-2 rounded-lg bg-teal-600 text-white text-xs font-bold">
+                    💰 Pay Amount (Round Figure)
+                  </button>
+                )}
               </div>
 
               {/* PARTY TOTAL SUMMARY */}
@@ -558,6 +581,24 @@ const SupplierLedger = () => {
                   <option value="PAID">Fully Paid</option>
                 </select>
               </div>
+            </div>
+
+            <div className="px-5 py-3 bg-teal-50 border-b border-teal-100 flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => openBulkPayment('selected')}
+                disabled={!selectedBillIds.length}
+                className="px-3 py-2 rounded-lg bg-teal-600 text-white text-xs font-bold disabled:opacity-40"
+              >
+                💳 Pay Selected Bills ({selectedBillIds.length}{selectedBillIds.length ? ` · ${money(selectedDue)}` : ''})
+              </button>
+              <button
+                onClick={() => setSelectedBillIds(selectableBills.map((bill) => String(bill._id)))}
+                disabled={!selectableBills.length}
+                className="px-3 py-2 rounded-lg bg-white text-teal-700 border border-teal-200 text-xs font-bold disabled:opacity-40"
+              >
+                Select All Due
+              </button>
+              {selectedBillIds.length > 0 && <button onClick={() => setSelectedBillIds([])} className="text-xs font-bold text-slate-500">Clear selection</button>}
             </div>
 
             {/* TABLE */}
@@ -631,8 +672,11 @@ const SupplierLedger = () => {
                               </span>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-xs text-slate-500 max-w-[200px] truncate">
-                            {bill.paymentRemarks || bill.notes || '-'}
+                          <td className="px-4 py-3 text-xs text-slate-500 max-w-[220px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate" title={bill.paymentRemarks || bill.notes || ''}>{bill.paymentRemarks || bill.notes || '-'}</span>
+                              <button onClick={() => openRemarkEditor(bill)} title="Edit remarks" className="shrink-0 px-1.5 py-0.5 rounded hover:bg-slate-100 text-slate-500">✏️</button>
+                            </div>
                           </td>
                           <td className="px-4 py-3 text-center whitespace-nowrap space-x-2">
                             <button
@@ -889,13 +933,20 @@ const SupplierLedger = () => {
             </div>
             <form onSubmit={handleMergeParty} className="space-y-3">
               <label className="block text-xs font-bold text-slate-600">
-                Correct target party
-                <select required value={mergeTarget} onChange={(e) => setMergeTarget(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm bg-white">
-                  <option value="">Select party</option>
-                  {suppliers.filter((sup) => sup.supplierName.toLowerCase() !== String(selectedParty || '').toLowerCase()).map((sup) => (
-                    <option key={sup.supplierName} value={sup.supplierName}>{sup.supplierName}</option>
+                Correct party name (list se chunein ya sahi naam type karein)
+                <input
+                  required
+                  list="merge-target-list"
+                  value={mergeTarget}
+                  onChange={(e) => setMergeTarget(e.target.value)}
+                  placeholder="e.g. ROSA MEDICAL AGENCY"
+                  className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm bg-white"
+                />
+                <datalist id="merge-target-list">
+                  {suppliers.filter((sup) => sup.supplierName !== selectedParty).map((sup) => (
+                    <option key={sup.supplierName} value={sup.supplierName} />
                   ))}
-                </select>
+                </datalist>
               </label>
               <div className="flex gap-3">
                 <button type="button" onClick={() => setMergeFormOpen(false)} className="flex-1 py-2.5 rounded-lg border border-slate-300 font-bold text-xs">Cancel</button>
@@ -906,20 +957,33 @@ const SupplierLedger = () => {
         </div>
       )}
 
-      {bulkPaymentOpen && (
+      {bulkPaymentOpen && activePartyObj && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-teal-200 space-y-4">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div>
-                <h3 className="font-extrabold text-slate-800 text-lg">💳 Pay Multiple Bills</h3>
-                <p className="text-xs text-slate-500">{selectedBillIds.length} selected bills · due {money(selectedDue)}</p>
+                <h3 className="font-extrabold text-slate-800 text-lg">{bulkPaymentOpen === 'round' ? '💰 Pay Round Amount' : '💳 Pay Multiple Bills'}</h3>
+                <p className="text-xs text-slate-500">
+                  {bulkPaymentOpen === 'round'
+                    ? `Total due ${money(activePartyObj.balanceDue)} · amount purane bill se pehle adjust hoga`
+                    : `${selectedBillIds.length} selected bills · due ${money(selectedDue)}`}
+                </p>
               </div>
-              <button onClick={() => setBulkPaymentOpen(false)} className="text-slate-400 text-xl font-bold">✕</button>
+              <button onClick={() => setBulkPaymentOpen(null)} className="text-slate-400 text-xl font-bold">✕</button>
             </div>
             <form onSubmit={handleBulkPayment} className="space-y-3">
               <label className="block text-xs font-bold text-slate-600">Payment Amount (₹)
-                <input type="number" min="0.01" step="0.01" required value={payAmount} onChange={(e) => setPayAmount(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm font-bold" />
+                <input type="number" min="0.01" step="0.01" required autoFocus value={payAmount} onChange={(e) => setPayAmount(e.target.value)} placeholder="e.g. 10000" className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm font-bold" />
               </label>
+              {Number(payAmount) > 0 && (() => {
+                const due = bulkPaymentOpen === 'round' ? Number(activePartyObj.balanceDue || 0) : selectedDue;
+                const left = due - Number(payAmount);
+                return (
+                  <p className={`text-xs font-bold ${left < -0.009 ? 'text-red-600' : 'text-slate-600'}`}>
+                    {left < -0.009 ? `⚠️ Amount due se ${money(-left)} zyada hai` : `Payment ke baad baaki due: ${money(left)}`}
+                  </p>
+                );
+              })()}
               <div className="grid grid-cols-2 gap-3">
                 <label className="text-xs font-bold text-slate-600">Mode
                   <select value={payMode} onChange={(e) => setPayMode(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs bg-white">
@@ -932,8 +996,36 @@ const SupplierLedger = () => {
               </div>
               <input value={payRemark} onChange={(e) => setPayRemark(e.target.value)} placeholder="Payment reference / remark" className="w-full rounded-lg border border-slate-300 p-2.5 text-xs" />
               <div className="flex gap-3">
-                <button type="button" onClick={() => setBulkPaymentOpen(false)} className="flex-1 py-2.5 rounded-lg border border-slate-300 font-bold text-xs">Cancel</button>
+                <button type="button" onClick={() => setBulkPaymentOpen(null)} className="flex-1 py-2.5 rounded-lg border border-slate-300 font-bold text-xs">Cancel</button>
                 <button type="submit" disabled={submittingPay} className="flex-1 py-2.5 rounded-lg bg-teal-600 text-white font-bold text-xs disabled:opacity-50">{submittingPay ? 'Saving...' : 'Distribute Payment'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {remarkBill && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-lg">✏️ Edit Remarks</h3>
+                <p className="text-xs text-slate-500">{remarkBill.supplierName} (Inv: {remarkBill.invoiceNumber})</p>
+              </div>
+              <button onClick={() => setRemarkBill(null)} className="text-slate-400 text-xl font-bold">✕</button>
+            </div>
+            <form onSubmit={handleSaveRemark} className="space-y-3">
+              <textarea
+                rows="3"
+                autoFocus
+                value={remarkText}
+                onChange={(e) => setRemarkText(e.target.value)}
+                placeholder="Remark / note likhein"
+                className="w-full rounded-lg border border-slate-300 p-2.5 text-sm outline-none focus:border-teal-500"
+              />
+              <div className="flex gap-3">
+                <button type="button" onClick={() => setRemarkBill(null)} className="flex-1 py-2.5 rounded-lg border border-slate-300 font-bold text-xs">Cancel</button>
+                <button type="submit" disabled={savingRemark} className="flex-1 py-2.5 rounded-lg bg-teal-600 text-white font-bold text-xs disabled:opacity-50">{savingRemark ? 'Saving...' : '✅ Save Remarks'}</button>
               </div>
             </form>
           </div>

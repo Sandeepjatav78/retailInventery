@@ -54,6 +54,14 @@ const SaleSchema = new mongoose.Schema({
   creditId: { type: mongoose.Schema.Types.ObjectId, ref: 'Credit' },
   creditNotes: { type: String },
   
+  // Sale to another pharmacy / firm (B2B) — the buyer's licence & tax details print on the bill.
+  isPartySale: { type: Boolean, default: false },
+  buyerParty: {
+    gstin: { type: String },
+    drugLicenseNo: { type: String },
+    address: { type: String }
+  },
+
   isBillRequired: { type: Boolean, default: true }, 
   createdBy: { type: String, default: 'admin' }, 
 

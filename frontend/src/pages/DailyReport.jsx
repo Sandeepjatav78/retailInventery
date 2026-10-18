@@ -221,6 +221,7 @@ const DailyReport = () => {
         name: t.customerDetails?.name || 'Cash', 
         phone: t.customerDetails?.phone || '', 
         doctor: t.customerDetails?.doctor || 'Self', 
+        buyerParty: t.isPartySale ? t.buyerParty : null,
         mode: t.paymentMode, 
         isDuplicate: userRole !== 'staff',
         grandTotal: t.totalAmount, 
