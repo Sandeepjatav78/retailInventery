@@ -232,7 +232,11 @@ const PurchaseBillEntry = () => {
           setItems(scannedItems);
         }
         setErrors({});
-        if (!res.data.cached) alert('✨ AI Scanner: Purchase bill parsed and auto-filled successfully! Photo se milakar check karein.');
+        const warnings = Array.isArray(extracted.warnings) ? extracted.warnings : [];
+        if (warnings.length > 0) {
+          const lines = warnings.map(w => `${w.index ? `Row ${w.index} ` : ''}${w.productName}: ${w.issues.join(', ')}`);
+          alert(`⚠️ AI Scanner: Bill auto-fill ho gaya, par ye cheezein check karein:\n\n${lines.join('\n')}`);
+        } else if (!res.data.cached) alert('✨ AI Scanner: Purchase bill parsed and auto-filled successfully! Photo se milakar check karein.');
       }
     } catch (error) {
       console.error(error);

@@ -1254,7 +1254,14 @@ const deletePurchaseBill = async (req, res) => {
 // - merge pure-FREE lines into their parent item's freeQuantity
 // - merge exact duplicates (same name + batch)
 // - derive rate from line amount when rate is missing
+// - cross-check GST % against the printed line amount (fixes CGST/SGST half-reads)
 // - collect warnings for rows the user must fix manually
+const VALID_GST_RATES = [0, 5, 12, 18, 28, 40];
+
+// Same formula the bill save uses: paid qty × rate, less item discount, plus GST.
+const scannedLineAmount = (row, gst = row.gst) => row.quantity * row.rate * (1 - row.discount / 100) * (1 + gst / 100);
+const amountMatches = (calc, printed) => Math.abs(calc - printed) <= Math.max(0.05, printed * 0.0015);
+
 const cleanScannedItems = (items = []) => {
   const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
   const str = (v) => String(v ?? '').trim();
@@ -1283,6 +1290,50 @@ const cleanScannedItems = (items = []) => {
     freeQuantity: Math.max(0, num(item.freeQuantity)),
     amount: Math.max(0, num(item.amount))
   })).filter(r => r.productName);
+
+  // 0. GST cross-check. Bills print SGST/CGST as separate half columns (9 + 9 for 18%)
+  // and often mix 5% medicines with 18% cosmetics/FMCG, so the AI sometimes returns half
+  // the rate or a neighbour row's/column's value. The printed line amount tells us the
+  // real rate: keep the AI's GST if it matches, otherwise pick the one valid slab that does.
+  const hasAmount = (row) => row.amount > 0 && row.rate > 0 && row.quantity > 0;
+  // Some bills print the line amount BEFORE GST — then the amount can't tell us the rate.
+  // Decide that once for the whole bill from the rows the AI read consistently.
+  const billAmountsPreTax = (() => {
+    const sure = rows.filter(r => hasAmount(r) && r.gst > 0 && r.discount !== r.gst / 2);
+    const preTax = sure.filter(r => amountMatches(scannedLineAmount(r, 0), r.amount)).length;
+    const withTax = sure.filter(r => amountMatches(scannedLineAmount(r), r.amount)).length;
+    return preTax > withTax;
+  })();
+  for (const row of rows) {
+    const validGst = VALID_GST_RATES.includes(row.gst);
+    const rowHasAmount = hasAmount(row);
+    if (validGst && rowHasAmount && amountMatches(scannedLineAmount(row, billAmountsPreTax ? 0 : row.gst), row.amount)) continue;
+    // Disc% equal to half the GST = the SGST/CGST column was read as discount (e.g. 9 on an
+    // 18% row). Work the real discount back out of the printed amount.
+    if (validGst && rowHasAmount && row.gst > 0 && row.discount === row.gst / 2) {
+      const taxFactor = billAmountsPreTax ? 1 : 1 + row.gst / 100;
+      const discount = (1 - row.amount / (row.quantity * row.rate * taxFactor)) * 100;
+      if (discount > -0.05 && discount < 100) {
+        row.discount = Math.max(0, Number(discount.toFixed(2)));
+        continue;
+      }
+    }
+    const amountIsPreTax = rowHasAmount && row.gst > 0 && billAmountsPreTax;
+    const matching = rowHasAmount && !amountIsPreTax
+      ? VALID_GST_RATES.filter(g => (g > 0 || row.gst === 0) && amountMatches(scannedLineAmount(row, g), row.amount))
+      : [];
+    if (matching.length === 1) {
+      row.gst = matching[0];
+    } else if (!validGst && VALID_GST_RATES.includes(row.gst * 2)) {
+      // Only one of CGST/SGST was read (e.g. 9 instead of 18)
+      row.gst = row.gst * 2;
+      row.gstIssue = `GST ${row.gst}% maana (CGST+SGST) — bill se check karein`;
+    } else if (!validGst) {
+      row.gstIssue = `GST ${row.gst}% valid slab nahi hai — bill se check karein`;
+    } else if (rowHasAmount && !amountIsPreTax) {
+      row.gstIssue = `Amount ${row.amount} bill se match nahi (Qty/Rate/Disc%/GST% check karein)`;
+    }
+  }
 
   // 1. Merge pure-FREE lines into a matching parent item (e.g. "TAB X" then "TAB X FREE")
   const merged = [];
@@ -1340,6 +1391,8 @@ const cleanScannedItems = (items = []) => {
     if (!row.expiryDate) issues.push('Expiry date missing');
     if (row.rate === 0 && row.freeQuantity === 0 && row.amount === 0) issues.push('Rate missing (may be FREE item)');
     if (row.mrp === 0) issues.push('MRP missing');
+    if (row.gstIssue) issues.push(row.gstIssue);
+    delete row.gstIssue;
     if (issues.length) warnings.push({ index: i + 1, productName: row.productName, issues });
   });
 
@@ -1439,6 +1492,7 @@ Analyze this invoice image${pages.length > 1 ? 's' : ''} and extract all details
   "paymentMode": "Credit or Cash",
   "notes": "Any transport or invoice notes",
   "additionalDiscount": 0,
+  "grandTotal": "Final GRAND TOTAL / Net Payable printed at the bottom of the bill, as a number",
   "items": [
     {
       "productName": "Name of medicine / item e.g. ARISTO POVIDON 10 LOTION",
@@ -1474,6 +1528,15 @@ DISCOUNT EXTRACTION RULES (IMPORTANT — read carefully, this is commonly missed
 - "discount" (per item, inside "items") is the PERCENTAGE discount for that line, taken from a column labelled "Disc", "Disc%", "Sch%", "Discount %" etc. in the items table. Read the printed number exactly (e.g. column shows "10" -> discount: 10). Do NOT leave it at 0 just because it is easy to miss — scan every row's discount column carefully. Only use 0 if the bill truly has no discount column or the cell is blank/dash.
 - "additionalDiscount" (top-level, NOT inside items) is a LUMP-SUM discount amount printed in the bill's TOTALS/SUMMARY section at the BOTTOM of the invoice — separate from the per-item Disc% column. Look for lines like "Discount", "Less: Discount", "Scheme Discount", "Cash Discount", "Trade Discount", "Additional Discount" near the Subtotal/Total/Grand Total area. Extract that as a positive rupee amount (e.g. if it shows "Discount: -150.00" or "(-) 150.00", output additionalDiscount: 150). If no such bottom-level discount line exists, output additionalDiscount: 0.
 
+GST RULES (CRITICAL — bills often mix 5% medicines with 18% cosmetics/FMCG items):
+- "gst" is the TOTAL GST PERCENT of that row. Many bills print it split into two columns "SGST" and "CGST" (each is HALF) — ADD them: SGST 9 + CGST 9 => gst: 18. SGST 2.5 + CGST 2.5 => gst: 5. SGST 6 + CGST 6 => gst: 12. If an "IGST" column is used instead, gst = IGST %.
+- gst must be one of 0, 5, 12, 18, 28, 40. Never output a half value like 9, 2.5 or 6, and never a value like 10.
+- SGST/CGST values are NOT discount. If you are about to output a discount equal to half the GST (like 9 on an 18% row, or 2.5 on a 5% row), you have almost certainly read the SGST/CGST column as DIS% — re-read that row.
+- Every row has its OWN rate — read it from that same row. Never copy the GST of the row above/below.
+- Columns like "SCM%", "DIS%", "SGST", "CGST" sit next to each other — do not shift a value into the neighbouring column or row. Read each row strictly along its own line (the photo may be rotated).
+- Self-check every row: quantity × rate × (1 − discount/100) × (1 + gst/100) should be ≈ the printed line amount. If it is not, re-read that row's discount and GST columns.
+- Cross-check with the GST summary table at the bottom (e.g. "GST 5%", "GST 12%", "GST 18%" / "OTHER GST" taxable totals).
+
 HSN EXTRACTION RULES (IMPORTANT):
 - Look for a column with header "HSN", "HSN Code", "SAC", "HSN/SAC" in the items table.
 - Each item row has its OWN hsnCode from that column — copy it exactly (usually 4 to 8 digits).
@@ -1487,7 +1550,7 @@ DATE RULES:
 - Text dates like "MAR 28", "MARCH 2028" -> 2028-03-31.
 
 NUMBER RULES:
-- All numbers (mrp, rate, sellingPrice, discount, gst, quantity, freeQuantity, amount, additionalDiscount) must be JSON numbers, never strings.
+- All numbers (mrp, rate, sellingPrice, discount, gst, quantity, freeQuantity, amount, additionalDiscount, grandTotal) must be JSON numbers, never strings.
 - If a value is missing or illegible, use 0 for numbers and "" for text.
 
 Return ONLY raw valid JSON with no markdown tags or conversational text.`;
@@ -1547,6 +1610,22 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
     const cleaned = cleanScannedItems(parsedData.items);
     parsedData.items = cleaned.items;
     parsedData.warnings = cleaned.warnings;
+
+    // Bill-level check: our computed total (same formula as save) vs the printed grand total
+    const printedGrandTotal = Number(parsedData.grandTotal);
+    if (Number.isFinite(printedGrandTotal) && printedGrandTotal > 0 && cleaned.items.length > 0) {
+      const taxables = cleaned.items.map(item => scannedLineAmount(item, 0));
+      const taxableTotal = taxables.reduce((sum, t) => sum + t, 0);
+      const extraDiscount = Math.min(Math.max(0, Number(parsedData.additionalDiscount) || 0), taxableTotal);
+      // Extra discount comes off each item's taxable value before GST, same as the bill save
+      const computedTotal = Math.round(cleaned.items.reduce((sum, item, i) => {
+        const taxableAfterExtra = taxables[i] - (taxableTotal > 0 ? extraDiscount * taxables[i] / taxableTotal : 0);
+        return sum + taxableAfterExtra * (1 + item.gst / 100);
+      }, 0));
+      if (Math.abs(computedTotal - printedGrandTotal) > 2) {
+        parsedData.warnings.unshift({ index: 0, productName: 'BILL TOTAL', issues: [`Bill ka Grand Total ${printedGrandTotal} hai, par scan se ${computedTotal} ban raha hai — Qty/Rate/Disc%/GST% rows check karein`] });
+      }
+    }
 
     if (upload) await BillUpload.updateOne({ _id: upload._id }, { $set: { scanData: parsedData } });
     return res.json({ success: true, data: parsedData });
