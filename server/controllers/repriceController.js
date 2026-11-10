@@ -38,8 +38,9 @@ const roundRupee = (value) => Math.round(Number(value.toFixed(6)));
 const priceFromCost = (cost, percent, mrp) => {
   const price = Math.max(roundRupee(cost * (1 + percent / 100)), Math.ceil(Number(cost.toFixed(6))));
   if (!(mrp > 0) || price <= mrp) return { price, capped: false };
+  // Whole rupees, never above MRP — even when cost is higher than MRP.
   const flooredMrp = Math.floor(mrp);
-  return { price: flooredMrp >= cost ? flooredMrp : mrp, capped: true };
+  return { price: flooredMrp >= 1 ? flooredMrp : mrp, capped: true };
 };
 
 const planMedicine = (med) => {
