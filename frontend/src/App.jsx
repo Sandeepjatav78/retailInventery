@@ -30,9 +30,9 @@ function App() {
 
           <Route path="*" element={
             <PrivateRoute>
-              <div className="min-h-screen bg-slate-100 flex flex-col">
-                <Sidebar />
-                <main className="flex-1 w-full px-3 sm:px-4 lg:px-6 py-3 sm:py-4 lg:py-6">
+              <div className="min-h-screen bg-slate-100">
+                <Sidebar>
+                <main className="flex-1 w-full min-w-0 px-3 sm:px-4 lg:px-6 py-3 sm:py-4 lg:py-6">
                   <Routes>
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/sales" element={<SaleForm />} />
@@ -52,6 +52,7 @@ function App() {
                     <Route path="/purchase-returns" element={<PurchaseReturn />} />
                   </Routes>
                 </main>
+                </Sidebar>
                 <ShoppingListWidget />
               </div>
             </PrivateRoute>

@@ -335,7 +335,8 @@ const PurchaseBillEntry = () => {
       Object.entries(billToSend).forEach(([key, value]) => { if (key !== 'billFiles') data.append(key, value); });
       data.append('items', JSON.stringify(items));
       bill.billFiles.forEach(file => data.append('billImages', file));
-      if (mobileUpload && bill.billFiles.length === 0) data.append('uploadId', mobileUpload._id);
+      // Always link the mobile upload, even if extra pages were attached here, so it turns Done.
+      if (mobileUpload) data.append('uploadId', mobileUpload._id);
       await api.post('/medicines/purchase-bills', data, { headers: { 'Content-Type': 'multipart/form-data' } });
       alert('Purchase bill save ho gaya aur medicines inventory mein add ho gayi.');
       if (mobileUpload) {
@@ -348,6 +349,8 @@ const PurchaseBillEntry = () => {
       setItems([emptyItem()]);
     } catch (error) {
       alert(error.response?.data?.message || 'Purchase bill save nahi ho saka.');
+      // Bill was already saved earlier — the server closed the mobile upload, go back to the list.
+      if (mobileUpload && error.response?.data?.uploadClosed) navigate('/mobile-uploads');
     } finally { setSaving(false); }
   };
 

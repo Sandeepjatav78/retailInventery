@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Medicine = require('../models/Medicine');
 const Sale = require('../models/Sale'); // <--- IMPORT SALE MODEL ZARURI HAI
 const PendingDose = require('../models/PendingDose');
@@ -417,6 +418,17 @@ const updateMedicine = async (req, res) => {
       updateData.scheduleAiChecked = true;
     }
 
+    // Expiry date can be corrected from the inventory edit (e.g. expired stock entered with a wrong date).
+    if (req.body.expiryDate !== undefined) {
+      if (req.body.expiryDate === '') {
+        delete updateData.expiryDate;
+      } else {
+        const expiry = new Date(req.body.expiryDate);
+        if (Number.isNaN(expiry.getTime())) return res.status(400).json({ message: 'Expiry date galat hai' });
+        updateData.expiryDate = expiry;
+      }
+    }
+
     // Remove undefined keys so we don't accidentally unset fields
     Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
 
@@ -425,19 +437,27 @@ const updateMedicine = async (req, res) => {
       updateData.billImage = req.file.path;
     }
 
+    const before = await Medicine.findById(req.params.id).select('expiryDate').lean();
     const updatedMed = await Medicine.findByIdAndUpdate(
       req.params.id,
       updateData,
       { new: true }
     );
+    if (!updatedMed) return res.status(404).json({ message: 'Medicine nahi mili' });
 
+    const expiryChanged = before?.expiryDate && updatedMed.expiryDate
+      && new Date(before.expiryDate).getTime() !== new Date(updatedMed.expiryDate).getTime();
     AuditLog.create({
       action: 'UPDATE_MEDICINE',
       entityType: 'Medicine',
       entityId: req.params.id,
-      message: `Medicine updated (${updatedMed?.productName || ''})`,
-      details: { productName: updatedMed?.productName, batchNumber: updatedMed?.batchNumber },
-      userRole: 'admin'
+      message: `Medicine updated (${updatedMed?.productName || ''})${expiryChanged ? ' — expiry date changed' : ''}`,
+      details: {
+        productName: updatedMed?.productName,
+        batchNumber: updatedMed?.batchNumber,
+        ...(expiryChanged ? { oldExpiryDate: before.expiryDate, newExpiryDate: updatedMed.expiryDate } : {})
+      },
+      userRole: req.user?.role || 'admin'
     }).catch(err => console.error('Audit log error (UPDATE_MEDICINE):', err.message));
 
     res.json(updatedMed);
@@ -472,6 +492,11 @@ const bulkUpdateMedicines = async (req, res) => {
       BULK_EDIT_STRING_FIELDS.forEach((field) => {
         if (row[field] !== undefined && row[field] !== null) update[field] = String(row[field]).trim();
       });
+      if (row.expiryDate !== undefined && row.expiryDate !== null && row.expiryDate !== '') {
+        const expiry = new Date(row.expiryDate);
+        if (Number.isNaN(expiry.getTime())) throw new Error(`${row.productName || id}: expiry date galat hai`);
+        update.expiryDate = expiry;
+      }
       if (update.productName === '' || update.batchNumber === '') throw new Error('Name aur Batch khali nahi ho sakte');
       if (update.scheduleCategory === '') delete update.scheduleCategory;
       if (update.scheduleCategory !== undefined) {
@@ -898,8 +923,17 @@ const createPurchaseBill = async (req, res) => {
     if (!supplierName || !invoiceNumber || !invoiceDate) return res.status(400).json({ message: 'Supplier name, invoice number and invoice date are required' });
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'Add at least one medicine' });
 
+    const fromUpload = req.body.uploadId ? await BillUpload.findById(req.body.uploadId) : null;
+
     const duplicate = await PurchaseBill.findOne({ supplierName: new RegExp(`^${supplierName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), invoiceNumber });
-    if (duplicate) return res.status(409).json({ message: 'This supplier invoice is already saved' });
+    if (duplicate) {
+      // The mobile upload's bill is already in the ledger — close the upload instead of leaving it Pending.
+      if (fromUpload && fromUpload.status !== 'Done') {
+        await BillUpload.updateOne({ _id: fromUpload._id }, { $set: { status: 'Done', purchaseBillId: duplicate._id, completedAt: new Date(), remark: 'Bill pehle se saved tha' } });
+        return res.status(409).json({ message: 'Ye supplier invoice pehle se saved hai. Mobile upload ko Done mark kar diya.', uploadClosed: true });
+      }
+      return res.status(409).json({ message: 'This supplier invoice is already saved' });
+    }
 
     const typoCheck = await ensureNoTypoSupplier(supplierName, String(req.body.confirmNewSupplier || ''));
     if (typoCheck) {
@@ -977,10 +1011,11 @@ const createPurchaseBill = async (req, res) => {
       });
     }
 
-    const fromUpload = req.body.uploadId ? await BillUpload.findById(req.body.uploadId) : null;
-    const billImagePaths = Array.isArray(req.files) && req.files.length > 0
-      ? req.files.map(f => f.path)
-      : (fromUpload ? fromUpload.pages.map((page) => page.url) : []);
+    // Mobile upload pages + any extra pages attached on the web are all kept with the bill.
+    const billImagePaths = [
+      ...(fromUpload ? fromUpload.pages.map((page) => page.url) : []),
+      ...(Array.isArray(req.files) ? req.files.map(f => f.path) : [])
+    ];
     const primaryBillImage = billImagePaths[0] || null;
 
     // Look up which items are brand-new medicines first, so their schedule
@@ -1046,6 +1081,9 @@ const createPurchaseBill = async (req, res) => {
     if (fromUpload) {
       await BillUpload.updateOne({ _id: fromUpload._id }, { $set: { status: 'Done', purchaseBillId: bill._id, completedAt: new Date() } });
     }
+    // Same bill entered without opening its mobile upload: close pending uploads whose AI scan
+    // found this supplier + invoice number, so they don't stay in the Pending list.
+    await closeMatchingPendingUploads(bill).catch((err) => console.error('[Warn] closeMatchingPendingUploads:', err.message));
 
     AuditLog.create({ action: 'CREATE_PURCHASE_BILL', entityType: 'PurchaseBill', entityId: bill._id.toString(), message: `Purchase invoice ${invoiceNumber} saved`, details: { supplierName, invoiceNumber, itemCount: validItems.length, grandTotal, balanceDue, paymentStatus }, userRole: req.user?.role || 'admin' }).catch(err => console.error('Audit log error (CREATE_PURCHASE_BILL):', err.message));
     return res.status(201).json(bill);
@@ -1647,6 +1685,26 @@ Return ONLY raw valid JSON with no markdown tags or conversational text.`;
   }
 };
 
+// Close Pending mobile uploads that are the same bill as `bill` (matched on the AI-scanned
+// invoice number + supplier name). Used when a bill is entered without opening its upload.
+const closeMatchingPendingUploads = async (bill) => {
+  const invoiceKey = normalizeForMatch(bill.invoiceNumber);
+  if (!invoiceKey) return 0;
+  const pending = await BillUpload.find({ status: 'Pending', scanData: { $ne: null } }).select('scanData').lean();
+  const matches = pending.filter((upload) => {
+    const scanned = upload.scanData || {};
+    if (normalizeForMatch(scanned.invoiceNumber) !== invoiceKey) return false;
+    const scannedSupplier = String(scanned.supplierName || '').trim();
+    return !scannedSupplier || similarityRatio(scannedSupplier, bill.supplierName) >= 0.78;
+  });
+  if (matches.length === 0) return 0;
+  await BillUpload.updateMany(
+    { _id: { $in: matches.map((upload) => upload._id) }, status: 'Pending' },
+    { $set: { status: 'Done', purchaseBillId: bill._id, completedAt: new Date(), remark: 'Bill save hone par auto Done' } }
+  );
+  return matches.length;
+};
+
 // --- MOBILE BILL UPLOADS (phone photo -> web entry queue) ---
 // STAFF/ADMIN (mobile app): send photographed bill pages; nothing is scanned or added to stock yet.
 const createBillUpload = async (req, res) => {
@@ -1850,6 +1908,132 @@ const billDueAmount = (bill) => (!bill.$isDefault('balanceDue')
   ? Math.max(0, Number(bill.balanceDue || 0))
   : Math.max(0, Number(bill.grandTotal || 0) - billPaidAmount(bill)));
 
+const roundMoney = (value) => Number(Number(value || 0).toFixed(2));
+
+const setBillPaid = (bill, paid) => {
+  const grandTotal = Number(bill.grandTotal || 0);
+  bill.amountPaid = roundMoney(Math.min(grandTotal, Math.max(0, paid)));
+  bill.balanceDue = roundMoney(Math.max(0, grandTotal - bill.amountPaid));
+  if (bill.balanceDue <= 0.005) bill.paymentStatus = 'Paid';
+  else bill.paymentStatus = bill.amountPaid > 0.005 ? 'Partial' : 'Credit';
+};
+
+// Spread `amount` over `bills` in the given order, filling each bill's due. Does not save.
+// `entry` = { paymentId, date, paymentMode, remark } written to each bill's payment history.
+const applyPaymentToBills = (bills, amount, entry) => {
+  let remaining = roundMoney(amount);
+  const applied = [];
+  const touched = [];
+  for (const bill of bills) {
+    if (remaining <= 0.005) break;
+    const due = billDueAmount(bill);
+    if (due <= 0.005) continue;
+    const apply = roundMoney(Math.min(remaining, due));
+    setBillPaid(bill, billPaidAmount(bill) + apply);
+    if (!Array.isArray(bill.paymentHistory)) bill.paymentHistory = [];
+    bill.paymentHistory.push({ ...entry, amount: apply });
+    touched.push(bill);
+    applied.push({
+      _id: bill._id,
+      invoiceNumber: bill.invoiceNumber,
+      invoiceDate: bill.invoiceDate,
+      grandTotal: Number(bill.grandTotal || 0),
+      amount: apply,
+      balanceDue: bill.balanceDue,
+      paymentStatus: bill.paymentStatus
+    });
+    remaining = roundMoney(remaining - apply);
+  }
+  return { applied, remaining, touched };
+};
+
+// ADMIN: Edit or delete one payment made to a party. A payment is either every history entry
+// sharing `paymentId` (bulk payment over several bills) or the given `entryIds` (older payments
+// saved before paymentId existed). The payment is reversed, then the new amount is applied again —
+// first to the same bills, any extra to the party's other open bills (oldest first).
+const editSupplierPayment = async (req, res) => {
+  try {
+    const supplierName = String(req.body.supplierName || '').trim();
+    const paymentId = String(req.body.paymentId || '').trim();
+    const entryIds = Array.isArray(req.body.entryIds) ? req.body.entryIds.map(String).filter(Boolean) : [];
+    const isDelete = req.body.delete === true;
+    if (!supplierName || (!paymentId && entryIds.length === 0)) {
+      return res.status(400).json({ message: 'Party aur payment batana zaroori hai' });
+    }
+
+    const bills = await PurchaseBill.find({ supplierName: new RegExp(`^${escapeRegex(supplierName)}$`, 'i') })
+      .sort({ invoiceDate: 1, createdAt: 1 });
+    const isTarget = (entry) => (paymentId && entry.paymentId === paymentId) || entryIds.includes(String(entry._id));
+
+    const affected = bills.filter((bill) => (bill.paymentHistory || []).some(isTarget));
+    if (affected.length === 0) return res.status(404).json({ message: 'Ye payment nahi mila (shayad pehle hi badal chuka hai). Page refresh karein.' });
+
+    const oldEntries = affected.flatMap((bill) => bill.paymentHistory.filter(isTarget).map((entry) => ({ bill, entry })));
+    const oldAmount = roundMoney(oldEntries.reduce((sum, { entry }) => sum + Number(entry.amount || 0), 0));
+    const first = oldEntries[0].entry;
+
+    // 1. Reverse the old payment.
+    for (const bill of affected) {
+      const removed = bill.paymentHistory.filter(isTarget).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+      const paidBefore = billPaidAmount(bill);
+      bill.paymentHistory = bill.paymentHistory.filter((entry) => !isTarget(entry));
+      setBillPaid(bill, paidBefore - removed);
+    }
+
+    let applied = [];
+    let newAmount = 0;
+    const toSave = new Set(affected);
+    if (!isDelete) {
+      newAmount = roundMoney(req.body.amount);
+      if (!Number.isFinite(newAmount) || newAmount <= 0) return res.status(400).json({ message: 'Valid amount bharein' });
+
+      const affectedIds = new Set(affected.map((bill) => String(bill._id)));
+      const ordered = [...affected, ...bills.filter((bill) => !affectedIds.has(String(bill._id)))];
+      const capacity = roundMoney(ordered.reduce((sum, bill) => sum + billDueAmount(bill), 0));
+      if (newAmount - capacity > 0.009) {
+        return res.status(400).json({ message: `Amount ₹${newAmount.toFixed(2)} party ke total due ₹${capacity.toFixed(2)} se zyada hai.` });
+      }
+
+      const result = applyPaymentToBills(ordered, newAmount, {
+        paymentId: paymentId || new mongoose.Types.ObjectId().toString(),
+        date: req.body.paymentDate ? new Date(req.body.paymentDate) : first.date,
+        paymentMode: String(req.body.paymentMode || first.paymentMode || 'Cash').trim(),
+        remark: req.body.remark !== undefined ? String(req.body.remark || '').trim() : (first.remark || '')
+      });
+      applied = result.applied;
+      result.touched.forEach((bill) => toSave.add(bill));
+    }
+
+    for (const bill of toSave) await bill.save();
+
+    AuditLog.create({
+      action: isDelete ? 'DELETE_SUPPLIER_PAYMENT' : 'EDIT_SUPPLIER_PAYMENT',
+      entityType: 'PurchaseBill',
+      entityId: supplierName,
+      message: isDelete
+        ? `₹${oldAmount} payment deleted for ${supplierName}`
+        : `Payment for ${supplierName} changed ₹${oldAmount} -> ₹${newAmount}`,
+      details: {
+        supplierName, paymentId, entryIds, oldAmount, newAmount,
+        oldBills: oldEntries.map(({ bill, entry }) => ({ invoiceNumber: bill.invoiceNumber, amount: entry.amount })),
+        applied
+      },
+      userRole: req.user?.role || 'admin'
+    }).catch(err => console.error('Audit log error (EDIT_SUPPLIER_PAYMENT):', err.message));
+
+    return res.json({
+      success: true,
+      message: isDelete
+        ? `₹${oldAmount} ka payment hata diya, bills ka due wapas badh gaya.`
+        : `Payment ₹${oldAmount} se ₹${newAmount} kar diya (${applied.length} bill par).`,
+      applied
+    });
+  } catch (err) {
+    console.error('[Error] editSupplierPayment:', err.message);
+    return res.status(500).json({ message: err.message || 'Payment edit nahi ho saka' });
+  }
+};
+
 // ADMIN: Edit the remarks / notes of a purchase bill from the party ledger
 const updatePurchaseBillRemarks = async (req, res) => {
   try {
@@ -1904,39 +2088,14 @@ const paySupplierParty = async (req, res) => {
       return res.status(400).json({ message: `Payment ₹${paymentAmount.toFixed(2)} total due ₹${openDue.toFixed(2)} se zyada hai.` });
     }
 
-    let remaining = paymentAmount;
-    const applied = [];
-    for (const bill of bills) {
-      if (remaining <= 0.005) break;
-      const grandTotal = Number(bill.grandTotal || 0);
-      const paid = billPaidAmount(bill);
-      const due = billDueAmount(bill);
-      if (due <= 0.005) continue;
-
-      const apply = Number(Math.min(remaining, due).toFixed(2));
-      const newPaid = Number((paid + apply).toFixed(2));
-      bill.amountPaid = newPaid;
-      bill.balanceDue = Number(Math.max(0, grandTotal - newPaid).toFixed(2));
-      bill.paymentStatus = bill.balanceDue <= 0.005 ? 'Paid' : 'Partial';
-      if (!Array.isArray(bill.paymentHistory)) bill.paymentHistory = [];
-      bill.paymentHistory.push({
-        date: paymentDate ? new Date(paymentDate) : new Date(),
-        amount: apply,
-        paymentMode,
-        remark: remark || `Bulk party payment (${supplierName})`
-      });
-      await bill.save();
-
-      applied.push({
-        _id: bill._id,
-        invoiceNumber: bill.invoiceNumber,
-        invoiceDate: bill.invoiceDate,
-        amount: apply,
-        balanceDue: bill.balanceDue,
-        paymentStatus: bill.paymentStatus
-      });
-      remaining = Number((remaining - apply).toFixed(2));
-    }
+    const paymentId = new mongoose.Types.ObjectId().toString();
+    const { applied, remaining, touched } = applyPaymentToBills(bills, paymentAmount, {
+      paymentId,
+      date: paymentDate ? new Date(paymentDate) : new Date(),
+      paymentMode,
+      remark: remark || `Bulk party payment (${supplierName})`
+    });
+    for (const bill of touched) await bill.save();
 
     if (applied.length === 0) {
       return res.status(400).json({ message: 'Iss party ke koi open bills nahi mile (sab paid hain).' });
@@ -1947,14 +2106,17 @@ const paySupplierParty = async (req, res) => {
       entityType: 'PurchaseBill',
       entityId: supplierName,
       message: `₹${Number(paymentAmount.toFixed(2))} bulk payment for ${supplierName} across ${applied.length} bills`,
-      details: { supplierName, paymentAmount, appliedCount: applied.length, paymentMode, unallocated: remaining },
+      details: { supplierName, paymentId, paymentAmount, appliedCount: applied.length, paymentMode, unallocated: remaining, applied },
       userRole: req.user?.role || 'admin'
     }).catch(err => console.error('Audit log error (SUPPLIER_BULK_PAYMENT):', err.message));
 
+    const billsTotal = Number(applied.reduce((sum, row) => sum + row.grandTotal, 0).toFixed(2));
     return res.json({
       success: true,
-      message: `₹${Number(paymentAmount.toFixed(2))} ka payment ${supplierName} ke ${applied.length} bill(s) par distribute ho gaya.`,
+      message: `₹${Number(paymentAmount.toFixed(2))} ka payment ${supplierName} ke ${applied.length} bill(s) (bills ki total value ₹${billsTotal}) par distribute ho gaya.`,
+      paymentId,
       applied,
+      billsTotal,
       unallocated: remaining
     });
   } catch (err) {
@@ -2274,7 +2436,8 @@ const recordSupplierPayment = async (req, res) => {
       date: req.body.paymentDate ? new Date(req.body.paymentDate) : new Date(),
       amount: paymentAmount,
       paymentMode,
-      remark
+      remark,
+      paymentId: new mongoose.Types.ObjectId().toString()
     });
 
     await bill.save();
@@ -2302,5 +2465,6 @@ module.exports = {
   getPurchaseBills, scanPurchaseBill, getSuppliers, getSupplierLedger, deleteSupplierParty, createManualSupplierBill, recordSupplierPayment, updatePurchaseBill, deletePurchaseBill, checkDuplicateBill,
   getExpiredMedicines, getSupplierDetails, updateSupplierDetails, paySupplierParty, updatePurchaseBillRemarks, getSimilarSuppliers, mergeSupplierParties,
   autoDetectScheduleH1, getScheduleCategories,
-  createBillUpload, getBillUploads, getBillUpload, updateBillUpload, deleteBillUpload
+  createBillUpload, getBillUploads, getBillUpload, updateBillUpload, deleteBillUpload,
+  editSupplierPayment
 };

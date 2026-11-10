@@ -43,7 +43,10 @@ const PurchaseBillSchema = new mongoose.Schema({
     date: { type: Date, default: Date.now },
     amount: { type: Number, required: true },
     paymentMode: { type: String, default: 'Cash' },
-    remark: { type: String, default: '' }
+    remark: { type: String, default: '' },
+    // Same id on every bill's entry that came from one payment (a bulk payment
+    // spread over several bills), so the payment can be listed and edited as one.
+    paymentId: { type: String }
   }],
   createdBy: { type: String }
 }, { timestamps: true });

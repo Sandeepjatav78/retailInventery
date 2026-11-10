@@ -41,6 +41,7 @@ router.get('/supplier-ledger', authorizeRoles('admin'), inventoryController.getS
 router.get('/supplier-ledger/:name/details', authorizeRoles('admin'), inventoryController.getSupplierDetails);
 router.post('/supplier-ledger/manual-bill', authorizeRoles('admin'), inventoryController.createManualSupplierBill);
 router.post('/supplier-ledger/pay', authorizeRoles('admin'), inventoryController.paySupplierParty);
+router.put('/supplier-ledger/payment', authorizeRoles('admin'), inventoryController.editSupplierPayment);
 router.put('/supplier-ledger/:name', authorizeRoles('admin'), inventoryController.updateSupplierDetails);
 router.post('/supplier-ledger/merge', authorizeRoles('admin'), inventoryController.mergeSupplierParties);
 router.delete('/supplier-ledger/:name', authorizeRoles('admin'), inventoryController.deleteSupplierParty);

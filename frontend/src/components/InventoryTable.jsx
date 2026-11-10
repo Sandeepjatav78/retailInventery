@@ -152,13 +152,33 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
     }
   };
 
+  // --- EXPIRY HELPERS ---
+  // Local YYYY-MM-DD for a date input (toISOString would shift the day in IST).
+  const toDateInput = (value) => {
+      const d = value ? new Date(value) : null;
+      if (!d || Number.isNaN(d.getTime())) return '';
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  // A medicine is valid through the END of its expiry month.
+  const isExpiredDate = (value) => {
+      const d = value ? new Date(value) : null;
+      if (!d || Number.isNaN(d.getTime())) return false;
+      return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999) < new Date();
+  };
+  const formatExpiry = (value) => {
+      const d = value ? new Date(value) : null;
+      if (!d || Number.isNaN(d.getTime())) return '-';
+      return d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  };
+
   // --- EDIT HANDLERS ---
   const toEditForm = (med) => ({
       ...med,
       packSize: med.packSize || '',
       quantity: med.quantity || 0,
       doctorPrice: med.doctorPrice ?? '',
-      gst: med.gst || 0
+      gst: med.gst || 0,
+      expiryDate: toDateInput(med.expiryDate)
   });
   const editIds = Object.keys(editRows);
   const isMultiEdit = editIds.length > 1;
@@ -202,7 +222,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
       setNewBillFile(e.target.files[0]);
   };
 
-  const BULK_FIELDS = ['productName', 'quantity', 'batchNumber', 'hsnCode', 'partyName', 'packSize', 'mrp', 'sellingPrice', 'doctorPrice', 'gst', 'scheduleCategory', 'costPrice'];
+  const BULK_FIELDS = ['productName', 'quantity', 'batchNumber', 'hsnCode', 'partyName', 'packSize', 'mrp', 'sellingPrice', 'doctorPrice', 'gst', 'scheduleCategory', 'costPrice', 'expiryDate'];
 
     const handleSaveClick = async () => {
             const code = prompt(`🛡 Enter Admin Secret to EDIT${isMultiEdit ? ` ${editIds.length} items` : ''}:`);
@@ -442,6 +462,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                     <th className={`${thClass} text-center`}>Qty (Strips)</th>
                     <th className={`${thClass} bg-orange-50 text-orange-800 text-center`}>Loose</th> 
                     <th className={thClass}>Batch</th>
+                    <th className={thClass}>Expiry</th>
                     <th className={thClass}>HSN</th>
                     <th className={thClass}>Party</th>
                     <th className={`${thClass} text-center`}>Pack of</th>
@@ -477,6 +498,9 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                         -
                     </td>
                     <td className={tdClass}><input name="batchNumber" value={editFormData.batchNumber} onChange={onChange} className={`${inputEditClass} w-20`} /></td>
+                    <td className={tdClass}>
+                        <input name="expiryDate" type="date" value={editFormData.expiryDate || ''} onChange={onChange} title="Expiry date badlein" className={`${inputEditClass} w-36 ${isExpiredDate(editFormData.expiryDate) ? 'border-red-400 bg-red-50 text-red-700' : ''}`} />
+                    </td>
                     <td className={tdClass}><input name="hsnCode" value={editFormData.hsnCode || ''} onChange={onChange} className={`${inputEditClass} w-20`} /></td>
                     <td className={tdClass}><input name="partyName" value={editFormData.partyName || ''} onChange={onChange} className={inputEditClass} /></td>
                     <td className={tdClass}><input name="packSize" type="number" value={editFormData.packSize || ''} onChange={onChange} className={`${inputEditClass} text-center w-16`} /></td>
@@ -537,6 +561,13 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                         {m.isKachiEntry ? '-' : looseTablets}
                     </td>
                     <td className={`${tdClass} text-gray-500`}>{m.batchNumber}</td>
+                    <td className={tdClass}>
+                        {isExpiredDate(m.expiryDate) ? (
+                            <span className="text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded text-xs font-bold" title="Expired — galat date ho to ✏️ se badlein">⛔ {formatExpiry(m.expiryDate)}</span>
+                        ) : (
+                            <span className="text-gray-600 text-xs font-semibold">{formatExpiry(m.expiryDate)}</span>
+                        )}
+                    </td>
                     <td className={`${tdClass} text-gray-500`}>{m.hsnCode || '-'}</td>
                     <td className={`${tdClass} text-gray-500 text-xs`}>{m.partyName || '-'}</td>
                     <td className={`${tdClass} text-center font-semibold text-gray-600`}>{m.packSize || 10}</td>
@@ -556,7 +587,7 @@ const InventoryTable = ({ meds, onDelete, userRole, onAutoDetectSchedule, autoDe
                     </td>
                     <td className={tdClass}>
                         <div className="flex gap-2 justify-center">
-                            <button onClick={() => handleEditClick(m)} disabled={editIds.length > 0} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit Item (Password Required)">✏️</button>
+                            <button onClick={() => handleEditClick(m)} disabled={editIds.length > 0} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title={isExpiredDate(m.expiryDate) ? 'Edit / Expiry date badlein (Password Required)' : 'Edit Item (Password Required)'}>✏️</button>
                             {userRole !== 'staff' && (
                                 <button onClick={() => handleDeleteClick(m._id)} className="text-red-500 hover:text-red-700 hover:bg-red-50 p-1 rounded transition-colors" title="Delete Item">🗑️</button>
                             )}

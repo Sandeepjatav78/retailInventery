@@ -3,6 +3,55 @@ import api from '../api/axios';
 
 const money = (val) => `₹${Number(val || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+// Local YYYY-MM-DD (toISOString would shift dates in IST).
+const toDay = (value) => {
+  const d = value ? new Date(value) : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const fmtDay = (value) => (value ? new Date(value).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
+
+const billPaidOf = (bill) => {
+  const total = Number(bill.grandTotal || 0);
+  return Number(bill.amountPaid || (bill.paymentStatus === 'Paid' ? total : 0));
+};
+const billDueOf = (bill) => Math.max(0, Number(bill.balanceDue ?? (Number(bill.grandTotal || 0) - billPaidOf(bill))));
+
+// Payment entries of a bill. Old bills marked paid without any history count as paid on the bill date.
+const paymentsOf = (bill) => {
+  if (Array.isArray(bill.paymentHistory) && bill.paymentHistory.length > 0) return bill.paymentHistory;
+  const paid = billPaidOf(bill);
+  return paid > 0 ? [{ date: bill.invoiceDate, amount: paid, paymentMode: bill.paymentMode, legacy: true }] : [];
+};
+
+// One row per payment: a bulk payment spread over several bills is shown as one payment.
+const groupPayments = (billsList) => {
+  const groups = new Map();
+  billsList.forEach((bill) => {
+    (bill.paymentHistory || []).forEach((entry) => {
+      const remark = String(entry.remark || '');
+      const key = entry.paymentId
+        || (remark.startsWith('Bulk party payment') || (remark && remark !== 'Initial bill payment')
+          ? `legacy:${toDay(entry.date)}|${entry.paymentMode}|${remark}`
+          : `entry:${entry._id}`);
+      if (!groups.has(key)) {
+        groups.set(key, { key, paymentId: entry.paymentId || '', entryIds: [], date: entry.date, paymentMode: entry.paymentMode, remark, amount: 0, rows: [] });
+      }
+      const group = groups.get(key);
+      if (!entry.paymentId && entry._id) group.entryIds.push(String(entry._id));
+      group.amount += Number(entry.amount || 0);
+      group.rows.push({ bill, amount: Number(entry.amount || 0) });
+    });
+  });
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      billsTotal: group.rows.reduce((sum, row) => sum + Number(row.bill.grandTotal || 0), 0),
+      dueNow: group.rows.reduce((sum, row) => sum + billDueOf(row.bill), 0)
+    }))
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+};
+
 const SupplierLedger = () => {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState({ totalPurchased: 0, totalPaid: 0, totalCreditDue: 0, supplierCount: 0 });
@@ -15,6 +64,14 @@ const SupplierLedger = () => {
   // Filters
   const [selectedStatus, setSelectedStatus] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  // Calendar range (YYYY-MM-DD, '' = open ended) for the period report
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [partyTab, setPartyTab] = useState('bills');
+  const [expandedPayment, setExpandedPayment] = useState(null);
+  const [editPayment, setEditPayment] = useState(null);
+  const [editPayForm, setEditPayForm] = useState({ amount: '', date: '', paymentMode: 'Cash', remark: '' });
+  const [savingEditPay, setSavingEditPay] = useState(false);
 
   // Payment Modal State
   const [paymentModalBill, setPaymentModalBill] = useState(null);
@@ -341,6 +398,133 @@ const SupplierLedger = () => {
     .filter((bill) => selectedBillIds.includes(String(bill._id)))
     .reduce((sum, bill) => sum + billDue(bill), 0);
 
+  // --- DATE RANGE (calendar) REPORT ---
+  const rangeActive = Boolean(dateFrom || dateTo);
+  const inRange = (value) => {
+    if (!rangeActive) return true;
+    const day = toDay(value);
+    if (!day) return false;
+    return (!dateFrom || day >= dateFrom) && (!dateTo || day <= dateTo);
+  };
+  // purchased / pending = bills dated in the range; paid = payments made in the range (any bill).
+  const rangeStats = (billsList) => {
+    const periodBills = billsList.filter((bill) => inRange(bill.invoiceDate));
+    const periodPayments = billsList.flatMap((bill) => paymentsOf(bill)).filter((p) => inRange(p.date));
+    return {
+      billCount: periodBills.length,
+      purchased: periodBills.reduce((sum, bill) => sum + Number(bill.grandTotal || 0), 0),
+      paidOnPeriodBills: periodBills.reduce((sum, bill) => sum + billPaidOf(bill), 0),
+      pending: periodBills.reduce((sum, bill) => sum + billDueOf(bill), 0),
+      paid: periodPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0),
+      paymentCount: periodPayments.length,
+      totalDueNow: billsList.reduce((sum, bill) => sum + billDueOf(bill), 0)
+    };
+  };
+  const setPreset = (preset) => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    if (preset === 'today') { setDateFrom(toDay(now)); setDateTo(toDay(now)); }
+    if (preset === 'month') { setDateFrom(toDay(new Date(y, m, 1))); setDateTo(toDay(new Date(y, m + 1, 0))); }
+    if (preset === 'lastMonth') { setDateFrom(toDay(new Date(y, m - 1, 1))); setDateTo(toDay(new Date(y, m, 0))); }
+    if (preset === 'fy') {
+      const fyStart = m >= 3 ? y : y - 1; // Indian financial year: 1 Apr - 31 Mar
+      setDateFrom(toDay(new Date(fyStart, 3, 1))); setDateTo(toDay(new Date(fyStart + 1, 2, 31)));
+    }
+    if (preset === 'clear') { setDateFrom(''); setDateTo(''); }
+  };
+  const rangeLabel = rangeActive ? `${dateFrom ? fmtDay(dateFrom) : 'Shuru se'} → ${dateTo ? fmtDay(dateTo) : 'Aaj tak'}` : '';
+  const partyBillsAll = selectedParty ? bills.filter((bill) => String(bill.supplierName).toLowerCase() === selectedParty.toLowerCase()) : [];
+  const overallRange = rangeStats(bills);
+  const partyRange = rangeStats(partyBillsAll);
+  const partyRangeStatsByName = new Map(suppliers.map((sup) => [
+    sup.supplierName.toLowerCase(),
+    rangeActive ? rangeStats(bills.filter((bill) => String(bill.supplierName).toLowerCase() === sup.supplierName.toLowerCase())) : null
+  ]));
+  const shownBills = activePartyBills.filter((bill) => inRange(bill.invoiceDate));
+  const partyPayments = groupPayments(partyBillsAll).filter((group) => inRange(group.date));
+
+  // --- EDIT / DELETE A PAYMENT ---
+  const openEditPayment = (group) => {
+    setEditPayment(group);
+    setEditPayForm({ amount: group.amount.toFixed(2), date: toDay(group.date), paymentMode: group.paymentMode || 'Cash', remark: group.remark || '' });
+  };
+
+  const submitEditPayment = async (isDelete = false) => {
+    if (!editPayment || !activePartyObj) return;
+    const amount = Number(editPayForm.amount);
+    if (!isDelete && (!Number.isFinite(amount) || amount <= 0)) return alert('Valid amount bharein.');
+    if (isDelete && !window.confirm(`${money(editPayment.amount)} ka ye payment hata dein? Iske bills ka due wapas badh jayega.`)) return;
+    setSavingEditPay(true);
+    try {
+      const res = await api.put('/medicines/supplier-ledger/payment', {
+        supplierName: activePartyObj.supplierName,
+        paymentId: editPayment.paymentId || undefined,
+        entryIds: editPayment.paymentId ? undefined : editPayment.entryIds,
+        delete: isDelete,
+        amount,
+        paymentDate: editPayForm.date,
+        paymentMode: editPayForm.paymentMode,
+        remark: editPayForm.remark
+      });
+      alert(res.data?.message || 'Payment update ho gaya.');
+      setEditPayment(null);
+      setExpandedPayment(null);
+      fetchLedger();
+    } catch (err) {
+      alert(err.response?.data?.message || 'Payment update nahi ho saka.');
+    } finally {
+      setSavingEditPay(false);
+    }
+  };
+
+  const dateRangeBar = (stats, scopeLabel) => (
+    <div className="bg-white p-4 rounded-2xl border border-indigo-200 shadow-xs space-y-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <div>
+          <p className="text-xs font-extrabold text-indigo-700 uppercase tracking-wider">📅 Date Range Report</p>
+          <p className="text-[11px] text-slate-500">{scopeLabel}: dates chunein — kitna maal liya, kitna pay kiya, kitna udhar baaki</p>
+        </div>
+        <label className="text-xs font-bold text-slate-600">From
+          <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-semibold outline-none focus:border-indigo-500" />
+        </label>
+        <label className="text-xs font-bold text-slate-600">To
+          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 px-2 py-1.5 text-xs font-semibold outline-none focus:border-indigo-500" />
+        </label>
+        <div className="flex flex-wrap gap-1.5">
+          {[['today', 'Aaj'], ['month', 'Is Mahine'], ['lastMonth', 'Pichhla Mahina'], ['fy', 'Is Saal (FY)']].map(([key, label]) => (
+            <button key={key} type="button" onClick={() => setPreset(key)} className="px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold hover:bg-indigo-100">{label}</button>
+          ))}
+          {rangeActive && <button type="button" onClick={() => setPreset('clear')} className="px-2.5 py-1.5 rounded-lg bg-white text-red-600 border border-red-200 text-xs font-bold">✕ Clear</button>}
+        </div>
+      </div>
+      {rangeActive && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
+          <div className="bg-blue-50 rounded-xl border border-blue-200 p-3">
+            <span className="block text-[10px] font-extrabold uppercase text-blue-700">Goods Purchased</span>
+            <span className="text-lg font-extrabold text-blue-800">{money(stats.purchased)}</span>
+            <span className="block text-[11px] text-blue-600">{stats.billCount} bills · {rangeLabel}</span>
+          </div>
+          <div className="bg-green-50 rounded-xl border border-green-200 p-3">
+            <span className="block text-[10px] font-extrabold uppercase text-green-700">Paid in this period</span>
+            <span className="text-lg font-extrabold text-green-700">{money(stats.paid)}</span>
+            <span className="block text-[11px] text-green-600">{stats.paymentCount} payment entries</span>
+          </div>
+          <div className="bg-red-50 rounded-xl border border-red-200 p-3">
+            <span className="block text-[10px] font-extrabold uppercase text-red-600">Udhar pending (in bills ka)</span>
+            <span className="text-lg font-extrabold text-red-600">{money(stats.pending)}</span>
+            <span className="block text-[11px] text-red-500">Is period ke bills me se {money(stats.paidOnPeriodBills)} pay ho chuka</span>
+          </div>
+          <div className="bg-slate-50 rounded-xl border border-slate-200 p-3">
+            <span className="block text-[10px] font-extrabold uppercase text-slate-500">Total due aaj tak</span>
+            <span className="text-lg font-extrabold text-slate-800">{money(stats.totalDueNow)}</span>
+            <span className="block text-[11px] text-slate-500">Saare bills ka baaki udhar</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 p-4 md:p-6 space-y-6 max-w-[1600px] mx-auto">
 
@@ -412,6 +596,8 @@ const SupplierLedger = () => {
             </div>
           </div>
 
+          {dateRangeBar(overallRange, 'Saari parties')}
+
           {/* PARTY DIRECTORY SECTION */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-slate-200 pb-4">
@@ -466,6 +652,20 @@ const SupplierLedger = () => {
                           </button>
                         </div>
                       </div>
+
+                      {/* PERIOD STATS (only when a date range is chosen) */}
+                      {(() => {
+                        const period = partyRangeStatsByName.get(sup.supplierName.toLowerCase());
+                        if (!period) return null;
+                        return (
+                          <div className="mt-4 grid grid-cols-3 gap-2 py-2 px-3 bg-indigo-50 rounded-xl border border-indigo-200 text-center text-xs">
+                            <div className="col-span-3 text-[10px] font-extrabold uppercase text-indigo-700 text-left">📅 {rangeLabel}</div>
+                            <div><span className="block text-indigo-500 font-bold uppercase text-[10px]">Purchased</span><span className="font-extrabold text-indigo-900">{money(period.purchased)}</span></div>
+                            <div><span className="block text-green-600 font-bold uppercase text-[10px]">Paid</span><span className="font-extrabold text-green-700">{money(period.paid)}</span></div>
+                            <div><span className="block text-red-600 font-bold uppercase text-[10px]">Pending</span><span className="font-extrabold text-red-600">{money(period.pending)}</span></div>
+                          </div>
+                        );
+                      })()}
 
                       {/* STATS */}
                       <div className="mt-5 grid grid-cols-3 gap-2 py-3 px-3 bg-white rounded-xl border border-slate-200/80 text-center text-xs">
@@ -551,7 +751,95 @@ const SupplierLedger = () => {
             </div>
           </div>
 
+          {dateRangeBar(partyRange, selectedParty)}
+
+          <div className="flex rounded-lg border border-slate-300 overflow-hidden text-sm font-bold w-fit bg-white">
+            <button onClick={() => setPartyTab('bills')} className={`px-4 py-2 ${partyTab === 'bills' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>📋 Bills ({shownBills.length})</button>
+            <button onClick={() => setPartyTab('payments')} className={`px-4 py-2 ${partyTab === 'payments' ? 'bg-teal-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}>💸 Payments ({partyPayments.length})</button>
+          </div>
+
+          {partyTab === 'payments' && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+              <div className="p-5 border-b border-slate-200">
+                <h2 className="text-base font-bold text-slate-800">💸 Payments to {selectedParty}{rangeActive ? ` · ${rangeLabel}` : ''}</h2>
+                <p className="text-xs text-slate-500">Har payment: kitna diya, kitne bills par laga, un bills ki total value. Row kholkar dekhein kis bill par kitna gaya. Galat amount ho to ✏️ Edit karein.</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider font-extrabold text-[11px] border-b border-slate-200">
+                    <tr>
+                      <th className="px-4 py-3">Payment Date</th>
+                      <th className="px-4 py-3 text-right">Amount Paid</th>
+                      <th className="px-4 py-3">Mode</th>
+                      <th className="px-4 py-3 text-center">Bills</th>
+                      <th className="px-4 py-3 text-right">Un Bills ki Total Value</th>
+                      <th className="px-4 py-3 text-right">Un Bills ka Due Ab</th>
+                      <th className="px-4 py-3">Remark</th>
+                      <th className="px-4 py-3 text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                    {partyPayments.length === 0 ? (
+                      <tr><td colSpan="8" className="text-center py-8 text-slate-400 italic">Koi payment nahi mila.</td></tr>
+                    ) : partyPayments.map((group) => (
+                      <React.Fragment key={group.key}>
+                        <tr className="hover:bg-slate-50/80">
+                          <td className="px-4 py-3 font-semibold whitespace-nowrap">{fmtDay(group.date)}</td>
+                          <td className="px-4 py-3 text-right font-extrabold text-green-700">{money(group.amount)}</td>
+                          <td className="px-4 py-3">{group.paymentMode || '-'}</td>
+                          <td className="px-4 py-3 text-center">
+                            <button onClick={() => setExpandedPayment(expandedPayment === group.key ? null : group.key)} className="px-2.5 py-1 rounded-md bg-teal-50 text-teal-700 border border-teal-200 text-xs font-bold">
+                              {group.rows.length} {group.rows.length === 1 ? 'bill' : 'bills'} {expandedPayment === group.key ? '▲' : '▼'}
+                            </button>
+                          </td>
+                          <td className="px-4 py-3 text-right font-bold text-slate-800">{money(group.billsTotal)}</td>
+                          <td className="px-4 py-3 text-right font-bold text-red-600">{money(group.dueNow)}</td>
+                          <td className="px-4 py-3 text-xs text-slate-500 max-w-[220px] truncate" title={group.remark}>{group.remark || '-'}</td>
+                          <td className="px-4 py-3 text-center">
+                            <button onClick={() => openEditPayment(group)} className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 font-bold text-xs">✏️ Edit</button>
+                          </td>
+                        </tr>
+                        {expandedPayment === group.key && (
+                          <tr className="bg-teal-50/40">
+                            <td colSpan="8" className="px-6 py-3">
+                              <table className="w-full text-xs">
+                                <thead className="text-slate-500 uppercase text-[10px] font-extrabold">
+                                  <tr><th className="text-left py-1">Invoice</th><th className="text-left py-1">Bill Date</th><th className="text-right py-1">Bill Total</th><th className="text-right py-1">Is payment se</th><th className="text-right py-1">Ab Due</th></tr>
+                                </thead>
+                                <tbody>
+                                  {group.rows.map((row, idx) => (
+                                    <tr key={idx} className="border-t border-teal-100">
+                                      <td className="py-1.5 font-bold text-slate-800">{row.bill.invoiceNumber}</td>
+                                      <td className="py-1.5">{fmtDay(row.bill.invoiceDate)}</td>
+                                      <td className="py-1.5 text-right">{money(row.bill.grandTotal)}</td>
+                                      <td className="py-1.5 text-right font-bold text-green-700">{money(row.amount)}</td>
+                                      <td className="py-1.5 text-right font-bold text-red-600">{money(billDueOf(row.bill))}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                  {partyPayments.length > 0 && (
+                    <tfoot className="bg-slate-50 border-t border-slate-200 font-extrabold text-slate-800">
+                      <tr>
+                        <td className="px-4 py-3">Total ({partyPayments.length} payments)</td>
+                        <td className="px-4 py-3 text-right text-green-700">{money(partyPayments.reduce((sum, g) => sum + g.amount, 0))}</td>
+                        <td colSpan="6"></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* BILLS & PAYMENTS LEDGER TABLE FOR THIS PARTY */}
+          {partyTab === 'bills' && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="p-5 border-b border-slate-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
@@ -618,12 +906,12 @@ const SupplierLedger = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
-                  {activePartyBills.length === 0 ? (
+                  {shownBills.length === 0 ? (
                     <tr>
-                      <td colSpan="9" className="text-center py-8 text-slate-400 italic">Iss party ke koi matching bills nahi mile.</td>
+                      <td colSpan="9" className="text-center py-8 text-slate-400 italic">Iss party ke koi matching bills nahi mile{rangeActive ? ' (is date range me)' : ''}.</td>
                     </tr>
                   ) : (
-                    activePartyBills.map((bill) => {
+                    shownBills.map((bill) => {
                       const grandTotal = Number(bill.grandTotal || 0);
                       const paid = Number(bill.amountPaid || (bill.paymentStatus === 'Paid' ? grandTotal : 0));
                       const due = Number(bill.balanceDue ?? Math.max(0, grandTotal - paid));
@@ -703,6 +991,49 @@ const SupplierLedger = () => {
                 </tbody>
               </table>
             </div>
+          </div>
+          )}
+        </div>
+      )}
+
+      {/* --- EDIT PAYMENT MODAL --- */}
+      {editPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-amber-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-800 text-lg">✏️ Edit Payment</h3>
+                <p className="text-xs text-slate-500">{fmtDay(editPayment.date)} · {money(editPayment.amount)} · {editPayment.rows.length} bill(s)</p>
+              </div>
+              <button onClick={() => setEditPayment(null)} className="text-slate-400 text-xl font-bold">✕</button>
+            </div>
+            <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs space-y-1">
+              {editPayment.rows.map((row, idx) => (
+                <div key={idx} className="flex justify-between"><span>Inv {row.bill.invoiceNumber} ({money(row.bill.grandTotal)})</span><span className="font-bold text-green-700">{money(row.amount)}</span></div>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-500">Naya amount pehle inhi bills par lagega; zyada ho to party ke baaki open bills (purane pehle) par jayega.</p>
+            <form onSubmit={(e) => { e.preventDefault(); submitEditPayment(false); }} className="space-y-3">
+              <label className="block text-xs font-bold text-slate-600">Sahi Amount (₹)
+                <input type="number" min="0.01" step="0.01" required autoFocus value={editPayForm.amount} onChange={(e) => setEditPayForm((prev) => ({ ...prev, amount: e.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-sm font-bold" />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-xs font-bold text-slate-600">Mode
+                  <select value={editPayForm.paymentMode} onChange={(e) => setEditPayForm((prev) => ({ ...prev, paymentMode: e.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs bg-white">
+                    {['UPI', 'Cash', 'Bank Transfer', 'Cheque', 'Credit'].map((mode) => <option key={mode}>{mode}</option>)}
+                  </select>
+                </label>
+                <label className="text-xs font-bold text-slate-600">Date
+                  <input type="date" value={editPayForm.date} onChange={(e) => setEditPayForm((prev) => ({ ...prev, date: e.target.value }))} className="mt-1 w-full rounded-lg border border-slate-300 p-2.5 text-xs" />
+                </label>
+              </div>
+              <input value={editPayForm.remark} onChange={(e) => setEditPayForm((prev) => ({ ...prev, remark: e.target.value }))} placeholder="Remark" className="w-full rounded-lg border border-slate-300 p-2.5 text-xs" />
+              <div className="flex gap-2">
+                <button type="button" disabled={savingEditPay} onClick={() => submitEditPayment(true)} className="px-3 py-2.5 rounded-lg bg-red-50 text-red-700 border border-red-200 font-bold text-xs disabled:opacity-50">🗑 Payment hatao</button>
+                <button type="button" onClick={() => setEditPayment(null)} className="flex-1 py-2.5 rounded-lg border border-slate-300 font-bold text-xs">Cancel</button>
+                <button type="submit" disabled={savingEditPay} className="flex-1 py-2.5 rounded-lg bg-amber-600 text-white font-bold text-xs disabled:opacity-50">{savingEditPay ? 'Saving...' : '✅ Save'}</button>
+              </div>
+            </form>
           </div>
         </div>
       )}

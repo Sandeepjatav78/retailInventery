@@ -42,6 +42,14 @@ const MobileUploads = () => {
 
   useEffect(() => {
     fetchUploads();
+    // Refresh when coming back to this tab, so a bill finished elsewhere doesn't linger as Pending.
+    const onFocus = () => { if (document.visibilityState === 'visible') fetchUploads(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
   }, [fetchUploads]);
 
   const setUploadStatus = async (upload, nextStatus) => {

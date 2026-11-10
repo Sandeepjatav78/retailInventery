@@ -22,8 +22,27 @@ const to12HourTimeFrom24 = (time24, dateStr) => {
     return parsed.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
+const EMPTY_PARTY_SALE = { enabled: false, gstin: '', drugLicenseNo: '', address: '' };
+
 const ManualBill = () => {
   const [customer, setCustomer] = useState({ name: '', phone: '', doctor: '', mode: 'Cash' });
+  // Sale to another pharmacy / firm: their DL No. (required), GSTIN and address print on the bill.
+  const [partySale, setPartySale] = useState(EMPTY_PARTY_SALE);
+  const [buyerParties, setBuyerParties] = useState([]);
+
+  useEffect(() => {
+    if (!partySale.enabled) return;
+    api.get('/sales/buyer-parties').then((res) => setBuyerParties(res.data?.parties || [])).catch(() => setBuyerParties([]));
+  }, [partySale.enabled]);
+
+  const handlePartyNameChange = (value) => {
+    setCustomer((prev) => ({ ...prev, name: value }));
+    const known = buyerParties.find((p) => String(p.name || '').toLowerCase() === value.trim().toLowerCase());
+    if (known) {
+      setCustomer((prev) => ({ ...prev, name: value, phone: prev.phone || known.phone || '' }));
+      setPartySale({ enabled: true, gstin: known.gstin || '', drugLicenseNo: known.drugLicenseNo || '', address: known.address || '' });
+    }
+  };
     const [invoiceNo, setInvoiceNo] = useState('Loading...');
 
     const fetchNextInvoice = async () => {
@@ -239,7 +258,11 @@ const ManualBill = () => {
 
   const handleGenerateBill = async () => {
     if (cart.length === 0) return alert("Add items first!");
-    if (!customer.name) return alert("Customer Name is required!");
+    if (!customer.name.trim()) return alert(partySale.enabled ? "Party / Firm name zaroori hai!" : "Customer Name is required!");
+    if (partySale.enabled && !partySale.drugLicenseNo.trim()) return alert("Party ka Drug License No. zaroori hai!");
+    const buyerParty = partySale.enabled
+        ? { isPartySale: true, gstin: partySale.gstin.trim().toUpperCase(), drugLicenseNo: partySale.drugLicenseNo.trim().toUpperCase(), address: partySale.address.trim() }
+        : undefined;
 
         if (currentUserRole === 'staff') {
                 const invalidItem = cart.find((item) => !String(item.hsn || '').trim());
@@ -281,7 +304,8 @@ const ManualBill = () => {
         isBillRequired: true,
         userRole: currentUserRole, 
         customDate: combinedDateTime,
-        isCredit: customer.mode === 'Credit'
+        isCredit: customer.mode === 'Credit',
+        buyerParty
     };
 
     try {
@@ -293,8 +317,9 @@ const ManualBill = () => {
             phone: customer.phone,
             doctor: customer.doctor,
             mode: customer.mode,
-            customDate: billDate, 
-            customTime: to12HourTimeFrom24(billTime24, billDate)
+            customDate: billDate,
+            customTime: to12HourTimeFrom24(billTime24, billDate),
+            buyerParty
         };
 
         const billHTML = await generateBillHTML(cart, invData);
@@ -305,6 +330,7 @@ const ManualBill = () => {
         }
 
         setCustomer({ name: '', phone: '', doctor: '', mode: 'Cash' });
+        setPartySale(EMPTY_PARTY_SALE);
         setCart([]);
         fetchNextInvoice();
         setBillDate(getLocalDateString());
@@ -324,7 +350,17 @@ const ManualBill = () => {
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col gap-6">
         <h3 className="text-xl font-bold text-gray-800 border-b pb-3">📝 Create Custom Bill</h3>
         <div className="bg-slate-50 p-5 rounded-lg border border-slate-200">
-            <h4 className="text-sm font-bold text-teal-700 mb-3 flex items-center gap-2">1. Bill Details</h4>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h4 className="text-sm font-bold text-teal-700 flex items-center gap-2">1. Bill Details</h4>
+                <label className={`flex items-center gap-2 text-xs font-bold px-3 py-1.5 rounded-lg border cursor-pointer ${partySale.enabled ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-indigo-700 border-indigo-200'}`}>
+                    <input
+                        type="checkbox"
+                        checked={partySale.enabled}
+                        onChange={(e) => setPartySale({ ...EMPTY_PARTY_SALE, enabled: e.target.checked })}
+                    />
+                    🏢 Party Sale (dusri pharmacy / firm ko)
+                </label>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <input type="date" className={inputClass} value={billDate} onChange={e => setBillDate(e.target.value)} />
                 <input
@@ -345,9 +381,35 @@ const ManualBill = () => {
                 >
                     Use Current Time
                 </button>
-                <input className={inputClass} placeholder="Patient Name *" value={customer.name} onChange={e=>setCustomer({...customer, name:e.target.value})} />
-                <input className={inputClass} placeholder="Phone No" value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value})} />
-                <input className={inputClass} placeholder="Doctor Name" value={customer.doctor} onChange={e=>setCustomer({...customer, doctor:e.target.value})} />
+                {partySale.enabled ? (
+                    <>
+                        <input
+                            className={inputClass}
+                            placeholder="Party / Firm Name *"
+                            list="manual-buyer-party-list"
+                            value={customer.name}
+                            onChange={e => handlePartyNameChange(e.target.value)}
+                        />
+                        <datalist id="manual-buyer-party-list">
+                            {buyerParties.map((p) => <option key={p.name} value={p.name} />)}
+                        </datalist>
+                        <input className={inputClass} placeholder="Party Phone No" value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value})} />
+                        <input
+                            className={`${inputClass} ${!partySale.drugLicenseNo.trim() ? 'border-red-400 bg-red-50' : ''}`}
+                            placeholder="Party Drug License No. *"
+                            value={partySale.drugLicenseNo}
+                            onChange={e => setPartySale({ ...partySale, drugLicenseNo: e.target.value })}
+                        />
+                        <input className={inputClass} placeholder="Party GSTIN" value={partySale.gstin} onChange={e => setPartySale({ ...partySale, gstin: e.target.value })} />
+                        <input className={`${inputClass} md:col-span-2`} placeholder="Party Address" value={partySale.address} onChange={e => setPartySale({ ...partySale, address: e.target.value })} />
+                    </>
+                ) : (
+                    <>
+                        <input className={inputClass} placeholder="Patient Name *" value={customer.name} onChange={e=>setCustomer({...customer, name:e.target.value})} />
+                        <input className={inputClass} placeholder="Phone No" value={customer.phone} onChange={e=>setCustomer({...customer, phone:e.target.value})} />
+                        <input className={inputClass} placeholder="Doctor Name" value={customer.doctor} onChange={e=>setCustomer({...customer, doctor:e.target.value})} />
+                    </>
+                )}
                 <select className={inputClass} value={customer.mode} onChange={e=>setCustomer({...customer, mode:e.target.value})}>
                     <option value="Cash">💵 Cash</option>
                     <option value="Online">📱 Online</option>
