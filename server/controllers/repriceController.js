@@ -1,7 +1,9 @@
-// ONE-TIME price update. Sets every medicine's prices from its cost price:
-//   sellingPrice = cost + 3-9% (percent picked per medicine name), rounded to whole rupees
-//   doctorPrice  = cost + 25%, rounded to whole rupees
-// Neither price may exceed MRP. Old prices are backed up before writing.
+// ONE-TIME price update (v2). For every medicine that has a cost price:
+//   1. old prices are backed up
+//   2. sellingPrice is reset to 0
+//   3. sellingPrice = cost + random 4-10%, doctorPrice = cost + 25%, both rounded to whole rupees
+// Neither price may exceed MRP. Medicines without a cost price are left untouched and listed in preview,
+// because zeroing them would leave them selling for free.
 // Remove this file and its routes in adminRoutes.js once the update is confirmed.
 const crypto = require('crypto');
 const mongoose = require('mongoose');
@@ -9,28 +11,35 @@ const Medicine = require('../models/Medicine');
 const SystemConfig = require('../models/SystemConfig');
 const AuditLog = require('../models/AuditLog');
 
-const MARKER_KEY = 'REPRICE_ONCE_2026_11';
-const BACKUP_COLLECTION = 'medicine_price_backup_2026_11';
+const MARKER_KEY = 'REPRICE_ONCE_2026_11_V2';
+const BACKUP_COLLECTION = 'medicine_price_backup_2026_11_v2';
 const CONFIRM_APPLY = 'APPLY_PRICE_UPDATE';
 const CONFIRM_UNDO = 'UNDO_PRICE_UPDATE';
 const STALE_RUN_MS = 5 * 60 * 1000;
 const BATCH_SIZE = 500;
+const MIN_PERCENT = 4;
+const MAX_PERCENT = 10;
 const DOCTOR_PERCENT = 25;
+const RANDOM_SALT = 'reprice-v2';
 
-// Derived from the name so preview and apply agree, and all batches of a medicine match.
+// Random-looking percent per medicine name. Seeded from the name so preview shows exactly what apply
+// will write, and all batches of the same medicine get the same price.
 const percentForName = (name) => {
   const normalized = String(name || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const hash = crypto.createHash('sha256').update(normalized).digest();
-  return 3 + (hash.readUInt32BE(0) % 7);
+  const hash = crypto.createHash('sha256').update(`${RANDOM_SALT}:${normalized}`).digest();
+  return MIN_PERCENT + (hash.readUInt32BE(0) % (MAX_PERCENT - MIN_PERCENT + 1));
 };
 
 // toFixed removes float noise, so 104.5 can't arrive as 104.49999 and round down.
 const roundRupee = (value) => Math.round(Number(value.toFixed(6)));
 
+// Rounded to whole rupees, but rounding never drops the price below cost (cost 2.35 -> 3, not 2).
+// Capped at MRP; if MRP rounded down would fall below cost, the exact MRP is used instead.
 const priceFromCost = (cost, percent, mrp) => {
-  const price = roundRupee(cost * (1 + percent / 100));
-  const capped = mrp > 0 && price > mrp;
-  return { price: capped ? Math.floor(mrp) : price, capped };
+  const price = Math.max(roundRupee(cost * (1 + percent / 100)), Math.ceil(Number(cost.toFixed(6))));
+  if (!(mrp > 0) || price <= mrp) return { price, capped: false };
+  const flooredMrp = Math.floor(mrp);
+  return { price: flooredMrp >= cost ? flooredMrp : mrp, capped: true };
 };
 
 const planMedicine = (med) => {
@@ -57,8 +66,7 @@ const planMedicine = (med) => {
 const buildPlan = (medicines) => {
   const summary = {
     total: medicines.length,
-    willChange: 0,
-    alreadyCorrect: 0,
+    willUpdate: 0,
     skippedNoCostPrice: 0,
     skippedPriceBelowOneRupee: 0,
     sellingCappedAtMrp: 0,
@@ -67,9 +75,11 @@ const buildPlan = (medicines) => {
     noMrp: 0,
     kachiEntries: 0,
     outOfStockIncluded: 0,
+    percentSpread: {},
   };
   const rows = [];
   const skipped = [];
+  const capped = [];
   const belowCost = [];
 
   for (const med of medicines) {
@@ -80,21 +90,20 @@ const buildPlan = (medicines) => {
       batchNumber: med.batchNumber,
       mrp: med.mrp,
       costPrice: med.costPrice,
-      gst: med.gst,
     };
 
     if (plan.skip) {
       if (plan.skip === 'noCostPrice') summary.skippedNoCostPrice += 1;
       else summary.skippedPriceBelowOneRupee += 1;
-      skipped.push({ ...row, reason: plan.skip });
+      skipped.push({ ...row, sellingPrice: med.sellingPrice, reason: plan.skip });
       continue;
     }
 
     if (med.isKachiEntry) summary.kachiEntries += 1;
     if (!(Number(med.quantity) > 0)) summary.outOfStockIncluded += 1;
-    if (plan.cappedAtMrp) summary.sellingCappedAtMrp += 1;
     if (plan.doctorCappedAtMrp) summary.doctorCappedAtMrp += 1;
     if (plan.noMrp) summary.noMrp += 1;
+    summary.percentSpread[plan.percent] = (summary.percentSpread[plan.percent] || 0) + 1;
 
     const fullRow = {
       ...row,
@@ -104,24 +113,25 @@ const buildPlan = (medicines) => {
       oldDoctorPrice: med.doctorPrice,
       newDoctorPrice: plan.doctorPrice,
     };
+    if (plan.cappedAtMrp) {
+      summary.sellingCappedAtMrp += 1;
+      capped.push(fullRow);
+    }
     if (plan.belowCost) {
       summary.sellingBelowCost += 1;
       belowCost.push(fullRow);
     }
 
-    if (med.sellingPrice === plan.sellingPrice && med.doctorPrice === plan.doctorPrice) {
-      summary.alreadyCorrect += 1;
-      continue;
-    }
-    summary.willChange += 1;
+    // Every planned medicine is written, even if its price happens to match already.
+    summary.willUpdate += 1;
     rows.push(fullRow);
   }
 
-  return { summary, rows, skipped, belowCost };
+  return { summary, rows, skipped, capped, belowCost };
 };
 
 const loadMedicines = () => Medicine.find({})
-  .select('productName batchNumber mrp sellingPrice doctorPrice costPrice gst quantity isKachiEntry')
+  .select('productName batchNumber mrp sellingPrice doctorPrice costPrice quantity isKachiEntry')
   .lean();
 
 const inBatches = async (items, handler) => {
@@ -163,11 +173,12 @@ const claimRun = async () => {
 const previewReprice = async (req, res) => {
   try {
     const [medicines, marker] = await Promise.all([loadMedicines(), getMarker()]);
-    const { summary, rows, skipped, belowCost } = buildPlan(medicines);
+    const { summary, rows, skipped, capped, belowCost } = buildPlan(medicines);
     return res.json({
       status: marker?.value?.status || 'not_run',
       summary,
       sample: rows.slice(0, 30),
+      capped,
       belowCost,
       skipped,
     });
@@ -175,6 +186,59 @@ const previewReprice = async (req, res) => {
     console.error('[Error] previewReprice:', err.message);
     return res.status(500).json({ message: err.message });
   }
+};
+
+const runReprice = async ({ userRole } = {}) => {
+  const medicines = await loadMedicines();
+  const { summary, rows } = buildPlan(medicines);
+
+  // Backup comes first. On a retry, existing backup rows hold the true originals, so duplicates are ignored.
+  const backups = medicines.map((med) => ({
+    _id: med._id,
+    productName: med.productName,
+    batchNumber: med.batchNumber,
+    sellingPrice: med.sellingPrice,
+    doctorPrice: med.doctorPrice,
+    backedUpAt: new Date(),
+  }));
+  const backupCollection = mongoose.connection.collection(BACKUP_COLLECTION);
+  await inBatches(backups, async (batch) => {
+    try {
+      await backupCollection.insertMany(batch, { ordered: false });
+    } catch (err) {
+      const onlyDuplicates = err.code === 11000
+        && (err.writeErrors || []).every((writeError) => writeError.code === 11000);
+      if (!onlyDuplicates) throw err;
+    }
+  });
+
+  // Step 1: reset selling price to 0 for every medicine that is about to be repriced.
+  const ids = rows.map((row) => row._id);
+  const zeroed = await Medicine.updateMany({ _id: { $in: ids } }, { $set: { sellingPrice: 0 } });
+
+  // Step 2: write the new prices.
+  let updated = 0;
+  await inBatches(rows, async (batch) => {
+    const result = await Medicine.bulkWrite(batch.map((row) => ({
+      updateOne: {
+        filter: { _id: row._id },
+        update: { $set: { sellingPrice: row.newSellingPrice, doctorPrice: row.newDoctorPrice } },
+      },
+    })), { ordered: false });
+    updated += result.matchedCount;
+  });
+
+  await setMarkerStatus('done', { 'value.zeroed': zeroed.matchedCount, 'value.updated': updated, 'value.summary': summary });
+  await AuditLog.create({
+    action: 'REPRICE_ONCE_V2',
+    entityType: 'Medicine',
+    entityId: 'bulk',
+    message: `${updated} medicines reset to 0 and repriced: selling cost+${MIN_PERCENT}-${MAX_PERCENT}%, doctor cost+${DOCTOR_PERCENT}%`,
+    details: { summary },
+    userRole: userRole || 'admin',
+  }).catch((err) => console.error('Audit log error (REPRICE_ONCE_V2):', err.message));
+
+  return { zeroed: zeroed.matchedCount, updated, summary };
 };
 
 const applyReprice = async (req, res) => {
@@ -189,52 +253,8 @@ const applyReprice = async (req, res) => {
       const marker = await getMarker();
       return res.status(409).json({ message: 'Price update pehle hi chal chuka hai', status: marker?.value?.status });
     }
-
-    const medicines = await loadMedicines();
-    const { summary, rows } = buildPlan(medicines);
-
-    // On a retry, existing backup rows hold the true originals, so duplicates are ignored.
-    const backups = medicines.map((med) => ({
-      _id: med._id,
-      productName: med.productName,
-      batchNumber: med.batchNumber,
-      sellingPrice: med.sellingPrice,
-      doctorPrice: med.doctorPrice,
-      backedUpAt: new Date(),
-    }));
-    const backupCollection = mongoose.connection.collection(BACKUP_COLLECTION);
-    await inBatches(backups, async (batch) => {
-      try {
-        await backupCollection.insertMany(batch, { ordered: false });
-      } catch (err) {
-        const onlyDuplicates = err.code === 11000
-          && (err.writeErrors || []).every((writeError) => writeError.code === 11000);
-        if (!onlyDuplicates) throw err;
-      }
-    });
-
-    let modified = 0;
-    await inBatches(rows, async (batch) => {
-      const result = await Medicine.bulkWrite(batch.map((row) => ({
-        updateOne: {
-          filter: { _id: row._id },
-          update: { $set: { sellingPrice: row.newSellingPrice, doctorPrice: row.newDoctorPrice } },
-        },
-      })), { ordered: false });
-      modified += result.modifiedCount;
-    });
-
-    await setMarkerStatus('done', { 'value.modified': modified, 'value.summary': summary });
-    await AuditLog.create({
-      action: 'REPRICE_ONCE',
-      entityType: 'Medicine',
-      entityId: 'bulk',
-      message: `${modified} medicines repriced from cost price`,
-      details: { summary },
-      userRole: req.user?.role || 'admin',
-    }).catch((err) => console.error('Audit log error (REPRICE_ONCE):', err.message));
-
-    return res.json({ success: true, modified, summary });
+    const result = await runReprice({ userRole: req.user?.role });
+    return res.json({ success: true, ...result });
   } catch (err) {
     console.error('[Error] applyReprice:', err.message);
     if (claimed) {
@@ -243,6 +263,32 @@ const applyReprice = async (req, res) => {
     }
     return res.status(500).json({ message: `Update poora nahi hua, dobara chala sakte ho: ${err.message}` });
   }
+};
+
+const runUndo = async ({ userRole } = {}) => {
+  const backups = await mongoose.connection.collection(BACKUP_COLLECTION).find({}).toArray();
+  let restored = 0;
+  await inBatches(backups, async (batch) => {
+    const result = await Medicine.bulkWrite(batch.map((backup) => ({
+      updateOne: {
+        filter: { _id: backup._id },
+        update: { $set: { sellingPrice: backup.sellingPrice, doctorPrice: backup.doctorPrice } },
+      },
+    })), { ordered: false });
+    restored += result.matchedCount;
+  });
+
+  await setMarkerStatus('undone', { 'value.restored': restored });
+  await AuditLog.create({
+    action: 'REPRICE_ONCE_V2_UNDO',
+    entityType: 'Medicine',
+    entityId: 'bulk',
+    message: `${restored} medicines restored to old prices`,
+    details: { backups: backups.length, restored },
+    userRole: userRole || 'admin',
+  }).catch((err) => console.error('Audit log error (REPRICE_ONCE_V2_UNDO):', err.message));
+
+  return { restored };
 };
 
 const undoReprice = async (req, res) => {
@@ -261,29 +307,8 @@ const undoReprice = async (req, res) => {
     }
 
     try {
-      const backups = await mongoose.connection.collection(BACKUP_COLLECTION).find({}).toArray();
-      let restored = 0;
-      await inBatches(backups, async (batch) => {
-        const result = await Medicine.bulkWrite(batch.map((backup) => ({
-          updateOne: {
-            filter: { _id: backup._id },
-            update: { $set: { sellingPrice: backup.sellingPrice, doctorPrice: backup.doctorPrice } },
-          },
-        })), { ordered: false });
-        restored += result.modifiedCount;
-      });
-
-      await setMarkerStatus('undone', { 'value.restored': restored });
-      await AuditLog.create({
-        action: 'REPRICE_ONCE_UNDO',
-        entityType: 'Medicine',
-        entityId: 'bulk',
-        message: `${restored} medicines restored to old prices`,
-        details: { backups: backups.length, restored },
-        userRole: req.user?.role || 'admin',
-      }).catch((err) => console.error('Audit log error (REPRICE_ONCE_UNDO):', err.message));
-
-      return res.json({ success: true, restored });
+      const result = await runUndo({ userRole: req.user?.role });
+      return res.json({ success: true, ...result });
     } catch (err) {
       await setMarkerStatus('undo_failed', { 'value.error': err.message })
         .catch((markerErr) => console.error('Marker update failed:', markerErr.message));
@@ -295,4 +320,8 @@ const undoReprice = async (req, res) => {
   }
 };
 
-module.exports = { previewReprice, applyReprice, undoReprice, planMedicine, percentForName };
+module.exports = {
+  previewReprice, applyReprice, undoReprice,
+  buildPlan, loadMedicines, claimRun, getMarker, setMarkerStatus, runReprice, runUndo,
+  planMedicine, percentForName, MARKER_KEY,
+};
